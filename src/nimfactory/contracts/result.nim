@@ -2,11 +2,15 @@
 
 import std/json
 import ./errors
+import ./validate
 
 const
   ResultSchemaName* = "nimfactory.result"
   ResultSchemaVersion* = "0.1"
   ResultSchema* = ResultSchemaName & "/" & ResultSchemaVersion
+
+  ResultRequiredFields* = ["schema", "status", "outputs", "needs", "diagnostics"]
+  ResultOptionalFields* = ["read_set_ref", "usage_ref", "error"]
 
 type
   ResultStatus* = enum
@@ -115,39 +119,63 @@ proc resultToJson*(r: CommonResult): JsonNode =
     }
 
 proc resultFromJson*(node: JsonNode): CommonResult =
-  if node.isNil or node.kind != JObject:
-    raise newFactoryError(fecInvalidJson, "result must be object", phase = "result")
+  requireObject(node, "result")
+  var allowed: seq[string] = @[]
+  for k in ResultRequiredFields: allowed.add(k)
+  for k in ResultOptionalFields: allowed.add(k)
+  rejectUnknownKeys(node, allowed, "result")
+
+  requireField(node, "schema", {JString}, "result")
+  requireField(node, "status", {JString}, "result")
+  requireField(node, "outputs", {JObject}, "result")
+  requireField(node, "needs", {JArray}, "result")
+  requireField(node, "diagnostics", {JArray}, "result")
+
   result = defaultResult()
-  result.schema = node{"schema"}.getStr("")
-  if result.schema != ResultSchema:
-    raise newFactoryError(fecSchemaMismatch,
-      "unsupported result schema: " & result.schema, phase = "result")
-  result.status = parseStatus(node{"status"}.getStr("ok"))
-  if node.hasKey("outputs"):
-    result.outputs = node["outputs"]
-  if node.hasKey("needs") and node["needs"].kind == JArray:
-    for n in node["needs"]:
-      result.needs.add(NeedItem(
-        id: n{"id"}.getStr(""),
-        chamberOrSource: n{"target"}.getStr(""),
-        selector: n{"selector"}.getStr(""),
-        required: n{"required"}.getBool(false),
-        reason: n{"reason"}.getStr("")
-      ))
-  if node.hasKey("diagnostics") and node["diagnostics"].kind == JArray:
-    for d in node["diagnostics"]:
-      var refs: seq[string] = @[]
-      if d.hasKey("refs") and d["refs"].kind == JArray:
-        for r in d["refs"]:
-          refs.add(r.getStr())
-      result.diagnostics.add(diagnostic(
-        d{"code"}.getStr(""), d{"phase"}.getStr(""), d{"message"}.getStr(""),
-        d{"retryable"}.getBool(false), refs))
-  if node.hasKey("read_set_ref") and node["read_set_ref"].kind != JNull:
-    result.readSetRef = node["read_set_ref"].getStr("")
-  if node.hasKey("usage_ref") and node["usage_ref"].kind != JNull:
-    result.usageRef = node["usage_ref"].getStr("")
-  if node.hasKey("error") and node["error"].kind == JObject:
+  result.schema = node["schema"].getStr()
+  acceptSchema(result.schema, ResultSchema)
+  # Never default missing status to ok — status field is required above.
+  result.status = parseStatus(node["status"].getStr())
+  result.outputs = node["outputs"]
+  for n in node["needs"]:
+    if n.kind != JObject:
+      raise newFactoryError(fecValidationFailed, "need must be object", phase = "result")
+    result.needs.add(NeedItem(
+      id: n{"id"}.getStr(""),
+      chamberOrSource: n{"target"}.getStr(""),
+      selector: n{"selector"}.getStr(""),
+      required: n{"required"}.getBool(false),
+      reason: n{"reason"}.getStr("")
+    ))
+  for d in node["diagnostics"]:
+    if d.kind != JObject:
+      raise newFactoryError(fecValidationFailed, "diagnostic must be object",
+        phase = "result")
+    var refs: seq[string] = @[]
+    if d.hasKey("refs") and d["refs"].kind == JArray:
+      for r in d["refs"]:
+        refs.add(r.getStr())
+    result.diagnostics.add(diagnostic(
+      d{"code"}.getStr(""), d{"phase"}.getStr(""), d{"message"}.getStr(""),
+      d{"retryable"}.getBool(false), refs))
+  if node.hasKey("read_set_ref"):
+    if node["read_set_ref"].kind == JNull:
+      result.readSetRef = ""
+    elif node["read_set_ref"].kind == JString:
+      result.readSetRef = node["read_set_ref"].getStr()
+    else:
+      raise newFactoryError(fecValidationFailed, "read_set_ref must be string|null",
+        phase = "result")
+  if node.hasKey("usage_ref"):
+    if node["usage_ref"].kind == JNull:
+      result.usageRef = ""
+    elif node["usage_ref"].kind == JString:
+      result.usageRef = node["usage_ref"].getStr()
+    else:
+      raise newFactoryError(fecValidationFailed, "usage_ref must be string|null",
+        phase = "result")
+  if node.hasKey("error"):
+    requireField(node, "error", {JObject}, "result")
     let e = node["error"]
     result.errorCode = e{"code"}.getStr("")
     result.errorPhase = e{"phase"}.getStr("")

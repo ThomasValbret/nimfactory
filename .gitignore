@@ -1,3 +1,6 @@
+# Vendored SDK checkout (use scripts/fetch_sdk.sh)
+vendor/
+
 # Build / toolchain
 build/
 nimcache/
