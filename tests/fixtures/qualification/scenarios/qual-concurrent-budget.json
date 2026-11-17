@@ -1,0 +1,53 @@
+{
+  "schema": "nimfactory.qualification.scenario/0.1",
+  "scenario_id": "qual-concurrent-budget",
+  "discriminator": "concurrent_budget",
+  "discriminating": true,
+  "description": "Concurrent preparations must keep distinct budget scopes and full accounting.",
+  "qualification_mode": "simulated",
+  "corpus_snapshot_ref": "snap-qual-wave-a-001",
+  "oracle": {
+    "schema": "nimfactory.qualification.oracle/0.1",
+    "expected_pass_for_reference": true,
+    "checks": [
+      {
+        "id": "c1",
+        "kind": "budget_scopes_distinct",
+        "target": "",
+        "detail": ""
+      },
+      {
+        "id": "c2",
+        "kind": "token_accounting_includes_roles",
+        "target": "preparation_microusd;inference_microusd;evaluator_microusd",
+        "detail": ""
+      }
+    ]
+  },
+  "reference_observation": {
+    "schema": "nimfactory.qualification.observation/0.1",
+    "qualification_mode": "simulated",
+    "scenario_id": "qual-concurrent-budget",
+    "snapshot_ref": "snap-qual-wave-a-001",
+    "selected_instruction_ids": [],
+    "fragment_refs": [],
+    "included": [],
+    "omitted": [],
+    "missing": [],
+    "read_set_entries": [],
+    "status": "ok",
+    "diagnostics": [],
+    "token_accounting": {
+      "preparation_microusd": "2400",
+      "inference_microusd": "1500",
+      "evaluator_microusd": "600"
+    },
+    "extensions": {
+      "budget_scopes": [
+        "run-prep",
+        "run-infer"
+      ],
+      "concurrent_reservations": true
+    }
+  }
+}

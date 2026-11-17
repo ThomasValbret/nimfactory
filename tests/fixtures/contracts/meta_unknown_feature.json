@@ -1,0 +1,14 @@
+{
+  "schema": "nimfactory.meta/0.1",
+  "message_id": "msg-001",
+  "run_id": "run-001",
+  "activation_id": "act-001",
+  "attempt_id": "try-001",
+  "epoch": 1,
+  "correlation_id": "prep-001",
+  "causation_id": null,
+  "payload_schema": "nimfactory.context-request/0.1",
+  "required_features": ["telepathy"],
+  "extensions": {},
+  "is_retransmission": false
+}

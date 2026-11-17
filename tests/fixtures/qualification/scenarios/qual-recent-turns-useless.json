@@ -1,0 +1,62 @@
+{
+  "schema": "nimfactory.qualification.scenario/0.1",
+  "scenario_id": "qual-recent-turns-useless",
+  "discriminator": "recent_turns_useless",
+  "discriminating": true,
+  "description": "Recent turns may be read but must not become instructions.",
+  "qualification_mode": "simulated",
+  "corpus_snapshot_ref": "snap-qual-wave-a-001",
+  "oracle": {
+    "schema": "nimfactory.qualification.oracle/0.1",
+    "expected_pass_for_reference": true,
+    "checks": [
+      {
+        "id": "c1",
+        "kind": "mode_must_be_simulated",
+        "target": "",
+        "detail": ""
+      },
+      {
+        "id": "c2",
+        "kind": "instruction_must_omit",
+        "target": "inst-turn47-chatter",
+        "detail": ""
+      },
+      {
+        "id": "c3",
+        "kind": "omitted_must_cite",
+        "target": "inst-turn47-chatter",
+        "detail": "recent_turn_not_authoritative"
+      }
+    ]
+  },
+  "reference_observation": {
+    "schema": "nimfactory.qualification.observation/0.1",
+    "qualification_mode": "simulated",
+    "scenario_id": "qual-recent-turns-useless",
+    "snapshot_ref": "snap-qual-wave-a-001",
+    "selected_instruction_ids": [
+      "inst-task-goal"
+    ],
+    "fragment_refs": [],
+    "included": [],
+    "omitted": [
+      {
+        "id": "inst-turn47-chatter",
+        "reason": "recent_turn_not_authoritative"
+      }
+    ],
+    "missing": [],
+    "read_set_entries": [
+      "corpus/instruction_recent_noise.txt:read"
+    ],
+    "status": "ok",
+    "diagnostics": [],
+    "token_accounting": {
+      "preparation_microusd": "1200",
+      "inference_microusd": "0",
+      "evaluator_microusd": "300"
+    },
+    "extensions": {}
+  }
+}

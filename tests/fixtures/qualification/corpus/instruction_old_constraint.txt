@@ -1,0 +1,1 @@
+RULE (v3, authority:project): All public APIs must preserve backward compatibility for one major version.

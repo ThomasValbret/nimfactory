@@ -1,0 +1,57 @@
+{
+  "schema": "nimfactory.qualification.scenario/0.1",
+  "scenario_id": "qual-bulky-irrelevant-skill",
+  "discriminator": "bulky_irrelevant_skill",
+  "discriminating": true,
+  "description": "Large off-topic skill must be omitted with explicit reason.",
+  "qualification_mode": "simulated",
+  "corpus_snapshot_ref": "snap-qual-wave-a-001",
+  "oracle": {
+    "schema": "nimfactory.qualification.oracle/0.1",
+    "expected_pass_for_reference": true,
+    "checks": [
+      {
+        "id": "c1",
+        "kind": "fragment_must_omit",
+        "target": "frag-skill-k8s-bulk",
+        "detail": ""
+      },
+      {
+        "id": "c2",
+        "kind": "omitted_must_cite",
+        "target": "skill-kubernetes-ops",
+        "detail": "off_topic"
+      }
+    ]
+  },
+  "reference_observation": {
+    "schema": "nimfactory.qualification.observation/0.1",
+    "qualification_mode": "simulated",
+    "scenario_id": "qual-bulky-irrelevant-skill",
+    "snapshot_ref": "snap-qual-wave-a-001",
+    "selected_instruction_ids": [],
+    "fragment_refs": [
+      "frag-task-nim"
+    ],
+    "included": [],
+    "omitted": [
+      {
+        "id": "skill-kubernetes-ops",
+        "reason": "off_topic_skill",
+        "bytes_saved": 4200
+      }
+    ],
+    "missing": [],
+    "read_set_entries": [
+      "corpus/skill_bulky_offtopic.json:scanned"
+    ],
+    "status": "ok",
+    "diagnostics": [],
+    "token_accounting": {
+      "preparation_microusd": "1200",
+      "inference_microusd": "0",
+      "evaluator_microusd": "300"
+    },
+    "extensions": {}
+  }
+}

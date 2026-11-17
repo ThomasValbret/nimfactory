@@ -1,0 +1,53 @@
+# Build / toolchain
+build/
+nimcache/
+*.exe
+*.out
+*.o
+*.a
+*.so
+*.dll
+
+# Nimble
+nimble.paths.bak
+*.nimble.lock
+
+# Test binaries next to sources
+tests/f0/test_*
+!tests/f0/test_*.nim
+tests/f1/test_*
+!tests/f1/test_*.nim
+tests/f3/test_*
+!tests/f3/test_*.nim
+tests/f4/test_*
+!tests/f4/test_*.nim
+tests/f14/test_*
+!tests/f14/test_*.nim
+tests/f17/test_*
+!tests/f17/test_*.nim
+examples/wave_a_facade
+examples/f1_minimal
+
+# Secrets & local environment
+.env
+.env.*
+.envkey
+.envexemple
+*.pem
+*.key
+credentials.json
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~
+
+# Runtime scratch
+*.db
+*.sqlite
+*.sqlite3
+*.ledger/
+tmp/
+/tmp/

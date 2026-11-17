@@ -1,0 +1,1 @@
+{"schema": "nimfactory.skill-card/0.1", "id": "skill-nim-json-codec", "version": 1, "capabilities": ["json", "nim"], "applicability": "factory contracts", "requires_skills": [], "instruction_unit_refs": ["inst-jcs-1"]}

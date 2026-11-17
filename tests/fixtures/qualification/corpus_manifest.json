@@ -1,0 +1,58 @@
+{
+  "schema": "nimfactory.qualification.corpus/0.1",
+  "qualification_mode": "simulated",
+  "note": "Frozen qualification corpus \u2014 not a real LLM benchmark.",
+  "snapshot_ref": "snap-qual-wave-a-001",
+  "items": [
+    {
+      "path": "corpus/instruction_old_constraint.txt",
+      "sha256": "30227a5fb0711e5c5af6a0faf46827eea0d35f18f92ac7181268048c084469e4",
+      "corpus_id": "instruction_old_constraint"
+    },
+    {
+      "path": "corpus/instruction_recent_noise.txt",
+      "sha256": "62027ef3db10527f05a922231b98d2deb6e0281935ef1ee0676e0d99a5742bb6",
+      "corpus_id": "instruction_recent_noise"
+    },
+    {
+      "path": "corpus/skill_bulky_offtopic.json",
+      "sha256": "3ad258e0033f524e59b24dc26ff78fe0d6a2605d347cb8bfdfa4b82a3fdc767d",
+      "corpus_id": "skill_bulky_offtopic"
+    },
+    {
+      "path": "corpus/skill_small_required.json",
+      "sha256": "0234e25c1342a6a96346db0e39fe75384c1f0ca22e3572c307fc1f99474ed593",
+      "corpus_id": "skill_small_required"
+    },
+    {
+      "path": "corpus/memory_a.json",
+      "sha256": "262b75035b92f1799922b8514ebb31a901b6732562427264a1af186ad1fe64c2",
+      "corpus_id": "memory_a"
+    },
+    {
+      "path": "corpus/memory_b_contradicts.json",
+      "sha256": "f3fbb83af2b9a09a3599ec989745ce12e8967792bc13b3872efdb904aba6747b",
+      "corpus_id": "memory_b_contradicts"
+    },
+    {
+      "path": "corpus/user_correction.json",
+      "sha256": "4d608f2c9eafefb878e145fc7eaa398f1fcc1e11499f906159ca89cf120390a2",
+      "corpus_id": "user_correction"
+    },
+    {
+      "path": "corpus/source_rev_a.txt",
+      "sha256": "94411e6db3b927e8ed7912e07750c18e4024ae88600a9acc6ade96f86a0589e8",
+      "corpus_id": "source_rev_a"
+    },
+    {
+      "path": "corpus/source_rev_b.txt",
+      "sha256": "167c2dae122ac580c4d4ddd5e508b891af44a2819d87706e1d499a92e54e7448",
+      "corpus_id": "source_rev_b"
+    },
+    {
+      "path": "corpus/search_empty_record.json",
+      "sha256": "a0465f96fd2895871a31fb9df299e94f789600d01f3ce1e5ff31c0146d7350bd",
+      "corpus_id": "search_empty_record"
+    }
+  ]
+}

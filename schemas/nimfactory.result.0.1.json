@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "nimfactory.result/0.1",
+  "title": "CommonResult",
+  "type": "object",
+  "required": ["schema", "status", "outputs", "needs", "diagnostics"],
+  "properties": {
+    "schema": { "const": "nimfactory.result/0.1" },
+    "status": {
+      "type": "string",
+      "enum": ["ok", "partial", "blocked", "failed", "cancelled"]
+    },
+    "outputs": { "type": "object" },
+    "needs": { "type": "array" },
+    "diagnostics": { "type": "array" },
+    "read_set_ref": { "type": ["string", "null"] },
+    "usage_ref": { "type": ["string", "null"] },
+    "error": { "type": "object" }
+  },
+  "additionalProperties": false
+}

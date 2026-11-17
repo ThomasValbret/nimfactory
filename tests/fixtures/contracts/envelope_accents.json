@@ -1,0 +1,43 @@
+{
+  "factory": {
+    "schema": "nimfactory.meta/0.1",
+    "message_id": "msg-accents",
+    "run_id": "run-001",
+    "activation_id": "act-001",
+    "attempt_id": "try-001",
+    "epoch": 1,
+    "correlation_id": "prep-001",
+    "causation_id": null,
+    "payload_schema": "nimfactory.result/0.1",
+    "extensions": {},
+    "is_retransmission": false
+  },
+  "message": {
+    "role": "User",
+    "content": "Café naïve — résumé d'exigences: « ne pas tronquer »",
+    "toolCallId": "",
+    "toolName": "",
+    "finishReason": "",
+    "images": [],
+    "toolCalls": [],
+    "usage": {
+      "promptTokens": 0,
+      "completionTokens": 0,
+      "totalTokens": 0,
+      "cacheTokens": 0,
+      "reasoningTokens": 0,
+      "isReported": false
+    }
+  },
+  "payload": {
+    "schema": "nimfactory.result/0.1",
+    "status": "ok",
+    "outputs": {
+      "fragments_ref": "art-fragments-001"
+    },
+    "needs": [],
+    "diagnostics": [],
+    "read_set_ref": "art-readset-001",
+    "usage_ref": null
+  }
+}

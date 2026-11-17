@@ -1,0 +1,38 @@
+{
+  "factory": {
+    "schema": "nimfactory.meta/0.1",
+    "message_id": "msg-new",
+    "run_id": "run-001",
+    "activation_id": "act-001",
+    "attempt_id": "try-002",
+    "epoch": 1,
+    "correlation_id": "prep-001",
+    "causation_id": "msg-same",
+    "payload_schema": "nimfactory.result/0.1",
+    "extensions": {},
+    "is_retransmission": false
+  },
+  "message": {
+    "role": "Assistant",
+    "content": "retry body",
+    "toolCallId": "",
+    "toolName": "",
+    "finishReason": "stop",
+    "images": [],
+    "toolCalls": [
+      {
+        "id": "call-1",
+        "name": "lookup",
+        "arguments": "{\"q\":\"café\"}"
+      }
+    ],
+    "usage": {
+      "promptTokens": 10,
+      "completionTokens": 5,
+      "totalTokens": 15,
+      "cacheTokens": 2,
+      "reasoningTokens": 1,
+      "isReported": true
+    }
+  }
+}

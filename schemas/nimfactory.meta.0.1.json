@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "nimfactory.meta/0.1",
+  "title": "FactoryMeta",
+  "type": "object",
+  "required": [
+    "schema",
+    "message_id",
+    "run_id",
+    "activation_id",
+    "attempt_id",
+    "epoch",
+    "correlation_id",
+    "causation_id",
+    "payload_schema",
+    "extensions"
+  ],
+  "properties": {
+    "schema": { "const": "nimfactory.meta/0.1" },
+    "message_id": { "type": "string" },
+    "run_id": { "type": "string" },
+    "activation_id": { "type": "string" },
+    "attempt_id": { "type": "string" },
+    "epoch": { "type": "integer", "minimum": 0 },
+    "correlation_id": { "type": "string" },
+    "causation_id": { "type": ["string", "null"] },
+    "payload_schema": { "type": "string" },
+    "required_features": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "extensions": { "type": "object" },
+    "is_retransmission": { "type": "boolean" }
+  },
+  "additionalProperties": false
+}

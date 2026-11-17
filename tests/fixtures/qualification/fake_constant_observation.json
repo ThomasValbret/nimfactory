@@ -1,0 +1,24 @@
+{
+  "schema": "nimfactory.qualification.observation/0.1",
+  "qualification_mode": "simulated",
+  "scenario_id": "fake-constant",
+  "snapshot_ref": "snap-fake-universal",
+  "selected_instruction_ids": [
+    "inst-constant"
+  ],
+  "fragment_refs": [
+    "frag-constant"
+  ],
+  "included": [
+    "inst-constant"
+  ],
+  "omitted": [],
+  "missing": [],
+  "read_set_entries": [],
+  "status": "ok",
+  "diagnostics": [],
+  "token_accounting": {
+    "preparation_microusd": "0"
+  },
+  "extensions": {}
+}
