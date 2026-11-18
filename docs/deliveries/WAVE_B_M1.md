@@ -5,6 +5,7 @@ Dépôt : https://github.com/ThomasValbret/nimfactory
 Branche : `feature/wave-b-m1`  
 PR : https://github.com/ThomasValbret/nimfactory/pull/2  
 Base du correctif tuyau/contexte : `f7b3acaa0956f51a16b6f95f0a4776c371aca816`  
+Révision testée (contenu) : `dd4fcf57e801c69cf0257edf06c140ef5a37b235`  
 SDK : `bf22665ece77d7149dbe61df959a6024bf6b26f3` (`pin_verified=yes`)
 
 ## Objectif de cette passe
