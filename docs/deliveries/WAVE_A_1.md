@@ -85,4 +85,6 @@ Les journaux `reviewer_verified_*` de la revue n’ont pas été fournis dans l�
 
 ## Fusion
 
-PR de clôture A.1 préparée vers `main` sur le candidat `2adb183` (contenu `fc3c45e`). Aucune modification fonctionnelle après acceptation.
+PR préparée : https://github.com/ThomasValbret/nimfactory/pull/1  
+Base acceptée : `2adb183` (contenu `fc3c45e`) ; tip docs de clôture : `513838d`.  
+Aucune modification fonctionnelle après acceptation. Merge non exécuté ici ; vague B non ouverte.
