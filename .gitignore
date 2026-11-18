@@ -54,3 +54,4 @@ credentials.json
 *.ledger/
 tmp/
 /tmp/
+.nimcache/

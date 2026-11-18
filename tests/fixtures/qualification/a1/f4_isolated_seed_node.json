@@ -1,0 +1,17 @@
+{
+  "schema": "nimfactory.graph/0.1",
+  "graph_id": "a1-isolated-seed",
+  "version": 1,
+  "nodes": [
+    {
+      "id": "seed",
+      "handler": "seed.assemble@0.1"
+    }
+  ],
+  "entrypoints": [],
+  "edges": [],
+  "outputs": {
+    "seed": "seed.seed"
+  },
+  "loop_specs": []
+}

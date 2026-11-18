@@ -1,0 +1,69 @@
+{
+  "schema": "nimfactory.graph/0.1",
+  "graph_id": "parasitic-cycle",
+  "version": 1,
+  "nodes": [
+    {
+      "id": "loop",
+      "kind": "loop",
+      "control": {}
+    },
+    {
+      "id": "step",
+      "handler": "noop.passthrough@0.1"
+    },
+    {
+      "id": "a",
+      "handler": "noop.passthrough@0.1"
+    },
+    {
+      "id": "b",
+      "handler": "noop.passthrough@0.1"
+    }
+  ],
+  "entrypoints": [
+    {
+      "input": "start",
+      "to": "loop.in"
+    },
+    {
+      "input": "start",
+      "to": "a.in"
+    }
+  ],
+  "edges": [
+    {
+      "from": "loop.body",
+      "to": "step.in"
+    },
+    {
+      "from": "step.out",
+      "to": "loop.in"
+    },
+    {
+      "from": "a.out",
+      "to": "b.in"
+    },
+    {
+      "from": "b.out",
+      "to": "a.in"
+    }
+  ],
+  "outputs": {
+    "done": "loop.done"
+  },
+  "loop_specs": [
+    {
+      "loop_node_id": "loop",
+      "body_entry": "step",
+      "exit": {
+        "predicate": {
+          "op": "exists",
+          "path": "done"
+        },
+        "max_iterations": 4,
+        "on_limit": "limit_reached"
+      }
+    }
+  ]
+}

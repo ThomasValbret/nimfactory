@@ -10,6 +10,10 @@ type
     oracleSchema*: string
     checks*: seq[OracleCheck]
     referenceObservation*: QualObservation
+    counterexampleObservation*: QualObservation
+    hasCounterexample*: bool
+    qualificationMode*: string
+    waveTag*: string
     expectedOraclePass*: bool
 
 proc loadScenario*(path: string): QualScenario =
@@ -26,6 +30,11 @@ proc loadScenario*(path: string): QualScenario =
   result.oracleSchema = QualSchemaOracle
   result.checks = parseOracleChecks(oracle{"checks"})
   result.referenceObservation = observationFromJson(j{"reference_observation"})
+  result.qualificationMode = j.getOrDefault("qualification_mode").getStr(QualificationModeSimulated)
+  result.waveTag = j.getOrDefault("wave").getStr("")
+  result.hasCounterexample = j.hasKey("counterexample_observation")
+  if result.hasCounterexample:
+    result.counterexampleObservation = observationFromJson(j{"counterexample_observation"})
   if oracle.hasKey("expected_pass_for_reference"):
     result.expectedOraclePass = oracle{"expected_pass_for_reference"}.getBool
   else:

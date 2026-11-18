@@ -94,6 +94,32 @@ proc loadCommittedTransition(s: SqliteRunStore; runId, transitionId: string): Js
     return newJNull()
   parseJson(rows[0])
 
+proc runEpochInTxn(s: SqliteRunStore; runId: string): int =
+  let rows = queryAll(s.db, "SELECT epoch FROM nf_runs WHERE run_id = ?", [runId])
+  if rows.len == 0:
+    raise newException(JournalStorageError, "missing run " & runId)
+  parseInt(rows[0])
+
+proc jsonSubstateText(transition: JsonNode; key: string): string =
+  if not transition.hasKey(key):
+    return "null"
+  let node = transition[key]
+  if node.kind == JNull:
+    return "null"
+  $node
+
+proc validateTransitionFields(transition: JsonNode) =
+  let actId = transition{"activation_id"}.getStr("")
+  let attId = transition{"attempt_id"}.getStr("")
+  if actId.len > 0 and not transition.hasKey("activation_state"):
+    raise newFactoryError(fecMissingRequiredInput,
+      "transition with activation_id requires activation_state",
+      phase = "journal", retryable = false)
+  if attId.len > 0 and not transition.hasKey("attempt_state"):
+    raise newFactoryError(fecMissingRequiredInput,
+      "transition with attempt_id requires attempt_state",
+      phase = "journal", retryable = false)
+
 method appendEvent*(s: SqliteRunStore; runId: string; event: JsonNode) =
   ensureRun(s, runId)
   let mid = event{"message_id"}.getStr("")
@@ -128,14 +154,25 @@ method appendEvent*(s: SqliteRunStore; runId: string; event: JsonNode) =
 method commitTransition*(s: SqliteRunStore; runId: string; transition: JsonNode): JsonNode =
   ensureRun(s, runId)
   let transitionId = transition{"transition_id"}.getStr("")
+  ## Idempotent replay: an already-persisted transition_id returns the stored JSON
+  ## without re-checking epoch and without mutating events, state, or outbox.
   if transitionId.len > 0 and s.transitionCommitted(runId, transitionId):
     return s.loadCommittedTransition(runId, transitionId)
+
+  validateTransitionFields(transition)
 
   if s.commitCrashPoint == ccBeforeCommit:
     raise newException(JournalStorageError, "simulated crash before commit")
 
   execSql(s.db, "BEGIN IMMEDIATE")
   try:
+    let curEpoch = s.runEpochInTxn(runId)
+    if transition.hasKey("epoch"):
+      let txEpoch = transition["epoch"].getInt
+      if txEpoch != curEpoch:
+        raise newFactoryError(fecStaleSnapshot,
+          "transition epoch " & $txEpoch & " does not match run epoch " & $curEpoch,
+          phase = "journal", retryable = false)
     if transition.hasKey("state"):
       runPrepared(s.db,
         "UPDATE nf_runs SET state_json = ? WHERE run_id = ?",
@@ -147,11 +184,11 @@ method commitTransition*(s: SqliteRunStore; runId: string; transition: JsonNode)
     if actId.len > 0:
       runPrepared(s.db,
         "INSERT OR REPLACE INTO nf_activations(run_id, activation_id, state_json, epoch, invocation_validated) VALUES(?, ?, ?, ?, ?)",
-        [runId, actId, $(transition.getOrDefault("activation_state")), $epoch, validated])
+        [runId, actId, jsonSubstateText(transition, "activation_state"), $epoch, validated])
     if actId.len > 0 and attId.len > 0:
       runPrepared(s.db,
         "INSERT OR REPLACE INTO nf_attempts(run_id, activation_id, attempt_id, state_json) VALUES(?, ?, ?, ?)",
-        [runId, actId, attId, $(transition.getOrDefault("attempt_state"))])
+        [runId, actId, attId, jsonSubstateText(transition, "attempt_state")])
     if transition.hasKey("result_refs"):
       # stored inside run state / activation; also echo in transition record
       discard transition["result_refs"]
@@ -210,6 +247,26 @@ proc publishPending*(s: SqliteRunStore; runId: string): seq[JsonNode] =
   try:
     runPrepared(s.db,
       "UPDATE nf_outbox SET status = 'publishing' WHERE run_id = ? AND status = 'pending'",
+      [runId])
+    execSql(s.db, "COMMIT")
+  except CatchableError:
+    execSql(s.db, "ROLLBACK")
+    raise
+
+proc redistributeUnackedOutbox*(s: SqliteRunStore; runId: string): seq[JsonNode] =
+  ## Returns unacked messages left in ``publishing`` and re-arms them as ``pending``
+  ## so ``publishPending`` can hand them off again with the same ``message_id``.
+  let rows = queryAll(s.db,
+    "SELECT payload_json FROM nf_outbox WHERE run_id = ? AND status = 'publishing' ORDER BY created_seq",
+    [runId])
+  for r in rows:
+    result.add(parseJson(r))
+  if result.len == 0:
+    return
+  execSql(s.db, "BEGIN IMMEDIATE")
+  try:
+    runPrepared(s.db,
+      "UPDATE nf_outbox SET status = 'pending' WHERE run_id = ? AND status = 'publishing'",
       [runId])
     execSql(s.db, "COMMIT")
   except CatchableError:
