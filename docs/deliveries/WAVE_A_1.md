@@ -86,5 +86,5 @@ Les journaux `reviewer_verified_*` de la revue n’ont pas été fournis dans l�
 ## Fusion
 
 PR préparée : https://github.com/ThomasValbret/nimfactory/pull/1  
-Base acceptée : `2adb183` (contenu `fc3c45e`) ; tip docs de clôture : `513838d`.  
+Base acceptée : `2adb183` (contenu `fc3c45e`) ; commits docs de clôture ensuite (`513838d`, `637e0ed`).  
 Aucune modification fonctionnelle après acceptation. Merge non exécuté ici ; vague B non ouverte.
