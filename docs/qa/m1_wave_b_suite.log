@@ -1,4 +1,4 @@
-nimfactory=b280591b1b4e703c410f525dc8cdd15dee71d339
+nimfactory=011d7f6086046074ff0a2b7bd8da6c44e064da0a
 nimagent=bf22665ece77d7149dbe61df959a6024bf6b26f3
 nimagent_pin_verified=yes
 base_expected=ae331bd57f7db6cbfdde8d02a74e6b819be7e872
@@ -54,7 +54,7 @@ interrupt_exit_3=5
 === inspect at interrupt 3 (durable must match displayed) ===
 interrupt_durable_ok ckpt=3
 === resume after checkpoint 3 ===
-{"run_id":"m1-resume-3","status":"completed","mode":"sequential","outputs":{"result":{"items":[{"branch":"left","payload":{"value":"m1","n":1,"branch":"left"},"activation_id":"left:left"},{"branch":"right","payload":{"value":"m1","n":1,"branch":"right"},"activation_id":"right:right"}],"count":2}},"activations":[{"activation_id":"left:left","node_id":"left","branch_key":"left","status":"completed","outputs":{"out":{"branch":"left","payload":{"value":"m1","n":1,"branch":"left"},"activation_id":"left:left"}}},{"activation_id":"merge:main","node_id":"merge","branch_key":"main","status":"completed","outputs":{"out":{"items":[{"branch":"left","payload":{"value":"m1","n":1,"branch":"left"},"activation_id":"left:left"},{"branch":"right","payload":{"value":"m1","n":1,"branch":"right"},"activation_id":"right:right"}],"count":2}}},{"activation_id":"reduce:main","node_id":"reduce","branch_key":"main","status":"completed","outputs":{"out":{"items":[{"branch":"left","payload":{"value":"m1","n":1,"branch":"left"},"activation_id":"left:left"},{"branch":"right","payload":{"value":"m1","n":1,"branch":"right"},"activation_id":"right:right"}],"count":2}}},{"activation_id":"right:right","node_id":"right","branch_key":"right","status":"completed","outputs":{"out":{"branch":"right","payload":{"value":"m1","n":1,"branch":"right"},"activation_id":"right:right"}}},{"activation_id":"split:main","node_id":"split","branch_key":"main","status":"completed","outputs":{"branch":{"value":"m1","n":1}}}],"activation_commits":5,"pipe_stats":{"enqueued":3,"dequeued":3,"rejected":0,"spilled":0,"waited":0,"peak_depth":2},"peak_concurrent_invocations":0,"events":[{"kind":"activation_committed","body":{"activation_id":"merge:main","node_id":"merge","branch_key":"main","transition_id":"act:merge:main"}},{"kind":"activation_committed","body":{"activation_id":"reduce:main","node_id":"reduce","branch_key":"main","transition_id":"act:reduce:main"}},{"kind":"run_completed","body":{"outputs":{"result":{"items":[{"branch":"left","payload":{"value":"m1","n":1,"branch":"left"},"activation_id":"left:left"},{"branch":"right","payload":{"value":"m1","n":1,"branch":"right"},"activation_id":"right:right"}],"count":2}}}}],"resumed":true,"skipped_validated":["left:left","right:right","run:start","split:main"]}
+{"run_id":"m1-resume-3","status":"completed","mode":"sequential","outputs":{"result":{"items":[{"branch":"left","payload":{"value":"m1","n":1,"branch":"left"},"activation_id":"left:left"},{"branch":"right","payload":{"value":"m1","n":1,"branch":"right"},"activation_id":"right:right"}],"count":2}},"activations":[{"activation_id":"left:left","node_id":"left","branch_key":"left","status":"completed","outputs":{"out":{"branch":"left","payload":{"value":"m1","n":1,"branch":"left"},"activation_id":"left:left"}}},{"activation_id":"merge:main","node_id":"merge","branch_key":"main","status":"completed","outputs":{"out":{"items":[{"branch":"left","payload":{"value":"m1","n":1,"branch":"left"},"activation_id":"left:left"},{"branch":"right","payload":{"value":"m1","n":1,"branch":"right"},"activation_id":"right:right"}],"count":2}}},{"activation_id":"reduce:main","node_id":"reduce","branch_key":"main","status":"completed","outputs":{"out":{"items":[{"branch":"left","payload":{"value":"m1","n":1,"branch":"left"},"activation_id":"left:left"},{"branch":"right","payload":{"value":"m1","n":1,"branch":"right"},"activation_id":"right:right"}],"count":2}}},{"activation_id":"right:right","node_id":"right","branch_key":"right","status":"completed","outputs":{"out":{"branch":"right","payload":{"value":"m1","n":1,"branch":"right"},"activation_id":"right:right"}}},{"activation_id":"split:main","node_id":"split","branch_key":"main","status":"completed","outputs":{"branch":{"value":"m1","n":1}}}],"activation_commits":5,"pipe_stats":{"enqueued":3,"dequeued":3,"rejected":0,"spilled":0,"waited":0,"peak_depth":1},"peak_concurrent_invocations":0,"events":[{"kind":"activation_committed","body":{"activation_id":"merge:main","node_id":"merge","branch_key":"main","transition_id":"act:merge:main"}},{"kind":"activation_committed","body":{"activation_id":"reduce:main","node_id":"reduce","branch_key":"main","transition_id":"act:reduce:main"}},{"kind":"run_completed","body":{"outputs":{"result":{"items":[{"branch":"left","payload":{"value":"m1","n":1,"branch":"left"},"activation_id":"left:left"},{"branch":"right","payload":{"value":"m1","n":1,"branch":"right"},"activation_id":"right:right"}],"count":2}}}}],"resumed":true,"skipped_validated":["left:left","right:right","run:start","split:main"]}
 === inspect after resume 3 ===
 checkpoint_3_ok validated=['split:main', 'left:left', 'right:right']
 === interrupt checkpoint-after 4 ===
@@ -76,4 +76,20 @@ checkpoint_5_ok validated=['split:main', 'left:left', 'right:right', 'merge:main
 M1_RESUME_RECIPE_OK
 {"checkpoints": [1, 2, 3, 4, 5], "concurrent": ["left", "right"], "oracle_branches": ["left", "right"], "peak_concurrent": 2, "sequential": ["left", "right"]}
 m1_resume_recipe: ok sdk=bf22665ece77d7149dbe61df959a6024bf6b26f3
-WAVE_B_M1_OK count=4 sdk=bf22665ece77d7149dbe61df959a6024bf6b26f3 pin_verified=yes
+=== RUN scripts/m1_pipe_backpressure_cli.sh ===
+=== wait capacity 1 sequential ===
+wait_seq_exit=0
+wait_seq_ok
+=== wait capacity 1 concurrent ===
+wait_conc_exit=0
+wait_conc_ok
+=== reject capacity 1 ===
+error: pipe full: rejected_full
+reject_exit=4
+reject_ok exit=4
+=== spill capacity 1 ===
+spill_exit=0
+spill_ok
+M1_PIPE_BACKPRESSURE_CLI_OK
+m1_pipe_backpressure_cli: ok sdk=bf22665ece77d7149dbe61df959a6024bf6b26f3
+WAVE_B_M1_OK count=5 sdk=bf22665ece77d7149dbe61df959a6024bf6b26f3 pin_verified=yes

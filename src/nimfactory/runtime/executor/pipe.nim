@@ -40,7 +40,9 @@ proc newBoundedPipe*(capacity: int; policy: PipePolicy;
   initCond(result.notFull)
   initCond(result.notEmpty)
 
-proc depth(p: BoundedPipe): int =
+proc depth*(p: BoundedPipe): int =
+  acquire(p.lock)
+  defer: release(p.lock)
   p.q.len
 
 proc spillMessage(p: BoundedPipe; msg: PipeMessage): string =
@@ -60,18 +62,17 @@ proc spillMessage(p: BoundedPipe; msg: PipeMessage): string =
   path
 
 proc tryEnqueue*(p: BoundedPipe; msg: PipeMessage): tuple[ok: bool, reason: string] =
-  ## Non-blocking relative to wait policy: wait blocks; reject/spill decide immediately.
+  ## Never blocks the caller. ``wait`` returns ``would_wait`` when full so the
+  ## scheduler can progress consumers; ``reject`` / ``spill`` decide immediately.
   acquire(p.lock)
   defer: release(p.lock)
   if p.closed:
     return (false, "closed")
   case p.policy
   of ppWait:
-    while p.q.len >= p.capacity and not p.closed:
+    if p.q.len >= p.capacity:
       inc p.stats.waited
-      wait(p.notFull, p.lock)
-    if p.closed:
-      return (false, "closed")
+      return (false, "would_wait")
     p.q.addLast(msg)
     inc p.stats.enqueued
     if p.q.len > p.stats.peakDepth:

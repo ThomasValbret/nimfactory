@@ -219,4 +219,103 @@ block cancelMustNotSucceed:
     if e{"kind"}.getStr == "cancelled": found = true
   doAssert found
 
+block pipeWaitCapacityOneProgresses:
+  ## Scheduler must progress consumers instead of hanging on wait.
+  let g = loadDiamond()
+  let reg = registry()
+  let input = parseJson(readFile("tests/fixtures/m1/input.json"))
+  for mode in [emSequential, emConcurrent]:
+    let s = newSqliteRunStore(tmpStore("wait-" & $mode))
+    var cfg = defaultExecConfig()
+    cfg.mode = mode
+    cfg.maxConcurrency = 2
+    cfg.pipeCapacity = 1
+    cfg.pipePolicy = ppWait
+    let r = runGraph(s, reg, g, "run-wait-" & $mode, input, cfg)
+    doAssert r.status == esCompleted, "wait cap1 " & $mode & " got " & $r.status
+    doAssert resultBranches(r.outputs) == @["left", "right"]
+    doAssert r.pipeStats.waited >= 1 or r.pipeStats.peakDepth == 1
+    s.close()
+
+block pipeSpillOnExecutorPath:
+  let g = loadDiamond()
+  let reg = registry()
+  let db = tmpStore("spill")
+  let s = newSqliteRunStore(db)
+  var cfg = defaultExecConfig()
+  cfg.pipeCapacity = 1
+  cfg.pipePolicy = ppSpill
+  cfg.spillDir = db & ".spill"
+  let r = runGraph(s, reg, g, "run-spill",
+                   parseJson(readFile("tests/fixtures/m1/input.json")), cfg)
+  s.close()
+  doAssert r.status == esCompleted, $r.status
+  doAssert r.pipeStats.spilled >= 1, "expected spill under capacity 1"
+  doAssert resultBranches(r.outputs) == @["left", "right"]
+  var sawSpill = false
+  for e in r.events:
+    if e{"kind"}.getStr == "pipe_spilled": sawSpill = true
+  doAssert sawSpill
+
+block pipeWaitDeadlineObservable:
+  ## Under wait policy, deadline must surface as timed_out (not hang).
+  let g = graphFromJson(%*{
+    "schema": "nimfactory.graph/0.1",
+    "graph_id": "slow-deadline",
+    "version": 1,
+    "nodes": [{"id": "s", "handler": "demo.slow@0.1"}],
+    "entrypoints": [{"input": "start", "to": "s.in"}],
+    "edges": [],
+    "outputs": {"out": "s.out"},
+    "loop_specs": []
+  })
+  let reg = registry()
+  let s = newSqliteRunStore(tmpStore("wait-dl"))
+  var cfg = defaultExecConfig()
+  cfg.pipeCapacity = 1
+  cfg.pipePolicy = ppWait
+  cfg.deadlineMs = 1
+  let r = runGraph(s, reg, g, "run-wait-dl", %*{"start": {"v": 1}}, cfg)
+  s.close()
+  doAssert r.status == esTimedOut, "deadline must be observable, got " & $r.status
+
+
+block witnessContextSequentialAndConcurrent:
+  let g = graphFromJson(%*{
+    "schema": "nimfactory.graph/0.1",
+    "graph_id": "witness-pair",
+    "version": 1,
+    "nodes": [
+      {"id": "w1", "handler": "demo.witness@0.1"},
+      {"id": "w2", "handler": "demo.witness@0.1"}
+    ],
+    "entrypoints": [
+      {"input": "a", "to": "w1.in"},
+      {"input": "b", "to": "w2.in"}
+    ],
+    "edges": [],
+    "outputs": {"o1": "w1.out", "o2": "w2.out"},
+    "loop_specs": []
+  })
+  let reg = registry()
+  let inputs = %*{"a": {"k": 1}, "b": {"k": 2}}
+  for mode in [emSequential, emConcurrent]:
+    let db = tmpStore("wit-" & $mode)
+    let s = newSqliteRunStore(db)
+    var cfg = defaultExecConfig()
+    cfg.mode = mode
+    cfg.maxConcurrency = 2
+    let runId = "run-wit-" & $mode
+    let r = runGraph(s, reg, g, runId, inputs, cfg)
+    doAssert r.status == esCompleted, $r.status
+    let epoch = s.currentEpoch(runId)
+    for key in ["o1", "o2"]:
+      let outp = r.outputs{key}
+      doAssert outp{"run_id"}.getStr == runId, $outp
+      doAssert outp{"epoch"}.getInt == epoch, $outp & " epoch=" & $epoch
+      doAssert outp{"activation_id"}.getStr.len > 0
+    if mode == emConcurrent:
+      doAssert r.peakConcurrentInvocations >= 2
+    s.close()
+
 echo "test_executor: ok"

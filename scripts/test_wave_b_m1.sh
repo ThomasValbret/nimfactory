@@ -47,4 +47,9 @@ chmod +x scripts/m1_resume_recipe.sh
 ./scripts/m1_resume_recipe.sh | tee docs/qa/m1_resume_recipe.log
 ok=$((ok+1))
 
+echo "=== RUN scripts/m1_pipe_backpressure_cli.sh ==="
+chmod +x scripts/m1_pipe_backpressure_cli.sh
+./scripts/m1_pipe_backpressure_cli.sh | tee docs/qa/m1_pipe_backpressure_cli.log
+ok=$((ok+1))
+
 echo "WAVE_B_M1_OK count=${ok} sdk=${SDK_SHA} pin_verified=yes"

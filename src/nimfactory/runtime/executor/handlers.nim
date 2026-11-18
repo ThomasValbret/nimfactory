@@ -122,11 +122,33 @@ proc demoFlag(inputs: Table[string, JsonNode];
   else:
     result["out"] = %*{"ready": true}
 
+proc demoWitness(inputs: Table[string, JsonNode];
+                 ctx: InvocationContext): Table[string, JsonNode] =
+  ## Returns the real invocation context fields for scheduler/worker checks.
+  noteInvocationEnter()
+  defer: noteInvocationLeave()
+  if ctx.mode == emConcurrent:
+    sleep(40)
+  result = initTable[string, JsonNode]()
+  var payload = newJObject()
+  if "in" in inputs and not inputs["in"].isNil:
+    payload = inputs["in"]
+  result["out"] = %*{
+    "run_id": ctx.runId,
+    "epoch": ctx.epoch,
+    "activation_id": ctx.activationId,
+    "attempt_id": ctx.attemptId,
+    "branch_key": ctx.branchKey,
+    "mode": $ctx.mode,
+    "payload": payload
+  }
+
 proc registerDemoHandlers*(r: ExecutableRegistry) =
   registerImpl(r, "demo.leaf@0.1", demoLeaf)
   registerImpl(r, "demo.passthrough@0.1", demoPassthrough)
   registerImpl(r, "demo.slow@0.1", demoSlow)
   registerImpl(r, "demo.flag@0.1", demoFlag)
+  registerImpl(r, "demo.witness@0.1", demoWitness)
   registerImpl(r, "noop.passthrough@0.1", demoPassthrough)
   registerImpl(r, "noop.flag@0.1", demoFlag)
   registerImpl(r, "noop.aggregate@0.1", demoPassthrough)

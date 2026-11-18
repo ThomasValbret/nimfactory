@@ -39,6 +39,13 @@ type
     cancelled: bool
     timedOut: bool
 
+  DeferredDelivery = object
+    toNode: string
+    toPort: string
+    branchKey: string
+    body: JsonNode
+    messageId: string
+
   LocalExecutor* = ref object
     store*: SqliteRunStore
     registry*: ExecutableRegistry
@@ -51,6 +58,7 @@ type
     pending: Table[string, PendingInputs] ## activationId -> ports
     completed: Table[string, ActivationRecord]
     ready: seq[string]
+    deferred: seq[DeferredDelivery]       ## wait backpressure: retry after consumers
     pipe*: BoundedPipe
     gate: ConcurrencyGate
     commitLock: Lock
@@ -215,43 +223,105 @@ proc enqueueReady(ex: LocalExecutor; activationId: string) =
     return
   ex.ready.add(activationId)
 
-proc deliverTo(ex: LocalExecutor; toNode, toPort, branchKey: string; body: JsonNode) =
+proc acceptDelivery(ex: LocalExecutor; toNode, toPort, branchKey: string;
+                    body: JsonNode; messageId: string): bool =
+  ## Attempt one pipe delivery. Returns false when ``wait`` must yield to consumers.
   let aid = activationIdOf(toNode, branchKey)
   if aid in ex.completed:
-    return
+    return true
   ensurePending(ex, aid)
-  # Pipe backpressure on every delivery attempt
   let msg = PipeMessage(
-    messageId: "msg-" & aid & "-" & toPort & "-" & $ex.transitionSeq,
+    messageId: messageId,
     port: toPort,
     branchKey: branchKey,
     body: body
   )
   let (ok, reason) = ex.pipe.tryEnqueue(msg)
   if not ok:
+    if reason == "would_wait":
+      appendEvent(ex, "pipe_wait", %*{
+        "to": aid, "port": toPort, "depth": ex.pipe.depth(),
+        "capacity": ex.pipe.capacity
+      })
+      return false
     appendEvent(ex, "pipe_rejected", %*{"reason": reason, "to": aid, "port": toPort})
     if ex.config.pipePolicy == ppReject:
       raise newFactoryError(fecValidationFailed,
         "pipe full: " & reason, phase = "executor")
-    return
+    return true
   if reason.startsWith("spilled:"):
     appendEvent(ex, "pipe_spilled", %*{"path": reason, "to": aid, "port": toPort})
-    # Reload spill into pending (message not lost); no in-memory slot held.
     let path = reason["spilled:".len .. ^1]
     let spilled = loadSpill(path)
     ex.pending[aid][toPort] = spilled.body
+    # Spill path holds no in-memory slot.
   else:
-    # Keep the message in the pipe so capacity/backpressure is real; mirror
-    # into pending for readiness. Slot is freed when the activation starts.
+    # Mirror into pending. Hold the pipe slot only when the destination becomes
+    # ready (consumer can run and will release on start). Incomplete multi-input
+    # gathers free the slot immediately so sibling ports are not deadlocked.
     ex.pending[aid][toPort] = body
   let node = ex.nodes[toNode]
   if ex.isReady(aid, node):
     enqueueReady(ex, aid)
+    # Slot remains occupied until processActivation / worker start.
+  elif not reason.startsWith("spilled:"):
+    discard ex.pipe.dequeue(0)
+  true
+
+proc deliverTo(ex: LocalExecutor; toNode, toPort, branchKey: string; body: JsonNode) =
+  let aid = activationIdOf(toNode, branchKey)
+  if aid in ex.completed:
+    return
+  inc ex.transitionSeq
+  let mid = "msg-" & aid & "-" & toPort & "-" & $ex.transitionSeq
+  if not acceptDelivery(ex, toNode, toPort, branchKey, body, mid):
+    # Yield: keep the delivery for after consumers free capacity.
+    ex.deferred.add(DeferredDelivery(
+      toNode: toNode, toPort: toPort, branchKey: branchKey,
+      body: body, messageId: mid
+    ))
+
+proc flushDeferred(ex: LocalExecutor): bool =
+  ## Retry wait-deferred deliveries. Returns true if at least one progressed.
+  result = false
+  if ex.deferred.len == 0:
+    return
+  var remaining: seq[DeferredDelivery] = @[]
+  for d in ex.deferred:
+    if acceptDelivery(ex, d.toNode, d.toPort, d.branchKey, d.body, d.messageId):
+      result = true
+    else:
+      remaining.add(d)
+  ex.deferred = remaining
 
 proc releasePipeSlots(ex: LocalExecutor; n: int) =
   ## Free in-memory pipe capacity after mirrored inputs are taken by a handler.
   for i in 1 .. n:
     discard ex.pipe.dequeue(0)
+  discard flushDeferred(ex)
+
+proc observeNoPipeProgress(ex: LocalExecutor) =
+  ## Deferred wait deliveries with nothing ready → deadline or explicit block.
+  if ex.deferred.len == 0:
+    return
+  if ex.absoluteDeadline > 0 and nowMs() > ex.absoluteDeadline:
+    ex.status = esTimedOut
+    appendEvent(ex, "timeout", %*{
+      "reason": "pipe_wait_no_progress",
+      "deferred": ex.deferred.len,
+      "pipe_depth": ex.pipe.depth()
+    })
+  else:
+    ex.status = esFailed
+    appendEvent(ex, "pipe_blocked", %*{
+      "reason": "no_consumer_progress",
+      "deferred": ex.deferred.len,
+      "pipe_depth": ex.pipe.depth(),
+      "ready": ex.ready.len
+    })
+    raise newFactoryError(fecValidationFailed,
+      "pipe wait blocked with no consumer progress (deferred=" &
+      $ex.deferred.len & ")", phase = "executor")
 
 proc publishOutputs(ex: LocalExecutor; nodeId, branchKey: string;
                     outputs: Table[string, JsonNode]) =
@@ -457,6 +527,8 @@ type
     branchKey: string
     href: string
     inputsJson: string
+    runId: string
+    epoch: int
     deadlineMs: int64
     cancelled: bool
     mode: ExecMode
@@ -473,10 +545,10 @@ proc invokeIsolated(job: IsolatedJob): HandlerOutcome =
   result = HandlerOutcome(ok: false, activationId: job.aid,
     nodeId: job.nodeId, branchKey: job.branchKey)
   var ctx = InvocationContext(
-    runId: "",
+    runId: job.runId,
     activationId: job.aid,
     attemptId: "att-1",
-    epoch: 0,
+    epoch: job.epoch,
     branchKey: job.branchKey,
     deadlineMs: job.deadlineMs,
     cancelled: job.cancelled,
@@ -508,7 +580,10 @@ proc runLoop(ex: LocalExecutor) =
   ex.status = esCompleted
   gThreadRegistry = ex.registry
   while running and stillRunning(ex):
+    discard flushDeferred(ex)
     if ex.ready.len == 0:
+      if ex.deferred.len > 0:
+        observeNoPipeProgress(ex)
       break
     let limit = if ex.config.mode == emSequential: 1
                 else: max(1, ex.config.maxConcurrency)
@@ -523,6 +598,8 @@ proc runLoop(ex: LocalExecutor) =
         break
       batch.add(aid)
     if batch.len == 0:
+      if ex.deferred.len > 0:
+        observeNoPipeProgress(ex)
       break
     if ex.config.mode == emConcurrent and batch.len > 1:
       var jobs: seq[IsolatedJob] = @[]
@@ -543,6 +620,7 @@ proc runLoop(ex: LocalExecutor) =
           jobs.add(IsolatedJob(
             aid: aid, nodeId: nodeId, branchKey: branchKey,
             href: $node.handler, inputsJson: $inObj,
+            runId: ex.runId, epoch: ex.epoch,
             deadlineMs: ex.absoluteDeadline,
             cancelled: cancelNow,
             mode: ex.config.mode, isHandler: true
@@ -571,6 +649,7 @@ proc runLoop(ex: LocalExecutor) =
       for oc in outcomes:
         if not stillRunning(ex): break
         applyOutcome(ex, oc)
+        discard flushDeferred(ex)
         if ex.status == esInterrupted:
           running = false
           break
@@ -579,11 +658,15 @@ proc runLoop(ex: LocalExecutor) =
         let oc = processActivation(ex, aid)
         ex.gate.leave()
         applyOutcome(ex, oc)
+        discard flushDeferred(ex)
         if ex.status == esInterrupted or not stillRunning(ex):
           running = false
           break
         if ex.config.mode == emSequential:
           break
+  discard flushDeferred(ex)
+  if stillRunning(ex) and ex.deferred.len > 0 and ex.ready.len == 0:
+    observeNoPipeProgress(ex)
   if ex.status == esCompleted:
     let tid = stableRunTransitionId(ex.runId, "final")
     let stored = ex.store.commitTransition(ex.runId, %*{
@@ -630,6 +713,7 @@ proc newLocalExecutor*(store: SqliteRunStore; registry: ExecutableRegistry;
     pending: initTable[string, PendingInputs](),
     completed: initTable[string, ActivationRecord](),
     ready: @[],
+    deferred: @[],
     pipe: newBoundedPipe(config.pipeCapacity, config.pipePolicy, config.spillDir),
     gate: newConcurrencyGate(
       if config.mode == emSequential: 1 else: max(1, config.maxConcurrency)),

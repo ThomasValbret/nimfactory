@@ -1,0 +1,4 @@
+{"defect":"D_pipe_wait_capacity1_hangs_scheduler","present":true,"detail":{"exit":124,"stdout_tail":"","note":"ppWait tryEnqueue blocks; consumers cannot run while publish waits"}}
+{"defect":"D_worker_invocation_context_missing_run_epoch","present":true,"detail":{"note":"IsolatedJob/invokeIsolated does not pass ex.runId / ex.epoch"}}
+{"summary":"m1_f5_gaps_red","defects_flagged":2}
+Error: execution of an external program failed: '/opt/nimFactory/build/m1_f5_gaps_red'
