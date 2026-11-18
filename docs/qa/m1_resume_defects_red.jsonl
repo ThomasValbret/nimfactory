@@ -1,0 +1,5 @@
+{"defect":"D1_unstable_or_unchecked_dedup_transition_ids","present":true,"detail":{"tids_interrupt":["tx-start","tx-1"],"tids_sample_resume":["tx-1","tx-2","tx-3","tx-4","tx-final-5"],"note":"tx-N is process-local; dedup success not matched to operation"}}
+{"defect":"D2_displayed_outputs_missing_or_unknown_id_creates_state","present":true,"detail":{"status":"interrupted","displayed_keys":1,"durable_outputs":{},"unknown_recover_creates":true}}
+{"defect":"D3_no_simultaneous_invocation_metric_and_weak_deadline","present":true,"detail":{"resume_status":"completed","resume_commits":0,"note":"concurrent batch invokes handlers sequentially on one thread; deadline test allows completed"}}
+{"summary":"m1_resume_defects_red","defects_flagged":3}
+Error: execution of an external program failed: '/opt/nimFactory/build/m1_defect_probe'

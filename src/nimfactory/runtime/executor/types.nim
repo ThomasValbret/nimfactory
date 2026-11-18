@@ -45,6 +45,7 @@ type
     pipePolicy*: PipePolicy
     checkpointAfter*: int       ## 0 = disabled; stop after N durable activation commits
     deadlineMs*: int64          ## relative wall-clock budget from start; 0 = none
+    cancelRequested*: bool      ## cooperative cancel before/during handlers
     ownerToken*: string
     spillDir*: string           ## for spill policy persistence
 
@@ -64,6 +65,7 @@ type
     activations*: seq[ActivationRecord]
     activationCommits*: int
     pipeStats*: PipeStats
+    peakConcurrentInvocations*: int
     events*: seq[JsonNode]
     error*: string
     resumed*: bool
@@ -77,6 +79,7 @@ proc defaultExecConfig*(): ExecConfig =
     pipePolicy: ppWait,
     checkpointAfter: 0,
     deadlineMs: 0,
+    cancelRequested: false,
     ownerToken: "local-executor",
     spillDir: ""
   )

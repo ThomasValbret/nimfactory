@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# M1 reception recipe: continuous vs interrupt+resume across two processes.
+# M1 reception recipe: continuous vs interrupt+resume at every diamond checkpoint.
+# Fails if a displayed result is missing from durable SQLite state.
 # No provider keys. Requires Nim 2.4+ and pinned NimAgent via vendor/.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -18,23 +19,20 @@ fi
 
 PATHS=(--path:src --path:vendor/NimAgentLibrary/src)
 mkdir -p build/m1-recipe build/logs docs/qa
-nim c --hints:off --warnings:off --nimcache:build/nimcache-cli \
+nim c --hints:off --warnings:off --nimcache:build/nimcache-cli --threads:on \
   -o:build/nimfactory_cli "${PATHS[@]}" src/nimfactory_cli.nim
 
 GRAPH=recipes/m1_diamond.json
 INPUT=tests/fixtures/m1/input.json
 ORACLE=tests/fixtures/m1/oracle_outputs.json
-STORE_CONT=build/m1-recipe/continuous.sqlite
-STORE_BRK=build/m1-recipe/broken.sqlite
-rm -f "$STORE_CONT" "$STORE_BRK"
-rm -rf "${STORE_CONT}.spill" "${STORE_BRK}.spill"
-
 CLI=./build/nimfactory_cli
 
 echo "=== validate ===" >&2
 "$CLI" validate --graph "$GRAPH" | tee build/logs/m1_validate.jsonl
 
 echo "=== continuous sequential ===" >&2
+STORE_CONT=build/m1-recipe/continuous.sqlite
+rm -f "$STORE_CONT"; rm -rf "${STORE_CONT}.spill"
 "$CLI" run --graph "$GRAPH" --store "$STORE_CONT" --run-id m1-cont-seq \
   --mode sequential --input "$INPUT" | tee build/logs/m1_cont_seq.jsonl
 
@@ -44,89 +42,145 @@ rm -f "$STORE_CONC"; rm -rf "${STORE_CONC}.spill"
 "$CLI" run --graph "$GRAPH" --store "$STORE_CONC" --run-id m1-cont-conc \
   --mode concurrent --max-concurrency 2 --input "$INPUT" | tee build/logs/m1_cont_conc.jsonl
 
-echo "=== interrupt process 1 (checkpoint-after 1) ===" >&2
-set +e
-"$CLI" run --graph "$GRAPH" --store "$STORE_BRK" --run-id m1-resume \
-  --mode sequential --checkpoint-after 1 --input "$INPUT" \
-  > build/logs/m1_interrupt.jsonl
-INT_EXIT=$?
-set -e
-echo "interrupt_exit=${INT_EXIT}" >&2
-# ExitInterrupted=5 (see cli.nim: Nim clamps codes >127 to 127 on this host).
-if [ "$INT_EXIT" -ne 5 ]; then
-  echo "expected exit 5 after checkpoint, got ${INT_EXIT}" >&2
-  cat build/logs/m1_interrupt.jsonl >&2 || true
-  exit 4
-fi
-python3 - <<'PY'
+# Diamond activations in sequential order: split, left, right, merge, reduce (then final).
+# Checkpoint after N commits; verify durable outputs match displayed at interrupt.
+EXPECTED_VALIDATED_AT=(
+  "1:split:main"
+  "2:split:main,left:left"
+  "3:split:main,left:left,right:right"
+  "4:split:main,left:left,right:right,merge:main"
+  "5:split:main,left:left,right:right,merge:main,reduce:main"
+)
+
+for spec in "${EXPECTED_VALIDATED_AT[@]}"; do
+  N="${spec%%:*}"
+  WANT_ACTS="${spec#*:}"
+  STORE_BRK="build/m1-recipe/broken-ckpt${N}.sqlite"
+  rm -f "$STORE_BRK"; rm -rf "${STORE_BRK}.spill"
+  echo "=== interrupt checkpoint-after ${N} ===" >&2
+  set +e
+  "$CLI" run --graph "$GRAPH" --store "$STORE_BRK" --run-id "m1-resume-${N}" \
+    --mode sequential --checkpoint-after "$N" --input "$INPUT" \
+    > "build/logs/m1_interrupt_ckpt${N}.jsonl"
+  INT_EXIT=$?
+  set -e
+  echo "interrupt_exit_${N}=${INT_EXIT}" >&2
+  if [ "$INT_EXIT" -ne 5 ]; then
+    echo "expected exit 5 after checkpoint ${N}, got ${INT_EXIT}" >&2
+    cat "build/logs/m1_interrupt_ckpt${N}.jsonl" >&2 || true
+    exit 4
+  fi
+
+  echo "=== inspect at interrupt ${N} (durable must match displayed) ===" >&2
+  "$CLI" inspect --store "$STORE_BRK" --run-id "m1-resume-${N}" \
+    | tee "build/logs/m1_inspect_intr_ckpt${N}.jsonl" >/dev/null
+
+  python3 - <<PY
 import json
-intr=json.load(open("build/logs/m1_interrupt.jsonl"))
-assert intr.get("status")=="interrupted", intr
-print("interrupt_status_ok")
+N = ${N}
+want_acts = "${WANT_ACTS}".split(",")
+intr = json.load(open(f"build/logs/m1_interrupt_ckpt{N}.jsonl"))
+insp = json.load(open(f"build/logs/m1_inspect_intr_ckpt{N}.jsonl"))["run"]
+assert intr.get("status") == "interrupted", intr
+displayed = intr.get("outputs") or {}
+durable = (insp.get("state") or {}).get("outputs") or {}
+if displayed and len(displayed) > 0:
+    assert durable == displayed, (
+        "FAIL: displayed result missing from SQLite at interrupt",
+        {"displayed": displayed, "durable": durable},
+    )
+acts = insp.get("activations") or {}
+for aid in want_acts:
+    assert aid in acts, f"missing activation {aid}"
+    assert acts[aid].get("invocation_validated") is True, acts[aid]
+for e in insp.get("events", []):
+    tid = e.get("transition_id") or (e.get("body") or {}).get("transition_id") or ""
+    if isinstance(tid, str) and tid.startswith("tx-") and tid != "tx-start":
+        raise AssertionError(f"unstable transition id: {tid}")
+print(f"interrupt_durable_ok ckpt={N}")
 PY
 
-echo "=== resume process 2 ===" >&2
-"$CLI" resume --graph "$GRAPH" --store "$STORE_BRK" --run-id m1-resume \
-  --mode sequential | tee build/logs/m1_resume.jsonl
+  echo "=== resume after checkpoint ${N} ===" >&2
+  "$CLI" resume --graph "$GRAPH" --store "$STORE_BRK" --run-id "m1-resume-${N}" \
+    --mode sequential | tee "build/logs/m1_resume_ckpt${N}.jsonl"
 
-echo "=== inspect journal ===" >&2
-"$CLI" inspect --store "$STORE_BRK" --run-id m1-resume \
-  | tee build/logs/m1_inspect.jsonl >/dev/null
+  echo "=== inspect after resume ${N} ===" >&2
+  "$CLI" inspect --store "$STORE_BRK" --run-id "m1-resume-${N}" \
+    | tee "build/logs/m1_inspect_ckpt${N}.jsonl" >/dev/null
 
-python3 - <<'PY'
-import json, sys
+  # Second resume of completed run must be idempotent (CLI).
+  "$CLI" resume --graph "$GRAPH" --store "$STORE_BRK" --run-id "m1-resume-${N}" \
+    --mode sequential | tee "build/logs/m1_resume2_ckpt${N}.jsonl" >/dev/null
+
+  python3 - <<PY
+import json
+N = ${N}
+want_acts = "${WANT_ACTS}".split(",")
 oracle = json.load(open("tests/fixtures/m1/oracle_outputs.json"))
 want_order = oracle["expected_result"]["branch_order"]
 want_count = oracle["expected_result"]["count"]
+cont = json.load(open("build/logs/m1_cont_seq.jsonl"))
+res = json.load(open(f"build/logs/m1_resume_ckpt{N}.jsonl"))
+res2 = json.load(open(f"build/logs/m1_resume2_ckpt{N}.jsonl"))
+insp = json.load(open(f"build/logs/m1_inspect_ckpt{N}.jsonl"))["run"]
 
-def branches(path):
-    r = json.load(open(path))
+assert res.get("status") == "completed", res
+assert res2.get("status") == "completed", res2
+assert res.get("run_id") == f"m1-resume-{N}"
+
+def branches(r):
     items = r.get("outputs", {}).get("result", {}).get("items", [])
-    return [i.get("branch") for i in items], r
+    return [i.get("branch") for i in items]
 
-seq_b, seq = branches("build/logs/m1_cont_seq.jsonl")
-conc_b, conc = branches("build/logs/m1_cont_conc.jsonl")
-res_b, res = branches("build/logs/m1_resume.jsonl")
-intr = json.load(open("build/logs/m1_interrupt.jsonl"))
-insp = json.load(open("build/logs/m1_inspect.jsonl"))["run"]
+assert branches(res) == want_order == branches(cont), (branches(res), want_order)
+assert res["outputs"]["result"]["count"] == want_count
+assert res["outputs"] == cont["outputs"], "resume outputs must match continuous"
+assert res2["outputs"] == res["outputs"], "second resume must be identical"
 
-assert seq["status"] == "completed" and conc["status"] == "completed"
-assert res["status"] == "completed", res
-assert intr["status"] == "interrupted"
-assert seq_b == want_order == conc_b == res_b
-assert len(seq_b) == want_count
+acts = insp.get("activations") or {}
+for aid in want_acts:
+    assert aid in acts and acts[aid].get("invocation_validated") is True
 
-# Same run_id preserved
-assert res["run_id"] == "m1-resume"
-assert insp["run_id"] == "m1-resume"
+skipped = set(res.get("skipped_validated") or [])
+for aid in want_acts:
+    assert aid in skipped, f"validated {aid} was re-run; skipped={skipped}"
 
-# Validated activations must not be re-invokable
 policy = {p["activation_id"]: p for p in insp.get("reinvoke_policy", [])}
-assert "split:main" in policy and policy["split:main"]["reinvoke_allowed"] is False
+for aid in want_acts:
+    assert aid in policy and policy[aid]["reinvoke_allowed"] is False
 
-# Resume skipped at least the checkpointed activation
-skipped = res.get("skipped_validated", [])
-assert "split:main" in skipped, skipped
+print(f"checkpoint_{N}_ok validated={want_acts}")
+PY
+done
 
-# No duplicate activation ids among completed leaf/control nodes
-acts = [a["activation_id"] for a in res.get("activations", [])
-        if not a["activation_id"].startswith("run:")]
-assert len(acts) == len(set(acts)), acts
+# Keep legacy single-file names for docs/qa copy (checkpoint 1 + final resume).
+cp build/logs/m1_cont_seq.jsonl docs/qa/m1_cont_seq.jsonl
+cp build/logs/m1_cont_conc.jsonl docs/qa/m1_cont_conc.jsonl
+cp build/logs/m1_interrupt_ckpt1.jsonl docs/qa/m1_interrupt.jsonl
+cp build/logs/m1_resume_ckpt1.jsonl docs/qa/m1_resume.jsonl
+cp build/logs/m1_inspect_ckpt1.jsonl docs/qa/m1_inspect.jsonl
 
+python3 - <<'PY'
+import json
+oracle = json.load(open("tests/fixtures/m1/oracle_outputs.json"))
+want = oracle["expected_result"]["branch_order"]
+seq = json.load(open("build/logs/m1_cont_seq.jsonl"))
+conc = json.load(open("build/logs/m1_cont_conc.jsonl"))
+assert seq["status"] == "completed" and conc["status"] == "completed"
+def br(r):
+    return [i.get("branch") for i in r.get("outputs", {}).get("result", {}).get("items", [])]
+assert br(seq) == want == br(conc)
+# Concurrent path must report real overlap when maxConcurrency=2
+peak = conc.get("peak_concurrent_invocations", 0)
+assert peak >= 2, f"expected peak>=2, got {peak}"
 print("M1_RESUME_RECIPE_OK")
 print(json.dumps({
-  "oracle_branches": want_order,
-  "sequential": seq_b,
-  "concurrent": conc_b,
-  "resumed": res_b,
-  "interrupt_commits": intr.get("activation_commits"),
-  "skipped_validated": skipped,
+  "oracle_branches": want,
+  "sequential": br(seq),
+  "concurrent": br(conc),
+  "peak_concurrent": peak,
+  "checkpoints": [1, 2, 3, 4, 5],
 }, sort_keys=True))
 PY
 
-cp build/logs/m1_cont_seq.jsonl docs/qa/m1_cont_seq.jsonl
-cp build/logs/m1_cont_conc.jsonl docs/qa/m1_cont_conc.jsonl
-cp build/logs/m1_interrupt.jsonl docs/qa/m1_interrupt.jsonl
-cp build/logs/m1_resume.jsonl docs/qa/m1_resume.jsonl
-cp build/logs/m1_inspect.jsonl docs/qa/m1_inspect.jsonl
 echo "m1_resume_recipe: ok sdk=${SDK_SHA}"

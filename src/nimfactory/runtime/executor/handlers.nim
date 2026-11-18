@@ -1,6 +1,6 @@
 ## Deterministic demo handlers for F5 / M1 (simulated adapters).
 
-import std/[json, strutils, tables, algorithm]
+import std/[json, strutils, tables, algorithm, atomics, os]
 import nimfactory/contracts/[ids, errors]
 import nimfactory/graph/[types, registry]
 import ./types
@@ -13,6 +13,28 @@ type
     descriptors*: SimulatedHandlerRegistry
     impls*: Table[string, HandlerFn]
 
+var
+  activeInvocations*: Atomic[int]
+  peakInvocations*: Atomic[int]
+
+proc resetInvocationMetrics*() =
+  activeInvocations.store(0)
+  peakInvocations.store(0)
+
+proc noteInvocationEnter*() =
+  let n = activeInvocations.fetchAdd(1) + 1
+  var cur = peakInvocations.load
+  while n > cur:
+    if peakInvocations.compareExchange(cur, n):
+      break
+    cur = peakInvocations.load
+
+proc noteInvocationLeave*() =
+  discard activeInvocations.fetchSub(1)
+
+proc peakConcurrentInvocations*(): int =
+  peakInvocations.load
+
 proc newExecutableRegistry*(): ExecutableRegistry =
   let desc = newSimulatedHandlerRegistry()
   registerSeedBasicHandlers(desc)
@@ -23,7 +45,6 @@ proc newExecutableRegistry*(): ExecutableRegistry =
 
 proc registerImpl*(r: ExecutableRegistry; href: string; fn: HandlerFn) =
   if not r.descriptors.hasHandler(handlerRef(href)):
-    # Allow demo handlers not in seed set by registering a descriptor.
     registerHandler(r.descriptors, HandlerDescriptor(
       handlerRef: handlerRef(href),
       inputs: @[port("in", "nimfactory.control_pass/0.1")],
@@ -36,6 +57,15 @@ proc registerImpl*(r: ExecutableRegistry; href: string; fn: HandlerFn) =
 
 proc demoLeaf(inputs: Table[string, JsonNode];
               ctx: InvocationContext): Table[string, JsonNode] =
+  noteInvocationEnter()
+  defer: noteInvocationLeave()
+  if ctx.cancelled:
+    raise newFactoryError(fecValidationFailed, "cancelled", phase = "handler")
+  if deadlineExceeded(ctx):
+    raise newFactoryError(fecValidationFailed, "deadline_exceeded", phase = "handler")
+  # Hold the slot long enough for a peer thread to overlap under concurrency.
+  if ctx.mode == emConcurrent:
+    sleep(80)
   if ctx.cancelled:
     raise newFactoryError(fecValidationFailed, "cancelled", phase = "handler")
   if deadlineExceeded(ctx):
@@ -53,6 +83,8 @@ proc demoLeaf(inputs: Table[string, JsonNode];
 
 proc demoPassthrough(inputs: Table[string, JsonNode];
                      ctx: InvocationContext): Table[string, JsonNode] =
+  noteInvocationEnter()
+  defer: noteInvocationLeave()
   if ctx.cancelled:
     raise newFactoryError(fecValidationFailed, "cancelled", phase = "handler")
   if deadlineExceeded(ctx):
@@ -65,17 +97,25 @@ proc demoPassthrough(inputs: Table[string, JsonNode];
 
 proc demoSlow(inputs: Table[string, JsonNode];
               ctx: InvocationContext): Table[string, JsonNode] =
-  ## Observability helper: polls cancel/deadline while sleeping.
-  let until = nowMs() + 50
+  noteInvocationEnter()
+  defer: noteInvocationLeave()
+  let until = nowMs() + 80
   while nowMs() < until:
     if ctx.cancelled:
       raise newFactoryError(fecValidationFailed, "cancelled", phase = "handler")
     if deadlineExceeded(ctx):
       raise newFactoryError(fecValidationFailed, "deadline_exceeded", phase = "handler")
-  demoPassthrough(inputs, ctx)
+    sleep(5)
+  result = initTable[string, JsonNode]()
+  if "in" in inputs:
+    result["out"] = inputs["in"]
+  else:
+    result["out"] = newJObject()
 
 proc demoFlag(inputs: Table[string, JsonNode];
               ctx: InvocationContext): Table[string, JsonNode] =
+  noteInvocationEnter()
+  defer: noteInvocationLeave()
   result = initTable[string, JsonNode]()
   if "in" in inputs:
     result["out"] = inputs["in"]
@@ -87,7 +127,6 @@ proc registerDemoHandlers*(r: ExecutableRegistry) =
   registerImpl(r, "demo.passthrough@0.1", demoPassthrough)
   registerImpl(r, "demo.slow@0.1", demoSlow)
   registerImpl(r, "demo.flag@0.1", demoFlag)
-  # Map seed noops to executable impls for graphs that use them.
   registerImpl(r, "noop.passthrough@0.1", demoPassthrough)
   registerImpl(r, "noop.flag@0.1", demoFlag)
   registerImpl(r, "noop.aggregate@0.1", demoPassthrough)
@@ -102,7 +141,6 @@ proc invokeHandler*(r: ExecutableRegistry; href: string;
   r.impls[href](inputs, ctx)
 
 proc stableAggregate*(parts: seq[JsonNode]): JsonNode =
-  ## Deterministic join/reduce: sort by branch then stringify payload.
   var items: seq[JsonNode] = @[]
   for p in parts:
     items.add(p)

@@ -11,6 +11,9 @@ import ./scheduler
 
 export types, pipe, handlers, scheduler
 
+# Threadpool worker needs a process-wide registry pointer for isolated invokes.
+var gThreadRegistry: ExecutableRegistry
+
 type
   EdgeRef = object
     fromNode: string
@@ -120,11 +123,19 @@ proc loadValidatedFromStore(ex: LocalExecutor) =
         )
         ex.skippedValidated.add(aid)
 
-proc commitActivation(ex: LocalExecutor; act: ActivationRecord) =
+proc stableActivationTransitionId*(activationId: string): string =
+  ## Stable across process restarts; unique per activation completion.
+  "act:" & activationId
+
+proc stableRunTransitionId*(runId, kind: string): string =
+  "run:" & runId & ":" & kind
+
+proc commitActivation(ex: LocalExecutor; act: ActivationRecord; phase = "running"): bool =
+  ## Returns true only when the durable commit corresponds to this activation.
   acquire(ex.commitLock)
   defer: release(ex.commitLock)
-  inc ex.transitionSeq
-  let tid = "tx-" & $ex.transitionSeq
+  let already = act.activationId in ex.completed
+  let tid = stableActivationTransitionId(act.activationId)
   var outObj = act.outputs
   if outObj.isNil: outObj = newJObject()
   let transition = %*{
@@ -141,21 +152,30 @@ proc commitActivation(ex: LocalExecutor; act: ActivationRecord) =
     },
     "attempt_state": {"status": "completed"},
     "state": {
-      "phase": "running",
+      "phase": phase,
       "mode": $ex.config.mode,
       "graph_id": ex.graph.graphId,
-      "activation_commits": ex.activationCommits + 1,
+      "activation_commits": ex.activationCommits + (if already: 0 else: 1),
       "outputs": ex.outputs
     }
   }
-  discard ex.store.commitTransition(ex.runId, transition)
-  inc ex.activationCommits
-  ex.completed[act.activationId] = act
-  appendEvent(ex, "activation_committed", %*{
-    "activation_id": act.activationId,
-    "node_id": act.nodeId,
-    "branch_key": act.branchKey
-  })
+  let stored = ex.store.commitTransition(ex.runId, transition)
+  let storedAid = stored{"activation_id"}.getStr("")
+  let storedTid = stored{"transition_id"}.getStr("")
+  if storedAid != act.activationId or storedTid != tid:
+    raise newFactoryError(fecValidationFailed,
+      "deduped transition does not match requested activation " & act.activationId &
+      " (got " & storedAid & " / " & storedTid & ")", phase = "executor")
+  result = true
+  if not already:
+    inc ex.activationCommits
+    ex.completed[act.activationId] = act
+    appendEvent(ex, "activation_committed", %*{
+      "activation_id": act.activationId,
+      "node_id": act.nodeId,
+      "branch_key": act.branchKey,
+      "transition_id": tid
+    })
 
 proc requiredPorts(ex: LocalExecutor; node: GraphNode): seq[string] =
   case node.kind
@@ -216,20 +236,22 @@ proc deliverTo(ex: LocalExecutor; toNode, toPort, branchKey: string; body: JsonN
     return
   if reason.startsWith("spilled:"):
     appendEvent(ex, "pipe_spilled", %*{"path": reason, "to": aid, "port": toPort})
-    # Reload spill into pending (message not lost)
+    # Reload spill into pending (message not lost); no in-memory slot held.
     let path = reason["spilled:".len .. ^1]
     let spilled = loadSpill(path)
     ex.pending[aid][toPort] = spilled.body
   else:
-    # Dequeue immediately into pending (pipe accounts for capacity pressure)
-    let (got, m) = ex.pipe.dequeue(0)
-    if got:
-      ex.pending[aid][m.port] = m.body
-    else:
-      ex.pending[aid][toPort] = body
+    # Keep the message in the pipe so capacity/backpressure is real; mirror
+    # into pending for readiness. Slot is freed when the activation starts.
+    ex.pending[aid][toPort] = body
   let node = ex.nodes[toNode]
   if ex.isReady(aid, node):
     enqueueReady(ex, aid)
+
+proc releasePipeSlots(ex: LocalExecutor; n: int) =
+  ## Free in-memory pipe capacity after mirrored inputs are taken by a handler.
+  for i in 1 .. n:
+    discard ex.pipe.dequeue(0)
 
 proc publishOutputs(ex: LocalExecutor; nodeId, branchKey: string;
                     outputs: Table[string, JsonNode]) =
@@ -341,6 +363,8 @@ proc processActivation(ex: LocalExecutor; aid: string): HandlerOutcome =
     return
   let node = ex.nodes[nodeId]
   let inputs = ex.pending[aid]
+  # Inputs were mirrored while messages stayed in the pipe; free those slots.
+  releasePipeSlots(ex, inputs.len)
   var ctx = InvocationContext(
     runId: ex.runId,
     activationId: aid,
@@ -348,11 +372,11 @@ proc processActivation(ex: LocalExecutor; aid: string): HandlerOutcome =
     epoch: ex.epoch,
     branchKey: branchKey,
     deadlineMs: ex.absoluteDeadline,
-    cancelled: false,
+    cancelled: ex.config.cancelRequested or ex.status == esCancelled,
     mode: ex.config.mode
   )
-  if ex.status == esCancelled:
-    ctx.cancelled = true
+  if ctx.cancelled:
+    ex.status = esCancelled
   try:
     var outputs: Table[string, JsonNode]
     if node.kind == ckHandler:
@@ -368,6 +392,13 @@ proc processActivation(ex: LocalExecutor; aid: string): HandlerOutcome =
       result.cancelled = true
     elif e.msg.contains("deadline"):
       result.timedOut = true
+
+proc collectGraphOutputs(ex: LocalExecutor; nodeId: string;
+                         outputs: Table[string, JsonNode]) =
+  for name, portRef in ex.graph.outputs:
+    let (n, p) = parsePort(portRef)
+    if n == nodeId and p in outputs:
+      ex.outputs[name] = outputs[p]
 
 proc applyOutcome(ex: LocalExecutor; oc: HandlerOutcome) =
   if not oc.ok:
@@ -385,10 +416,11 @@ proc applyOutcome(ex: LocalExecutor; oc: HandlerOutcome) =
     return
   if oc.activationId in ex.completed:
     return
-  # Serialize outputs to JSON object for persistence
   var outJson = newJObject()
   for k, v in oc.outputs:
     outJson[k] = v
+  # Graph outputs must be durable at this commit boundary (incl. last activation).
+  collectGraphOutputs(ex, oc.nodeId, oc.outputs)
   let act = ActivationRecord(
     activationId: oc.activationId,
     nodeId: oc.nodeId,
@@ -397,28 +429,84 @@ proc applyOutcome(ex: LocalExecutor; oc: HandlerOutcome) =
     outputs: outJson,
     attemptId: "att-1"
   )
-  commitActivation(ex, act)
+  let phase =
+    if ex.config.checkpointAfter > 0 and
+        ex.activationCommits + 1 >= ex.config.checkpointAfter:
+      "interrupted"
+    else:
+      "running"
+  if not commitActivation(ex, act, phase):
+    raise newFactoryError(fecValidationFailed,
+      "activation commit rejected: " & act.activationId, phase = "executor")
   publishOutputs(ex, oc.nodeId, oc.branchKey, oc.outputs)
-  # Collect graph outputs
-  for name, portRef in ex.graph.outputs:
-    let (n, p) = parsePort(portRef)
-    if n == oc.nodeId and p in oc.outputs:
-      ex.outputs[name] = oc.outputs[p]
   if ex.config.checkpointAfter > 0 and
       ex.activationCommits >= ex.config.checkpointAfter:
     ex.status = esInterrupted
     appendEvent(ex, "checkpoint", %*{
-      "activation_commits": ex.activationCommits
+      "activation_commits": ex.activationCommits,
+      "outputs": ex.outputs
     })
 
 proc stillRunning(ex: LocalExecutor): bool =
   ex.status notin {esInterrupted, esFailed, esCancelled, esTimedOut}
 
+type
+  IsolatedJob = object
+    aid: string
+    nodeId: string
+    branchKey: string
+    href: string
+    inputsJson: string
+    deadlineMs: int64
+    cancelled: bool
+    mode: ExecMode
+    isHandler: bool
+    controlKind: string
+    controlJson: string
+
+  IsolatedPack = object
+    job: IsolatedJob
+    outcome: HandlerOutcome
+
+proc invokeIsolated(job: IsolatedJob): HandlerOutcome =
+  ## Runs in a worker thread; only touches copied data + global registry.
+  result = HandlerOutcome(ok: false, activationId: job.aid,
+    nodeId: job.nodeId, branchKey: job.branchKey)
+  var ctx = InvocationContext(
+    runId: "",
+    activationId: job.aid,
+    attemptId: "att-1",
+    epoch: 0,
+    branchKey: job.branchKey,
+    deadlineMs: job.deadlineMs,
+    cancelled: job.cancelled,
+    mode: job.mode
+  )
+  try:
+    var inputs = initTable[string, JsonNode]()
+    let root = parseJson(job.inputsJson)
+    if root.kind == JObject:
+      for k, v in root.pairs:
+        inputs[k] = v
+    if job.isHandler:
+      var outs: Table[string, JsonNode]
+      {.cast(gcsafe).}:
+        outs = invokeHandler(gThreadRegistry, job.href, inputs, ctx)
+      result.ok = true
+      result.outputs = outs
+    else:
+      result.err = "control_on_worker"
+  except FactoryError as e:
+    result.err = e.msg
+    if e.msg.contains("cancelled"): result.cancelled = true
+    elif e.msg.contains("deadline"): result.timedOut = true
+  except CatchableError as e:
+    result.err = e.msg
+
 proc runLoop(ex: LocalExecutor) =
-  ## Drive until idle or terminal status. Initial status should be esCompleted meaning OK-running;
-  ## we reuse esCompleted as success terminal only at end.
   var running = true
-  ex.status = esCompleted  # provisional; flipped on failure/interrupt; confirmed at end
+  ex.status = esCompleted
+  gThreadRegistry = ex.registry
   while running and stillRunning(ex):
     if ex.ready.len == 0:
       break
@@ -437,12 +525,47 @@ proc runLoop(ex: LocalExecutor) =
     if batch.len == 0:
       break
     if ex.config.mode == emConcurrent and batch.len > 1:
-      # Run handlers; commits stay serial via applyOutcome on this thread.
-      var outcomes: seq[HandlerOutcome] = @[]
+      var jobs: seq[IsolatedJob] = @[]
+      var controlAids: seq[string] = @[]
       for aid in batch:
+        let parts = aid.split({':'}, 1)
+        let nodeId = parts[0]
+        let branchKey = if parts.len > 1: parts[1] else: "main"
+        let node = ex.nodes[nodeId]
+        if node.kind == ckHandler:
+          var inObj = newJObject()
+          for k, v in ex.pending[aid]:
+            inObj[k] = v
+          releasePipeSlots(ex, inObj.len)
+          let cancelNow = ex.config.cancelRequested or ex.status == esCancelled
+          if cancelNow:
+            ex.status = esCancelled
+          jobs.add(IsolatedJob(
+            aid: aid, nodeId: nodeId, branchKey: branchKey,
+            href: $node.handler, inputsJson: $inObj,
+            deadlineMs: ex.absoluteDeadline,
+            cancelled: cancelNow,
+            mode: ex.config.mode, isHandler: true
+          ))
+        else:
+          controlAids.add(aid)
+      # Real OS threads for independent handlers (measure overlap via atomics).
+      var packs = newSeq[IsolatedPack](jobs.len)
+      var threads = newSeq[Thread[ptr IsolatedPack]](jobs.len)
+      proc thr(p: ptr IsolatedPack) {.thread.} =
+        p.outcome = invokeIsolated(p.job)
+      for i in 0 ..< jobs.len:
+        packs[i].job = jobs[i]
+        createThread(threads[i], thr, addr packs[i])
+      for i in 0 ..< jobs.len:
+        joinThread(threads[i])
+        ex.gate.leave()
+      var outcomes: seq[HandlerOutcome] = @[]
+      for i in 0 ..< packs.len:
+        outcomes.add(packs[i].outcome)
+      for aid in controlAids:
         outcomes.add(processActivation(ex, aid))
         ex.gate.leave()
-      # Stable apply order by activation id for determinism of commit sequence
       outcomes.sort(proc (a, b: HandlerOutcome): int =
         cmp(a.activationId, b.activationId))
       for oc in outcomes:
@@ -462,10 +585,9 @@ proc runLoop(ex: LocalExecutor) =
         if ex.config.mode == emSequential:
           break
   if ex.status == esCompleted:
-    # success path: mark phase completed in store
-    inc ex.transitionSeq
-    discard ex.store.commitTransition(ex.runId, %*{
-      "transition_id": "tx-final-" & $ex.transitionSeq,
+    let tid = stableRunTransitionId(ex.runId, "final")
+    let stored = ex.store.commitTransition(ex.runId, %*{
+      "transition_id": tid,
       "epoch": ex.epoch,
       "state": {
         "phase": "completed",
@@ -476,10 +598,14 @@ proc runLoop(ex: LocalExecutor) =
       },
       "activation_id": "run:final",
       "attempt_id": "att-final",
-      "activation_state": {"status": "completed"},
+      "activation_state": {"status": "completed", "outputs": ex.outputs},
       "attempt_state": {"status": "completed"},
       "invocation_validated": true
     })
+    if stored{"transition_id"}.getStr != tid or
+        stored{"activation_id"}.getStr != "run:final":
+      raise newFactoryError(fecValidationFailed,
+        "final transition dedup mismatch", phase = "executor")
     appendEvent(ex, "run_completed", %*{"outputs": ex.outputs})
 
 proc seedEntrypoints(ex: LocalExecutor; inputs: JsonNode) =
@@ -530,6 +656,7 @@ proc validateOrRaise(ex: LocalExecutor) =
 proc toReport(ex: LocalExecutor): ExecReport =
   var acts: seq[ActivationRecord] = @[]
   for _, a in ex.completed:
+    if a.activationId.startsWith("run:"): continue
     acts.add(a)
   acts.sort(proc (a, b: ActivationRecord): int = cmp(a.activationId, b.activationId))
   ExecReport(
@@ -540,6 +667,7 @@ proc toReport(ex: LocalExecutor): ExecReport =
     activations: acts,
     activationCommits: ex.activationCommits,
     pipeStats: ex.pipe.stats,
+    peakConcurrentInvocations: peakConcurrentInvocations(),
     events: ex.events,
     error: "",
     resumed: ex.resumed,
@@ -552,6 +680,7 @@ proc runGraph*(store: SqliteRunStore; registry: ExecutableRegistry;
   var cfg = config
   if cfg.mode == emSequential:
     cfg.maxConcurrency = 1
+  resetInvocationMetrics()
   let ex = newLocalExecutor(store, registry, graph, cfg)
   ex.runId = runId
   ex.validateOrRaise()
@@ -563,8 +692,9 @@ proc runGraph*(store: SqliteRunStore; registry: ExecutableRegistry;
   ex.epoch = store.claimLease(runId, cfg.ownerToken)
   if cfg.deadlineMs > 0:
     ex.absoluteDeadline = nowMs() + cfg.deadlineMs
-  discard store.commitTransition(runId, %*{
-    "transition_id": "tx-start",
+  let startTid = stableRunTransitionId(runId, "start")
+  let started = store.commitTransition(runId, %*{
+    "transition_id": startTid,
     "epoch": ex.epoch,
     "state": {
       "phase": "running",
@@ -578,15 +708,23 @@ proc runGraph*(store: SqliteRunStore; registry: ExecutableRegistry;
     "attempt_state": {"status": "started"},
     "invocation_validated": true
   })
+  if started{"transition_id"}.getStr != startTid:
+    raise newFactoryError(fecValidationFailed,
+      "start transition dedup mismatch", phase = "executor")
   ex.seedEntrypoints(inputs)
   ex.runLoop()
   ex.toReport()
 
 proc resumeGraph*(store: SqliteRunStore; registry: ExecutableRegistry;
                   graph: GraphSpec; runId: string; config: ExecConfig): ExecReport =
+  if not store.hasRun(runId):
+    raise newFactoryError(fecMissingRequiredInput,
+      "unknown run_id (refuse resume without creating state): " & runId,
+      phase = "executor")
   var cfg = config
   if cfg.mode == emSequential:
     cfg.maxConcurrency = 1
+  resetInvocationMetrics()
   let ex = newLocalExecutor(store, registry, graph, cfg)
   ex.runId = runId
   ex.resumed = true
@@ -597,30 +735,29 @@ proc resumeGraph*(store: SqliteRunStore; registry: ExecutableRegistry;
   if cfg.deadlineMs > 0:
     ex.absoluteDeadline = nowMs() + cfg.deadlineMs
   ex.loadValidatedFromStore()
+  # Count prior durable activation commits (exclude run:start / run:final)
+  ex.activationCommits = 0
+  for aid, _ in ex.completed:
+    if not aid.startsWith("run:"):
+      inc ex.activationCommits
   let rec = store.recover(runId)
   if rec.hasKey("state") and rec["state"].kind == JObject:
-    if rec["state"].hasKey("outputs"):
+    if rec["state"].hasKey("outputs") and rec["state"]["outputs"].kind == JObject:
       ex.outputs = rec["state"]["outputs"]
-  # Rebuild pending work: re-seed from completed outputs for unfinished consumers
+  let phase = rec{"state"}{"phase"}.getStr("")
+  if phase == "completed":
+    # Second resume of a finished run: return durable outputs, no handler re-invoke.
+    ex.status = esCompleted
+    return ex.toReport()
   for aid, act in ex.completed:
     if act.outputs.isNil: continue
+    if aid.startsWith("run:"): continue
     var outs = initTable[string, JsonNode]()
     if act.outputs.kind == JObject:
       for k, v in act.outputs.pairs:
         outs[k] = v
     publishOutputs(ex, act.nodeId, act.branchKey, outs)
-  # If nothing ready and no outputs yet, re-entry from stored inputs is unavailable;
-  # resume expects checkpoint left ready downstream from published outputs.
-  if ex.ready.len == 0 and ex.outputs.len > 0 and
-      rec{"state"}{"phase"}.getStr("") == "completed":
-    ex.status = esCompleted
-    return ex.toReport()
-  # Reset interrupt semantics: checkpointAfter counts new commits in this process
-  let priorCommits = ex.completed.len
-  ex.activationCommits = 0
   ex.runLoop()
-  # Annotate skipped
-  discard priorCommits
   ex.toReport()
 
 proc reportToJson*(r: ExecReport): JsonNode =
@@ -652,8 +789,8 @@ proc reportToJson*(r: ExecReport): JsonNode =
       "waited": r.pipeStats.waited,
       "peak_depth": r.pipeStats.peakDepth
     },
+    "peak_concurrent_invocations": r.peakConcurrentInvocations,
     "events": evs,
     "resumed": r.resumed,
-    "skipped_validated": skipped,
-    "concurrency_peak_hint": r.pipeStats.peakDepth
+    "skipped_validated": skipped
   }

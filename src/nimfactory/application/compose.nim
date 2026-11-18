@@ -47,11 +47,19 @@ proc resumeDemoGraph*(storePath, graphPath, runId: string;
   let g = loadGraphFile(graphPath)
   let store = openAppStore(storePath)
   defer: store.close()
+  if not store.hasRun(runId):
+    raise newFactoryError(fecMissingRequiredInput,
+      "unknown run_id (refuse resume without creating state): " & runId,
+      phase = "cli")
   resumeGraph(store, reg, g, runId, config)
 
 proc inspectRun*(storePath, runId: string): JsonNode =
   let store = openAppStore(storePath)
   defer: store.close()
+  if not store.hasRun(runId):
+    raise newFactoryError(fecMissingRequiredInput,
+      "unknown run_id (refuse inspect without creating state): " & runId,
+      phase = "cli")
   store.recover(runId)
 
 proc listEvents*(storePath, runId: string): JsonNode =

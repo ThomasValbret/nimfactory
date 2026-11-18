@@ -53,13 +53,18 @@ proc cloneStoreAt*(s: SqliteRunStore; newPath: string): SqliteRunStore =
     copyFile(s.dbPath, newPath)
   newSqliteRunStore(newPath)
 
-proc ensureRun(s: SqliteRunStore; runId: string) =
+proc hasRun*(s: SqliteRunStore; runId: string): bool =
+  ## True only if the run row already exists (does not create).
   let existing = queryAll(s.db,
     "SELECT run_id FROM nf_runs WHERE run_id = ?", [runId])
-  if existing.len == 0:
-    runPrepared(s.db,
-      "INSERT INTO nf_runs(run_id, epoch, owner_token, state_json, event_seq) VALUES(?, 1, '', '{}', 0)",
-      [runId])
+  existing.len > 0
+
+proc ensureRun(s: SqliteRunStore; runId: string) =
+  if s.hasRun(runId):
+    return
+  runPrepared(s.db,
+    "INSERT INTO nf_runs(run_id, epoch, owner_token, state_json, event_seq) VALUES(?, 1, '', '{}', 0)",
+    [runId])
 
 proc nextEventSeq(s: SqliteRunStore; runId: string): int =
   runPrepared(s.db, "UPDATE nf_runs SET event_seq = event_seq + 1 WHERE run_id = ?", [runId])
@@ -319,7 +324,11 @@ proc acceptHandlerDelivery*(s: SqliteRunStore; runId: string; delivery: JsonNode
   return DeliveryResult(accepted: false, reason: "missing message_id")
 
 method recover*(s: SqliteRunStore; runId: string): JsonNode =
-  ensureRun(s, runId)
+  ## Read-only recovery: unknown run_id must not create durable state.
+  if not s.hasRun(runId):
+    raise newFactoryError(fecMissingRequiredInput,
+      "unknown run_id (refuse recover without creating state): " & runId,
+      phase = "journal", retryable = false)
   result = newJObject()
   result["run_id"] = %runId
   let stateRows = queryAll(s.db, "SELECT state_json FROM nf_runs WHERE run_id = ?", [runId])

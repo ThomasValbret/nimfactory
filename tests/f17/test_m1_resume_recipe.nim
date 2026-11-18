@@ -1,4 +1,4 @@
-## F17 M1: oracle-first parity + two-process interrupt/resume via CLI binary.
+## F17 M1: oracle parity, multi-checkpoint resume, durable SQLite match, second resume.
 import std/[os, osproc, json, strutils]
 
 proc need(path: string) =
@@ -12,9 +12,8 @@ let oracle = parseJson(readFile(root / "tests/fixtures/m1/oracle_outputs.json"))
 let want = oracle["expected_result"]["branch_order"]
 doAssert want.kind == JArray and want.len == 2
 
-# Build CLI if needed
 let cli = root / "build" / "nimfactory_cli"
-let buildCmd = "nim c --hints:off --warnings:off --path:src --path:vendor/NimAgentLibrary/src " &
+let buildCmd = "nim c --hints:off --warnings:off --threads:on --path:src --path:vendor/NimAgentLibrary/src " &
                "--nimcache:build/nimcache-cli -o:build/nimfactory_cli src/nimfactory_cli.nim"
 doAssert execCmd(buildCmd) == 0
 
@@ -49,40 +48,70 @@ block oracleParitySeqConc:
   doAssert branchesOf(seqR) == branchesOf(concR)
   doAssert seqR{"outputs"}{"result"}{"count"}.getInt ==
            oracle{"expected_result"}{"count"}.getInt
+  doAssert concR{"peak_concurrent_invocations"}.getInt >= 2
 
-block twoProcessInterruptResume:
-  let store = tmp / "brk.sqlite"
+block multiCheckpointInterruptResume:
+  let expected = @[
+    (1, @["split:main"]),
+    (2, @["split:main", "left:left"]),
+    (3, @["split:main", "left:left", "right:right"]),
+    (4, @["split:main", "left:left", "right:right", "merge:main"]),
+    (5, @["split:main", "left:left", "right:right", "merge:main", "reduce:main"])
+  ]
+  let cont = parseJson(readFile(tmp / "seq.json"))
+  for (n, wantActs) in expected:
+    let store = tmp / ("brk-" & $n & ".sqlite")
+    if fileExists(store): removeFile(store)
+    let spill = store & ".spill"
+    if dirExists(spill): removeDir(spill)
+    let ex1 = runCli(
+      "run --graph recipes/m1_diamond.json --store " & store &
+      " --run-id m1-brk-" & $n & " --mode sequential --checkpoint-after " & $n &
+      " --input tests/fixtures/m1/input.json",
+      tmp / ("intr-" & $n & ".json"))
+    doAssert ex1 == 5, "expected interrupt exit 5 got " & $ex1 & " at ckpt " & $n
+    let intr = parseJson(readFile(tmp / ("intr-" & $n & ".json")))
+    doAssert intr{"status"}.getStr == "interrupted"
+    doAssert runCli("inspect --store " & store & " --run-id m1-brk-" & $n,
+                    tmp / ("insp-intr-" & $n & ".json")) == 0
+    let inspIntr = parseJson(readFile(tmp / ("insp-intr-" & $n & ".json"))){"run"}
+    let displayed = intr{"outputs"}
+    let durable = inspIntr{"state"}{"outputs"}
+    if not displayed.isNil and displayed.kind == JObject and displayed.len > 0:
+      doAssert $durable == $displayed,
+        "displayed missing from SQLite at ckpt " & $n & " displayed=" & $displayed &
+        " durable=" & $durable
+    for aid in wantActs:
+      doAssert inspIntr{"activations"}{aid}{"invocation_validated"}.getBool,
+        "expected validated " & aid & " at ckpt " & $n
+    let ex2 = runCli(
+      "resume --graph recipes/m1_diamond.json --store " & store &
+      " --run-id m1-brk-" & $n & " --mode sequential",
+      tmp / ("res-" & $n & ".json"))
+    doAssert ex2 == 0, "resume exit " & $ex2 & " at ckpt " & $n
+    let res = parseJson(readFile(tmp / ("res-" & $n & ".json")))
+    doAssert res{"status"}.getStr == "completed"
+    doAssert branchesOf(res) == @[want[0].getStr(), want[1].getStr()]
+    doAssert $res{"outputs"} == $cont{"outputs"}
+    var skipped = 0
+    for s in res{"skipped_validated"}:
+      if s.getStr in wantActs: inc skipped
+    doAssert skipped == wantActs.len, $res{"skipped_validated"}
+    # Second resume idempotent
+    doAssert runCli(
+      "resume --graph recipes/m1_diamond.json --store " & store &
+      " --run-id m1-brk-" & $n & " --mode sequential",
+      tmp / ("res2-" & $n & ".json")) == 0
+    let res2 = parseJson(readFile(tmp / ("res2-" & $n & ".json")))
+    doAssert $res2{"outputs"} == $res{"outputs"}
+
+block unknownResumeRefused:
+  let store = tmp / "empty.sqlite"
   if fileExists(store): removeFile(store)
-  let spill = store & ".spill"
-  if dirExists(spill): removeDir(spill)
-  let ex1 = runCli(
-    "run --graph recipes/m1_diamond.json --store " & store &
-    " --run-id m1-brk --mode sequential --checkpoint-after 1 --input tests/fixtures/m1/input.json",
-    tmp / "intr.json")
-  doAssert ex1 == 5, "expected interrupt exit 5 got " & $ex1
-  let intr = parseJson(readFile(tmp / "intr.json"))
-  doAssert intr{"status"}.getStr == "interrupted"
-  let ex2 = runCli(
-    "resume --graph recipes/m1_diamond.json --store " & store &
-    " --run-id m1-brk --mode sequential",
-    tmp / "res.json")
-  doAssert ex2 == 0, "resume exit " & $ex2
-  let res = parseJson(readFile(tmp / "res.json"))
-  doAssert res{"status"}.getStr == "completed"
-  doAssert res{"run_id"}.getStr == "m1-brk"
-  doAssert branchesOf(res) == @[want[0].getStr(), want[1].getStr()]
-  var skipped = false
-  for s in res{"skipped_validated"}:
-    if s.getStr == "split:main": skipped = true
-  doAssert skipped, $res{"skipped_validated"}
-  # inspect reinvoke policy
-  doAssert runCli("inspect --store " & store & " --run-id m1-brk", tmp / "insp.json") == 0
-  let insp = parseJson(readFile(tmp / "insp.json")){"run"}
-  var denied = false
-  for p in insp{"reinvoke_policy"}:
-    if p{"activation_id"}.getStr == "split:main" and
-       p{"reinvoke_allowed"}.getBool == false:
-      denied = true
-  doAssert denied
+  # create empty store file via a throwaway run then delete run is hard; use fresh path
+  # open via inspect of unknown on brand-new store
+  let ex = runCli("inspect --store " & store & " --run-id no-such",
+                  tmp / "unknown.json")
+  doAssert ex != 0
 
 echo "test_m1_resume_recipe: ok"

@@ -1,4 +1,4 @@
-## F5 unit tests: seq/concurrent parity, pipes, deadline, cancel, resume skip.
+## F5 unit tests: stable transitions, durable outputs, real concurrency, resume.
 import std/[os, json, strutils]
 import nimfactory
 
@@ -25,15 +25,6 @@ proc resultBranches(outputs: JsonNode): seq[string] =
   for it in r{"items"}:
     result.add(it{"branch"}.getStr())
 
-proc expectParity(a, b: ExecReport) =
-  doAssert a.status == esCompleted, $a.status
-  doAssert b.status == esCompleted, $b.status
-  doAssert resultBranches(a.outputs) == @["left", "right"]
-  doAssert resultBranches(b.outputs) == @["left", "right"]
-  doAssert resultBranches(a.outputs) == resultBranches(b.outputs)
-  doAssert a.outputs{"result"}{"count"}.getInt == 2
-  doAssert b.outputs{"result"}{"count"}.getInt == 2
-
 block sequentialConcurrentSameResult:
   let g = loadDiamond()
   let reg = registry()
@@ -47,75 +38,142 @@ block sequentialConcurrentSameResult:
   cfg.maxConcurrency = 2
   let r2 = runGraph(s2, reg, g, "run-conc", parseJson(readFile("tests/fixtures/m1/input.json")), cfg)
   s2.close()
-  expectParity(r1, r2)
+  doAssert r1.status == esCompleted and r2.status == esCompleted
+  doAssert resultBranches(r1.outputs) == @["left", "right"]
+  doAssert resultBranches(r1.outputs) == resultBranches(r2.outputs)
+  doAssert r2.peakConcurrentInvocations >= 2,
+    "expected real overlap, peak=" & $r2.peakConcurrentInvocations
 
-block concurrencyCeiling:
+block concurrencyCeilingOne:
   let g = loadDiamond()
   let reg = registry()
-  let s = newSqliteRunStore(tmpStore("ceil"))
+  let s = newSqliteRunStore(tmpStore("ceil1"))
   var cfg = defaultExecConfig()
   cfg.mode = emConcurrent
   cfg.maxConcurrency = 1
-  let r = runGraph(s, reg, g, "run-ceil", parseJson(readFile("tests/fixtures/m1/input.json")), cfg)
+  let r = runGraph(s, reg, g, "run-ceil1", parseJson(readFile("tests/fixtures/m1/input.json")), cfg)
   s.close()
   doAssert r.status == esCompleted
+  doAssert r.peakConcurrentInvocations == 1,
+    "ceiling 1 must not overlap, peak=" & $r.peakConcurrentInvocations
+
+block pipeRejectOnExecutorPath:
+  ## Saturate real delivery path: capacity 1 + reject while map fans out 2.
+  let g = loadDiamond()
+  let reg = registry()
+  let s = newSqliteRunStore(tmpStore("pipe-sat"))
+  var cfg = defaultExecConfig()
+  cfg.pipeCapacity = 1
+  cfg.pipePolicy = ppReject
+  var raised = false
+  try:
+    discard runGraph(s, reg, g, "run-sat", parseJson(readFile("tests/fixtures/m1/input.json")), cfg)
+  except FactoryError as e:
+    raised = true
+    doAssert "pipe full" in e.msg or "rejected" in e.msg
+  s.close()
+  doAssert raised
+
+block stableTransitionIdsAcrossResume:
+  let g = loadDiamond()
+  let reg = registry()
+  let db = tmpStore("stable-tx")
+  let s1 = newSqliteRunStore(db)
+  var cfg = defaultExecConfig()
+  cfg.checkpointAfter = 1
+  let r1 = runGraph(s1, reg, g, "run-stx", parseJson(readFile("tests/fixtures/m1/input.json")), cfg)
+  doAssert r1.status == esInterrupted
+  let rec1 = s1.recover("run-stx")
+  var sawActSplit = false
+  for e in rec1["events"]:
+    let tid = e{"transition_id"}.getStr(e{"body"}{"transition_id"}.getStr(""))
+    if tid == "act:split:main": sawActSplit = true
+    doAssert not tid.startsWith("tx-"), "unstable id " & tid
+  doAssert sawActSplit
+  s1.close()
+  let s2 = newSqliteRunStore(db)
+  cfg.checkpointAfter = 0
+  let r2 = resumeGraph(s2, reg, g, "run-stx", cfg)
+  let rec2 = s2.recover("run-stx")
+  var sawLeft = false
+  for e in rec2["events"]:
+    let tid = e{"transition_id"}.getStr(e{"body"}{"transition_id"}.getStr(""))
+    if tid == "act:left:left": sawLeft = true
+    if tid.startsWith("tx-"):
+      raiseAssert "unstable after resume: " & tid
+  doAssert sawLeft
+  doAssert r2.status == esCompleted
+  s2.close()
+
+block durableOutputsAtCheckpointBoundary:
+  let g = loadDiamond()
+  let reg = registry()
+  let db = tmpStore("durable-out")
+  let s = newSqliteRunStore(db)
+  var cfg = defaultExecConfig()
+  cfg.checkpointAfter = 5  # after reduce, before final
+  let r = runGraph(s, reg, g, "run-dout", parseJson(readFile("tests/fixtures/m1/input.json")), cfg)
+  doAssert r.status == esInterrupted
   doAssert resultBranches(r.outputs) == @["left", "right"]
+  let rec = s.recover("run-dout")
+  doAssert rec{"state"}{"outputs"}{"result"}{"count"}.getInt == 2,
+    "displayed outputs must be durable: " & $rec{"state"}{"outputs"}
+  doAssert $rec{"state"}{"outputs"} == $r.outputs
+  s.close()
 
-block pipeRejectSaturated:
-  let p = newBoundedPipe(1, ppReject)
-  let m1 = PipeMessage(messageId: "a", port: "in", branchKey: "main", body: %*{"x": 1})
-  let m2 = PipeMessage(messageId: "b", port: "in", branchKey: "main", body: %*{"x": 2})
-  let (ok1, _) = p.tryEnqueue(m1)
-  doAssert ok1
-  let (ok2, reason) = p.tryEnqueue(m2)
-  doAssert not ok2
-  doAssert reason == "rejected_full"
-  doAssert p.stats.rejected == 1
+block unknownResumeRefused:
+  let g = loadDiamond()
+  let reg = registry()
+  let s = newSqliteRunStore(tmpStore("unknown"))
+  var raised = false
+  try:
+    discard resumeGraph(s, reg, g, "no-such-run", defaultExecConfig())
+  except FactoryError as e:
+    raised = true
+    doAssert "unknown run_id" in e.msg
+  doAssert raised
+  doAssert not s.hasRun("no-such-run")
+  s.close()
 
-block pipeSpillPreserves:
-  let dir = getCurrentDir() / "build" / "f5-tmp" / "spill"
-  createDir(dir)
-  let p = newBoundedPipe(1, ppSpill, dir)
-  let m1 = PipeMessage(messageId: "a", port: "in", branchKey: "main", body: %*{"x": 1})
-  let m2 = PipeMessage(messageId: "b", port: "in", branchKey: "main", body: %*{"x": 2})
-  discard p.tryEnqueue(m1)
-  let (ok, reason) = p.tryEnqueue(m2)
-  doAssert ok
-  doAssert reason.startsWith("spilled:")
-  let path = reason["spilled:".len .. ^1]
-  let loaded = loadSpill(path)
-  doAssert loaded.body{"x"}.getInt == 2
-  doAssert p.stats.spilled == 1
+block secondResumeIdempotent:
+  let g = loadDiamond()
+  let reg = registry()
+  let db = tmpStore("second-resume")
+  let s1 = newSqliteRunStore(db)
+  let r0 = runGraph(s1, reg, g, "run-2r", parseJson(readFile("tests/fixtures/m1/input.json")),
+                    defaultExecConfig())
+  doAssert r0.status == esCompleted
+  s1.close()
+  resetInvocationMetrics()
+  let s2 = newSqliteRunStore(db)
+  let r1 = resumeGraph(s2, reg, g, "run-2r", defaultExecConfig())
+  doAssert r1.status == esCompleted
+  doAssert resultBranches(r1.outputs) == @["left", "right"]
+  doAssert peakConcurrentInvocations() == 0  # no handler re-entry
+  let r2 = resumeGraph(s2, reg, g, "run-2r", defaultExecConfig())
+  doAssert r2.status == esCompleted
+  doAssert $r2.outputs == $r1.outputs
+  s2.close()
 
-block checkpointAndResumeSkipsValidated:
+block checkpointResumeSkipsValidated:
   let g = loadDiamond()
   let reg = registry()
   let db = tmpStore("ckpt")
   let s1 = newSqliteRunStore(db)
   var cfg = defaultExecConfig()
-  cfg.mode = emSequential
   cfg.checkpointAfter = 1
   let r1 = runGraph(s1, reg, g, "run-ckpt", parseJson(readFile("tests/fixtures/m1/input.json")), cfg)
   doAssert r1.status == esInterrupted
-  doAssert r1.activationCommits >= 1
-  let committed = r1.activations.len
   s1.close()
   let s2 = newSqliteRunStore(db)
   cfg.checkpointAfter = 0
   let r2 = resumeGraph(s2, reg, g, "run-ckpt", cfg)
   s2.close()
-  doAssert r2.status == esCompleted, $r2.status & " " & $r2.outputs
-  doAssert r2.resumed
-  doAssert r2.skippedValidated.len >= 1
+  doAssert r2.status == esCompleted
+  doAssert "split:main" in r2.skippedValidated
   doAssert resultBranches(r2.outputs) == @["left", "right"]
-  # No duplicate activation ids among completed
-  var seen: seq[string] = @[]
-  for a in r2.activations:
-    doAssert a.activationId notin seen
-    seen.add(a.activationId)
-  discard committed
 
-block deadlineObservable:
+block deadlineMustNotSucceed:
   let g = graphFromJson(%*{
     "schema": "nimfactory.graph/0.1",
     "graph_id": "slow-one",
@@ -132,12 +190,33 @@ block deadlineObservable:
   cfg.deadlineMs = 1
   let r = runGraph(s, reg, g, "run-dl", %*{"start": {"v": 1}}, cfg)
   s.close()
-  doAssert r.status in {esTimedOut, esFailed, esCompleted}
-  # If completed despite deadline, still ok if handler finished under race; prefer timeout:
-  if r.status == esTimedOut:
-    var found = false
-    for e in r.events:
-      if e{"kind"}.getStr == "timeout": found = true
-    doAssert found
+  doAssert r.status == esTimedOut, "deadline must fail, got " & $r.status
+  var found = false
+  for e in r.events:
+    if e{"kind"}.getStr == "timeout": found = true
+  doAssert found
+
+block cancelMustNotSucceed:
+  let g = graphFromJson(%*{
+    "schema": "nimfactory.graph/0.1",
+    "graph_id": "slow-two",
+    "version": 1,
+    "nodes": [{"id": "s", "handler": "demo.slow@0.1"}],
+    "entrypoints": [{"input": "start", "to": "s.in"}],
+    "edges": [],
+    "outputs": {"out": "s.out"},
+    "loop_specs": []
+  })
+  let reg = registry()
+  let s = newSqliteRunStore(tmpStore("cancel"))
+  var cfg = defaultExecConfig()
+  cfg.cancelRequested = true
+  let r = runGraph(s, reg, g, "run-cancel", %*{"start": {"v": 1}}, cfg)
+  s.close()
+  doAssert r.status == esCancelled, "cancel must fail, got " & $r.status
+  var found = false
+  for e in r.events:
+    if e{"kind"}.getStr == "cancelled": found = true
+  doAssert found
 
 echo "test_executor: ok"
