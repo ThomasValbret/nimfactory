@@ -4,7 +4,7 @@ Date : 2026-11-18
 Dépôt : https://github.com/ThomasValbret/nimfactory  
 Branche : `fix/wave-a1` (**non fusionnée** dans `main`)  
 Base contre-revue : `7737c6c93efe991b61c07c7a666f8f70656321c8`  
-Révision testée (contenu) :   
+Révision testée (contenu) : `fc3c45e8661aae00c30c9243972cacdfd577e3bc`
 Revue : [docs/qa/WAVE_A_1_R_REVIEW.md](../qa/WAVE_A_1_R_REVIEW.md)
 
 ## Toolchain / SDK (vérifiés)
