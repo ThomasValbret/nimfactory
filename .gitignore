@@ -15,21 +15,22 @@ nimcache/
 nimble.paths.bak
 *.nimble.lock
 
-# Test binaries next to sources
-tests/f0/test_*
-!tests/f0/test_*.nim
-tests/f1/test_*
-!tests/f1/test_*.nim
-tests/f3/test_*
-!tests/f3/test_*.nim
-tests/f4/test_*
-!tests/f4/test_*.nim
-tests/f14/test_*
-!tests/f14/test_*.nim
-tests/f17/test_*
-!tests/f17/test_*.nim
+# Compiled test/example binaries (never ignore *.nim)
+tests/f0/test_contracts
+tests/f0/test_fixture_consumers
+tests/f0/test_message_roundtrip
+tests/f0/test_validation_strict
+tests/f1/test_artifacts
+tests/f1/snapshot_cold_reload
+tests/f3/test_journal
+tests/f4/test_graph
+tests/f14/test_budget
+tests/f17/test_qualification_smoke
+tests/f17/test_a1_component_probes
 examples/wave_a_facade
+examples/wave_a1_facade
 examples/f1_minimal
+.nimcache/
 
 # Secrets & local environment
 .env
