@@ -4,7 +4,7 @@ Date : 2026-11-18
 Dépôt : https://github.com/ThomasValbret/nimfactory  
 Branche : `feature/wave-b-m1`  
 Base : `ae331bd57f7db6cbfdde8d02a74e6b819be7e872`  
-Révision testée (contenu) : renseignée après commit  
+Révision testée (contenu) : `a9f48b2db12df575a4cdb4b754be67a875e8b6cd`  
 SDK : `bf22665ece77d7149dbe61df959a6024bf6b26f3` (`pin_verified=yes`)
 
 ## Objectif
