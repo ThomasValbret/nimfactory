@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Global Wave A (+ A.1) test runner. Exit non-zero on first failure.
+# Global Wave A (+ A.1 / A.1-R) test runner. Exit non-zero on first failure.
+# All reception programs listed below are mandatory (missing file = failure).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
@@ -38,13 +39,25 @@ TESTS=(
   tests/f4/test_graph.nim
   tests/f14/test_budget.nim
   tests/f17/test_qualification_smoke.nim
+  tests/f17/test_a1_component_probes.nim
 )
 
-for extra in tests/f17/test_a1_component_probes.nim; do
-  if [ -f "$extra" ]; then
-    TESTS+=("$extra")
+PROBES=(
+  docs/qa/a1_independent_probe.nim
+  docs/qa/a1_frozen_previous_probe.nim
+  docs/qa/a1r_boundary_probe.nim
+)
+
+missing=0
+for t in "${TESTS[@]}" "${PROBES[@]}"; do
+  if [ ! -f "$t" ]; then
+    echo "MISSING required reception program: $t" >&2
+    missing=1
   fi
 done
+if [ "$missing" -ne 0 ]; then
+  exit 3
+fi
 
 ok=0
 for t in "${TESTS[@]}"; do
@@ -58,16 +71,22 @@ for t in "${TESTS[@]}"; do
   ok=$((ok+1))
 done
 
-# Independent A.1 probe (must be green after remediation)
-if [ -f docs/qa/a1_independent_probe.nim ]; then
-  echo "=== RUN docs/qa/a1_independent_probe.nim ==="
+run_probe() {
+  local src="$1"
+  local name="$2"
+  local outbin="$3"
+  echo "=== RUN $src ==="
   nim c --hints:off --warnings:off \
-    --nimcache:"$CACHE_ROOT/a1_probe" \
-    --out:build/a1-review-probe \
+    --nimcache:"$CACHE_ROOT/$name" \
+    --out:"$outbin" \
     "${PATHS[@]}" \
-    docs/qa/a1_independent_probe.nim
-  ./build/a1-review-probe | tee build/logs/a1_independent_probe.jsonl
+    "$src"
+  "./$outbin" | tee "build/logs/${name}.jsonl"
   ok=$((ok+1))
-fi
+}
+
+run_probe docs/qa/a1_independent_probe.nim a1_independent_probe build/a1-review-probe
+run_probe docs/qa/a1_frozen_previous_probe.nim a1_frozen_previous_probe build/a1-frozen-probe
+run_probe docs/qa/a1r_boundary_probe.nim a1r_boundary_probe build/a1r-boundary-probe
 
 echo "WAVE_A_TESTS_OK count=${ok} sdk=${SDK_SHA} pin_verified=yes"

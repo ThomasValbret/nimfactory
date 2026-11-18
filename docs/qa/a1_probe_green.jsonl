@@ -7,5 +7,5 @@
 {"case":"F14_equivalent_path_handles","pass":true,"observed":{"second_reservation_rejected":true,"ceiling":100}}
 {"case":"F3_explicit_stale_epoch","pass":true,"observed":{"rejected":true}}
 {"case":"F3_missing_epoch_mutation","pass":true,"observed":{"rejected":true,"current_epoch":2,"state":null,"outbox_count":0}}
-{"case":"F4_cycle_bypasses_loop_limit","pass":true,"observed":{"validation":"failed","diagnostics_count":2,"uncontrolled_cycle":["a","b","a"]}}
+{"case":"F4_cycle_bypasses_loop_limit","pass":true,"observed":{"validation":"failed","diagnostics_count":2,"residual_cycle_diagnostic":true,"uncontrolled_cycle":["a","b","a"]}}
 {"summary":"independent_a1_probes","failed":0,"total":10}

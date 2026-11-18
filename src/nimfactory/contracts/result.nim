@@ -169,6 +169,15 @@ proc resultFromJson*(node: JsonNode): CommonResult =
       raise newFactoryError(fecValidationFailed, "diagnostic must be object",
         phase = "result")
     rejectUnknownKeys(d, diagAllowed, "diagnostic")
+    if d.hasKey("code") and d["code"].kind != JString:
+      raise newFactoryError(fecValidationFailed,
+        "diagnostic.code must be string", phase = "result")
+    if d.hasKey("phase") and d["phase"].kind != JString:
+      raise newFactoryError(fecValidationFailed,
+        "diagnostic.phase must be string", phase = "result")
+    if d.hasKey("message") and d["message"].kind != JString:
+      raise newFactoryError(fecValidationFailed,
+        "diagnostic.message must be string", phase = "result")
     if d.hasKey("retryable") and d["retryable"].kind != JBool:
       raise newFactoryError(fecValidationFailed,
         "diagnostic.retryable must be boolean", phase = "result")
@@ -204,6 +213,20 @@ proc resultFromJson*(node: JsonNode): CommonResult =
   if node.hasKey("error"):
     requireField(node, "error", {JObject}, "result")
     let e = node["error"]
+    const errorAllowed = ["code", "phase", "retryable", "reason"]
+    rejectUnknownKeys(e, errorAllowed, "error")
+    if e.hasKey("code") and e["code"].kind != JString:
+      raise newFactoryError(fecValidationFailed,
+        "error.code must be string", phase = "result")
+    if e.hasKey("phase") and e["phase"].kind != JString:
+      raise newFactoryError(fecValidationFailed,
+        "error.phase must be string", phase = "result")
+    if e.hasKey("reason") and e["reason"].kind != JString:
+      raise newFactoryError(fecValidationFailed,
+        "error.reason must be string", phase = "result")
+    if e.hasKey("retryable") and e["retryable"].kind != JBool:
+      raise newFactoryError(fecValidationFailed,
+        "error.retryable must be boolean", phase = "result")
     result.errorCode = e{"code"}.getStr("")
     result.errorPhase = e{"phase"}.getStr("")
     result.errorRetryable = e{"retryable"}.getBool(false)

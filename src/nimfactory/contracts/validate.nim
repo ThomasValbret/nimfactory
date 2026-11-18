@@ -44,6 +44,15 @@ proc expectChar(c: var ScanCtx; ch: char) =
       "expected '" & $ch & "' at " & $c.i, phase = "validate")
   advance(c)
 
+proc readUnicodeHex4(c: var ScanCtx): int =
+  var hex = ""
+  for _ in 1 .. 4:
+    if c.i >= c.s.len or peek(c) notin HexDigits:
+      raise newFactoryError(fecInvalidJson, "bad unicode escape", phase = "validate")
+    hex.add(peek(c))
+    advance(c)
+  result = parseHexInt(hex)
+
 proc parseStringRaw(c: var ScanCtx): string =
   expectChar(c, '"')
   result = ""
@@ -67,17 +76,31 @@ proc parseStringRaw(c: var ScanCtx): string =
       of 'r': result.add('\r')
       of 't': result.add('\t')
       of 'u':
-        # Decode \\uXXXX to the same code point the JSON parser would use.
-        var hex = ""
-        for _ in 1 .. 4:
-          if c.i >= c.s.len or peek(c) notin HexDigits:
-            raise newFactoryError(fecInvalidJson, "bad unicode escape", phase = "validate")
-          hex.add(peek(c))
+        # Match std/json string decoding: combine UTF-16 surrogate pairs.
+        let code = readUnicodeHex4(c)
+        if code >= 0xD800 and code <= 0xDBFF:
+          if peek(c) != '\\':
+            raise newFactoryError(fecInvalidJson, "orphan high surrogate",
+              phase = "validate")
           advance(c)
-        let code = parseHexInt(hex)
-        if code < 0 or code > 0x10FFFF:
-          raise newFactoryError(fecInvalidJson, "bad unicode code point", phase = "validate")
-        result.add(toUTF8(Rune(code)))
+          if peek(c) != 'u':
+            raise newFactoryError(fecInvalidJson, "orphan high surrogate",
+              phase = "validate")
+          advance(c)
+          let low = readUnicodeHex4(c)
+          if low < 0xDC00 or low > 0xDFFF:
+            raise newFactoryError(fecInvalidJson, "invalid surrogate pair",
+              phase = "validate")
+          let combined = 0x10000 + ((code - 0xD800) shl 10) + (low - 0xDC00)
+          result.add(toUTF8(Rune(combined)))
+        elif code >= 0xDC00 and code <= 0xDFFF:
+          raise newFactoryError(fecInvalidJson, "orphan low surrogate",
+            phase = "validate")
+        elif code < 0 or code > 0x10FFFF:
+          raise newFactoryError(fecInvalidJson, "bad unicode code point",
+            phase = "validate")
+        else:
+          result.add(toUTF8(Rune(code)))
       else:
         raise newFactoryError(fecInvalidJson, "bad escape", phase = "validate")
     else:

@@ -91,6 +91,46 @@ block sharedInProcessHandlesShareAuthority:
   l1.closeFileBudgetLedger()
   l2.closeFileBudgetLedger()
 
+block symlinkParentsSharePhysicalAuthority:
+  ## A1-R1: open both handles before reservation; symlink must not dual-count.
+  let base = getCurrentDir() / "build" / "f14-tmp" /
+             ("symlink-" & $getCurrentProcessId() & "-" & $rand(1_000_000_000))
+  if dirExists(base): removeDir(base)
+  createDir(base)
+  let realDir = base / "real"
+  createDir(realDir)
+  let aliasDir = base / "alias"
+  if symlinkExists(aliasDir) or fileExists(aliasDir) or dirExists(aliasDir):
+    removeFile(aliasDir)
+  createSymlink(realDir, aliasDir)
+  let l1 = openFileBudgetLedger(realDir / "book")
+  let l2 = openFileBudgetLedger(aliasDir / "book")
+  doAssert cast[pointer](l1) == cast[pointer](l2)
+  l1.defineScope("run", "100", 10)
+  discard l1.reserve("run", "att-a", 1, "70")
+  var raised = false
+  try:
+    discard l2.reserve("run", "att-b", 1, "70")
+  except FactoryError as e:
+    raised = true
+    doAssert e.code == fecBudgetExhausted
+  doAssert raised
+  l1.closeFileBudgetLedger()
+  l2.closeFileBudgetLedger()
+  let l3 = openFileBudgetLedger(aliasDir / "book")
+  var reserved = 0'i64
+  for s in l3.snapshot()["scopes"]:
+    if s["scope"].getStr == "run":
+      reserved = parseBigIntStr(s["reserved_microusd"].getStr)
+  doAssert reserved == 70
+  var raised2 = false
+  try:
+    discard l3.reserve("run", "att-c", 1, "70")
+  except FactoryError:
+    raised2 = true
+  doAssert raised2
+  l3.closeFileBudgetLedger()
+
 block persistFailureThenRetryCoherent:
   let db = tempDb("persist-fail")
   var l = openFileBudgetLedger(db)

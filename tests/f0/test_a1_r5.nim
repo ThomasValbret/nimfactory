@@ -1,4 +1,4 @@
-## A1-R5 regressions: unicode duplicate keys + nested need types.
+## A1-R5 regressions: unicode keys, surrogate pairs, nested typed fields.
 import std/json
 import nimfactory
 
@@ -20,6 +20,20 @@ block distinctUnicodeAndLiteralKeysAccepted:
   doAssert n["e"].getInt == 1
   doAssert n["0065"].getInt == 2
 
+block surrogatePairDuplicateRejected:
+  expectCode(proc () =
+    discard parseJsonStrict("""{"😀":1,"\uD83D\uDE00":2}"""), fecDuplicateKey)
+
+block singleSurrogatePairAccepted:
+  let n = parseJsonStrict("""{"\uD83D\uDE00":1}""")
+  doAssert n.hasKey("😀")
+  doAssert n["😀"].getInt == 1
+
+block nestedSurrogatePairDuplicateRejected:
+  expectCode(proc () =
+    discard parseJsonStrict("""{"outer":{"😀":1,"\uD83D\uDE00":2}}"""),
+      fecDuplicateKey)
+
 block needRequiredWrongTypeRejected:
   expectCode(proc () =
     discard resultFromJson(%*{
@@ -29,6 +43,27 @@ block needRequiredWrongTypeRejected:
       "needs": [{"id": "n1", "target": "c", "selector": "s",
                  "required": "true", "reason": "x"}],
       "diagnostics": []
+    }), fecValidationFailed)
+
+block diagnosticWrongTypesRejected:
+  expectCode(proc () =
+    discard resultFromJson(%*{
+      "schema": ResultSchema,
+      "status": "ok",
+      "outputs": {},
+      "needs": [],
+      "diagnostics": [{"code": 123, "phase": [], "message": false}]
+    }), fecValidationFailed)
+
+block errorRetryableWrongTypeRejected:
+  expectCode(proc () =
+    discard resultFromJson(%*{
+      "schema": ResultSchema,
+      "status": "failed",
+      "outputs": {},
+      "needs": [],
+      "diagnostics": [],
+      "error": {"code": "x", "phase": "p", "retryable": "true", "reason": "r"}
     }), fecValidationFailed)
 
 echo "test_a1_r5: ok"

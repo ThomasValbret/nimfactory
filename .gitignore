@@ -57,3 +57,6 @@ credentials.json
 tmp/
 /tmp/
 .nimcache/
+
+build/a1*
+build/a1r*

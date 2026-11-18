@@ -1,0 +1,6 @@
+{"case":"F14_symlink_same_storage","pass":false,"observed":{"note":"pre-fix on 7737c6c: two authorities, authorized_total=140"}}
+{"case":"F0_surrogate_pair_duplicate","pass":false,"observed":{"rejected":false,"parsed":{"😀":2}}}
+{"case":"F0_single_surrogate_pair_valid","pass":true,"observed":{"accepted":true,"reason":""}}
+{"case":"F0_diagnostic_wrong_types","pass":false,"observed":{"rejected":false}}
+{"case":"F0_error_wrong_boolean","pass":false,"observed":{"rejected":false,"decoded_retryable":false}}
+{"summary":"a1r_boundary_probes","failed":4,"total":5}

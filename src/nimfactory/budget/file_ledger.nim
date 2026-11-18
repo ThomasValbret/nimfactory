@@ -69,10 +69,20 @@ proc fileBudgetLedgerCapabilities*(): FileBudgetLedgerCapabilities =
 
 proc ledgerRoot(dbPath: string): string =
   ## Canonical storage identity: absolute normalized path (collapses `.` / `..`).
+  ## Callers that need physical identity (symlink parents) must resolve after
+  ## `createDir` via `physicalLedgerRoot`.
   var p = dbPath
   if not p.endsWith(".ledger"):
     p = p & ".ledger"
   result = absolutePath(normalizedPath(p))
+
+proc physicalLedgerRoot(root: string): string =
+  ## Resolve symlinks in an existing ledger directory so alias paths share one
+  ## in-process authority. Requires `root` to exist (caller creates it first).
+  try:
+    result = expandFilename(root)
+  except OSError:
+    result = absolutePath(normalizedPath(root))
 
 
 proc ensureRegistryLock() =
@@ -413,8 +423,11 @@ proc newFileBudgetLedger(root: string): FileBudgetLedger =
   loadSnapshotInto(result)
 
 proc openFileBudgetLedger*(dbPath: string): FileBudgetLedger =
-  let root = ledgerRoot(dbPath)
-  createDir(root)
+  let lexical = ledgerRoot(dbPath)
+  createDir(lexical)
+  let root = physicalLedgerRoot(lexical)
+  if root != lexical:
+    createDir(root)
   ensureRegistryLock()
   acquire(gRegistryLock)
   defer: release(gRegistryLock)

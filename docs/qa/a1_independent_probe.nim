@@ -118,15 +118,16 @@ block F14_same_path_handles:
   note("F14_same_path_handles", rejected, %*{"second_reservation_rejected": rejected})
 
 block F14_equivalent_path_handles:
+  ## Discriminating shape (review): open both handles before first reservation.
   let base = tmpRoot()
   let p1 = base / "alias-budget"
   ## Literal `./` segment (do not use Path `/` which may collapse `.`).
   let p2 = base & "/./alias-budget"
   var l1 = openFileBudgetLedger(p1)
-  l1.defineScope("run", "100", 10)
-  discard l1.reserve("run", "b1", 1, "70")
   var l2 = openFileBudgetLedger(p2)
+  l1.defineScope("run", "100", 10)
   var rejected = false
+  discard l1.reserve("run", "b1", 1, "70")
   try: discard l2.reserve("run", "b2", 1, "70")
   except FactoryError: rejected = true
   closeFileBudgetLedger(l1); closeFileBudgetLedger(l2)
@@ -211,10 +212,17 @@ block F4_cycle_bypasses_loop_limit:
     }]
   })
   let r = validateGraphSpec(reg, g)
-  let pass = r.status != rsOk
+  ## Require residual-cycle signal, not any other invalidity.
+  var hasResidual = false
+  for d in r.diagnostics:
+    let blob = (d.code & " " & d.message).toLowerAscii()
+    if "cycle" in blob or "residual" in blob or "uncontrolled" in blob:
+      hasResidual = true
+  let pass = r.status != rsOk and hasResidual
   note("F4_cycle_bypasses_loop_limit", pass, %*{
     "validation": $r.status,
     "diagnostics_count": r.diagnostics.len,
+    "residual_cycle_diagnostic": hasResidual,
     "uncontrolled_cycle": ["a", "b", "a"]
   })
 
