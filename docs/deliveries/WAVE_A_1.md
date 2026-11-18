@@ -5,7 +5,7 @@ Dépôt : https://github.com/ThomasValbret/nimfactory
 Branche : `fix/wave-a1` (non fusionnée dans `main`)  
 Base inspectée : `1e825005bcad9e046157f71c01bd6d4ac07ef288`  
 Révision F0 A.1 : `d9394d1983b453ff4f8e95f5c1177d5322d2d2caf3` (contrats)  
-Révision testée (HEAD branche après lots) : renseignée au push  
+Révision testée (HEAD) : `18af230b29dbda520e4690958fb255299660c86e`  
 
 ## Toolchain et SDK
 
