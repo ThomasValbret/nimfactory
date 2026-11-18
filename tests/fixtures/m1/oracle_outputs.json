@@ -1,0 +1,12 @@
+{
+  "schema": "nimfactory.m1_oracle/0.1",
+  "graph_id": "m1-diamond",
+  "input": {
+    "start": {"value": "m1", "n": 1}
+  },
+  "expected_result": {
+    "count": 2,
+    "branch_order": ["left", "right"]
+  },
+  "notes": "Oracle fixed before trials: join/reduce must order by branch id, independent of arrival and exec mode."
+}

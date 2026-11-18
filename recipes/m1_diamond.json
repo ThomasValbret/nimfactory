@@ -1,0 +1,31 @@
+{
+  "schema": "nimfactory.graph/0.1",
+  "graph_id": "m1-diamond",
+  "version": 1,
+  "nodes": [
+    {"id": "split", "kind": "map", "control": {"branches": ["left", "right"]}},
+    {"id": "left", "handler": "demo.leaf@0.1"},
+    {"id": "right", "handler": "demo.leaf@0.1"},
+    {"id": "merge", "kind": "join", "control": {
+      "policy": "all_required",
+      "on_failure": "fail",
+      "on_late": "discard",
+      "on_cancel": "fail"
+    }},
+    {"id": "reduce", "kind": "reduce", "control": {
+      "function": "concat",
+      "stable_order": true,
+      "commutative": false
+    }}
+  ],
+  "entrypoints": [{"input": "start", "to": "split.in"}],
+  "edges": [
+    {"from": "split.branch", "to": "left.in"},
+    {"from": "split.branch", "to": "right.in"},
+    {"from": "left.out", "to": "merge.in_left"},
+    {"from": "right.out", "to": "merge.in_right"},
+    {"from": "merge.out", "to": "reduce.in"}
+  ],
+  "outputs": {"result": "reduce.out"},
+  "loop_specs": []
+}

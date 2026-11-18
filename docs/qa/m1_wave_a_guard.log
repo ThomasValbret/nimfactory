@@ -1,0 +1,61 @@
+nimfactory=ae331bd57f7db6cbfdde8d02a74e6b819be7e872
+nimagent=bf22665ece77d7149dbe61df959a6024bf6b26f3
+nimagent_pin_verified=yes
+Nim Compiler Version 2.4.0 [Linux: amd64]
+=== RUN tests/f0/test_contracts.nim ===
+test_contracts: ok
+=== RUN tests/f0/test_message_roundtrip.nim ===
+test_message_roundtrip: ok
+=== RUN tests/f0/test_fixture_consumers.nim ===
+test_fixture_consumers: ok
+=== RUN tests/f0/test_validation_strict.nim ===
+test_validation_strict: ok
+=== RUN tests/f0/test_a1_r5.nim ===
+test_a1_r5: ok
+=== RUN tests/f1/test_artifacts.nim ===
+test_artifacts: ok
+=== RUN tests/f3/test_journal.nim ===
+test_journal: ok
+=== RUN tests/f4/test_graph.nim ===
+test_graph: ok
+=== RUN tests/f14/test_budget.nim ===
+test_budget: ok
+=== RUN tests/f17/test_qualification_smoke.nim ===
+F17 qualification smoke (mode=simulated, no LLM)
+scenarios=19 discriminators=ok fake_preparer_fails=ok
+test_qualification_smoke: ok
+=== RUN tests/f17/test_a1_component_probes.nim ===
+F17 A.1 component probes (mode=component_probe, no LLM)
+test_a1_component_probes: ok
+=== RUN docs/qa/a1_independent_probe.nim ===
+{"case":"F0_exact_duplicate","pass":true,"observed":{"rejected":true}}
+{"case":"F0_unicode_duplicate","pass":true,"observed":{"rejected":true,"parsed":null}}
+{"case":"F0_distinct_unicode_keys","pass":true,"observed":{"accepted":true,"reason":""}}
+{"case":"F0_need_wrong_boolean","pass":true,"observed":{"rejected":true,"decoded_required":false}}
+{"case":"F1_recapture_readset_immutability","pass":true,"observed":{"same_snapshot":true,"old_version_lost_after_recapture":false,"id_reused_for_different_entries":false,"old_id_now_resolves_to_sources":["source","query-A"]}}
+{"case":"F14_same_path_handles","pass":true,"observed":{"second_reservation_rejected":true}}
+{"case":"F14_equivalent_path_handles","pass":true,"observed":{"second_reservation_rejected":true,"ceiling":100}}
+{"case":"F3_explicit_stale_epoch","pass":true,"observed":{"rejected":true}}
+{"case":"F3_missing_epoch_mutation","pass":true,"observed":{"rejected":true,"current_epoch":2,"state":null,"outbox_count":0}}
+{"case":"F4_cycle_bypasses_loop_limit","pass":true,"observed":{"validation":"failed","diagnostics_count":2,"residual_cycle_diagnostic":true,"uncontrolled_cycle":["a","b","a"]}}
+{"summary":"independent_a1_probes","failed":0,"total":10}
+=== RUN docs/qa/a1_frozen_previous_probe.nim ===
+{"case":"F0_exact_duplicate","pass":true,"observed":{"rejected":true}}
+{"case":"F0_unicode_duplicate","pass":true,"observed":{"rejected":true,"parsed":null}}
+{"case":"F0_distinct_unicode_keys","pass":true,"observed":{"accepted":true,"reason":""}}
+{"case":"F0_need_wrong_boolean","pass":true,"observed":{"rejected":true,"decoded_required":false}}
+{"case":"F1_recapture_readset_immutability","pass":true,"observed":{"same_snapshot":true,"old_version_lost_after_recapture":false,"id_reused_for_different_entries":false,"old_id_now_resolves_to_sources":["source","query-A"]}}
+{"case":"F14_same_path_handles","pass":true,"observed":{"second_reservation_rejected":true}}
+{"case":"F14_equivalent_path_handles","pass":true,"observed":{"second_reservation_rejected":true,"ceiling":100,"authorized_total":70,"first_state":{"scopes":[{"scope":"run","ceiling_microusd":"100","max_sends":10,"reserved_microusd":"70","sends_reserved":1,"spent_microusd":"0","sends_spent":0}],"ledger_dir":"/tmp/nf-a1-frozen-1795009319-67411/alias-budget.ledger","capabilities":{"backend":"file_journal","authority":"state_snapshot_with_journal_tail_replay","journal_line_count":2}},"second_state":{"scopes":[{"scope":"run","ceiling_microusd":"100","max_sends":10,"reserved_microusd":"70","sends_reserved":1,"spent_microusd":"0","sends_spent":0}],"ledger_dir":"/tmp/nf-a1-frozen-1795009319-67411/alias-budget.ledger","capabilities":{"backend":"file_journal","authority":"state_snapshot_with_journal_tail_replay","journal_line_count":2}}}}
+{"case":"F3_explicit_stale_epoch","pass":true,"observed":{"rejected":true}}
+{"case":"F3_missing_epoch_mutation","pass":true,"observed":{"rejected":true,"current_epoch":2,"state":null,"outbox_count":0}}
+{"case":"F4_cycle_bypasses_loop_limit","pass":true,"observed":{"validation":"failed","diagnostics_count":2,"residual_cycle_diagnostic":true,"uncontrolled_cycle":["a","b","a"]}}
+{"summary":"a1_frozen_previous_probes","failed":0,"total":10}
+=== RUN docs/qa/a1r_boundary_probe.nim ===
+{"case":"F14_symlink_same_storage","pass":true,"observed":{"first_reserve_ok":true,"second_reserve_rejected":true,"shared_handle":true,"authorized_total":70,"ceiling":100,"reopen_second_rejected":true,"reserved_after_reopen":70,"first_state":{"scopes":[{"scope":"run","ceiling_microusd":"100","max_sends":10,"reserved_microusd":"70","sends_reserved":1,"spent_microusd":"0","sends_spent":0}],"ledger_dir":"/tmp/nf-a1r-bound-1795009321-67554/real/book.ledger","capabilities":{"backend":"file_journal","authority":"state_snapshot_with_journal_tail_replay","journal_line_count":2}},"second_state":{"scopes":[{"scope":"run","ceiling_microusd":"100","max_sends":10,"reserved_microusd":"70","sends_reserved":1,"spent_microusd":"0","sends_spent":0}],"ledger_dir":"/tmp/nf-a1r-bound-1795009321-67554/real/book.ledger","capabilities":{"backend":"file_journal","authority":"state_snapshot_with_journal_tail_replay","journal_line_count":2}}}}
+{"case":"F0_surrogate_pair_duplicate","pass":true,"observed":{"rejected":true,"parsed":null}}
+{"case":"F0_single_surrogate_pair_valid","pass":true,"observed":{"accepted":true,"reason":""}}
+{"case":"F0_diagnostic_wrong_types","pass":true,"observed":{"rejected":true}}
+{"case":"F0_error_wrong_boolean","pass":true,"observed":{"rejected":true,"decoded_retryable":true}}
+{"summary":"a1r_boundary_probes","failed":0,"total":5}
+WAVE_A_TESTS_OK count=14 sdk=bf22665ece77d7149dbe61df959a6024bf6b26f3 pin_verified=yes
