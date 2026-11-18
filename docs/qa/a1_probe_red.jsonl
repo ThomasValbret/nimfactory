@@ -1,0 +1,11 @@
+{"case":"F0_exact_duplicate","pass":true,"observed":{"rejected":true}}
+{"case":"F0_unicode_duplicate","pass":false,"observed":{"rejected":false,"parsed":{"epoch":2}}}
+{"case":"F0_distinct_unicode_keys","pass":false,"observed":{"accepted":false,"reason":"duplicate key: 0065"}}
+{"case":"F0_need_wrong_boolean","pass":false,"observed":{"rejected":false,"decoded_required":false}}
+{"case":"F1_recapture_readset_immutability","pass":false,"observed":{"same_snapshot":true,"old_version_lost_after_recapture":true,"id_reused_for_different_entries":true,"old_id_now_resolves_to_sources":["source","query-B"]}}
+{"case":"F14_same_path_handles","pass":true,"observed":{"second_reservation_rejected":true}}
+{"case":"F14_equivalent_path_handles","pass":true,"observed":{"second_reservation_rejected":true,"ceiling":100}}
+{"case":"F3_explicit_stale_epoch","pass":true,"observed":{"rejected":true}}
+{"case":"F3_missing_epoch_mutation","pass":false,"observed":{"rejected":false,"current_epoch":2,"state":{"owner":"unfenced"},"outbox_count":1}}
+{"case":"F4_cycle_bypasses_loop_limit","pass":true,"observed":{"validation":"failed","diagnostics_count":1,"uncontrolled_cycle":["a","b","a"]}}
+{"summary":"independent_a1_probes","failed":5,"total":10}

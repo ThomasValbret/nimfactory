@@ -1,0 +1,5 @@
+/opt/nimFactory/src/nimfactory/budget/file_ledger.nim(653, 47) Warning: SqliteBudgetLedger is a file journal backend; use FileBudgetLedger.; SqliteBudgetLedger is deprecated [Deprecated]
+/opt/nimFactory/src/nimfactory/budget/file_ledger.nim(657, 34) Warning: SqliteBudgetLedger is a file journal backend; use FileBudgetLedger.; SqliteBudgetLedger is deprecated [Deprecated]
+version=0.1.0
+sdk_pin=bf22665ece77d7149dbe61df959a6024bf6b26f3
+wave_a1_facade: ok

@@ -4,7 +4,6 @@ import std/[os, json, tables, times, random]
 import ../contracts/[ids, errors, ports]
 import ./types
 import ./store
-import ./sha256
 
 type
   SnapshotIndexEntry* = object
@@ -160,6 +159,35 @@ proc resolveLatestReadSet*(src: LocalSnapshotSource;
   src.readSets[rsId] = loaded
   loaded
 
+proc resolveSource*(src: LocalSnapshotSource; snapshot: SourceSnapshot;
+                   sourceId: string): string =
+  for r in snapshot.sourceRevisions:
+    if r.sourceId == sourceId:
+      return src.store.read(r.artifactRef)
+  raise newFactoryError(fecMissingRequiredInput,
+    "source not in snapshot: " & sourceId, phase = "snapshot")
+
+proc reloadSnapshot*(src: LocalSnapshotSource; snapshotId: string): SourceSnapshot =
+  if snapshotId in src.snapshots:
+    return src.snapshots[snapshotId]
+  if snapshotId notin src.index.snapshots:
+    raise newFactoryError(fecMissingRequiredInput,
+      "unknown snapshot " & snapshotId, phase = "snapshot")
+  let manifestRef = src.index.snapshots[snapshotId].manifestRef
+  let node = parseJson(src.store.read(manifestRef))
+  let snapshot = snapshotFromJson(node)
+  if snapshot.snapshotId != snapshotId:
+    raise newFactoryError(fecValidationFailed,
+      "snapshot id mismatch for " & snapshotId, phase = "snapshot")
+  src.snapshots[snapshotId] = snapshot
+  snapshot
+
+proc reloadReadSet*(src: LocalSnapshotSource; readSetId: string): ReadSet =
+  if readSetId in src.readSets:
+    return src.readSets[readSetId]
+  result = loadReadSetFromStore(src, readSetId)
+  src.readSets[readSetId] = result
+
 proc capture*(src: LocalSnapshotSource;
               req: SourceCaptureRequest): tuple[snapshot: SourceSnapshot, readSet: ReadSet] =
   var revisions: seq[SourceRevision] = @[]
@@ -167,6 +195,12 @@ proc capture*(src: LocalSnapshotSource;
     revisions.add(captureSourceFile(src.store, spec))
   let snapshotId = snapshotIdFromIdentity(
     revisions, req.chamberRevisions, req.recipeRefs, req.indexRevisions)
+  ## Same identity → reuse sealed snapshot and its cumulative read-set chain.
+  ## Never wipe published read-set history or reuse an id with different content.
+  if snapshotId in src.index.snapshots or snapshotId in src.snapshots:
+    let existing = reloadSnapshot(src, snapshotId)
+    let latest = resolveLatestReadSet(src, snapshotId)
+    return (existing, latest)
   var snapshot = SourceSnapshot(
     snapshotId: snapshotId,
     capturedAt: utcNowIso(),
@@ -205,35 +239,6 @@ proc capture*(src: LocalSnapshotSource;
                             "readset:" & rsId)
   registerSnapshotInIndex(src, snapshot, readSet, put.id, rsPut.id)
   (snapshot, readSet)
-
-proc resolveSource*(src: LocalSnapshotSource; snapshot: SourceSnapshot;
-                   sourceId: string): string =
-  for r in snapshot.sourceRevisions:
-    if r.sourceId == sourceId:
-      return src.store.read(r.artifactRef)
-  raise newFactoryError(fecMissingRequiredInput,
-    "source not in snapshot: " & sourceId, phase = "snapshot")
-
-proc reloadSnapshot*(src: LocalSnapshotSource; snapshotId: string): SourceSnapshot =
-  if snapshotId in src.snapshots:
-    return src.snapshots[snapshotId]
-  if snapshotId notin src.index.snapshots:
-    raise newFactoryError(fecMissingRequiredInput,
-      "unknown snapshot " & snapshotId, phase = "snapshot")
-  let manifestRef = src.index.snapshots[snapshotId].manifestRef
-  let node = parseJson(src.store.read(manifestRef))
-  let snapshot = snapshotFromJson(node)
-  if snapshot.snapshotId != snapshotId:
-    raise newFactoryError(fecValidationFailed,
-      "snapshot id mismatch for " & snapshotId, phase = "snapshot")
-  src.snapshots[snapshotId] = snapshot
-  snapshot
-
-proc reloadReadSet*(src: LocalSnapshotSource; readSetId: string): ReadSet =
-  if readSetId in src.readSets:
-    return src.readSets[readSetId]
-  result = loadReadSetFromStore(src, readSetId)
-  src.readSets[readSetId] = result
 
 proc appendRead*(src: LocalSnapshotSource; snapshot: SourceSnapshot;
                  entry: ReadSetEntry): ReadSet =

@@ -1,85 +1,69 @@
-# Vague A.1 — Corrections et requalification
+# Vague A.1 — candidat post-revue indépendante
 
 Date : 2026-11-18  
 Dépôt : https://github.com/ThomasValbret/nimfactory  
-Branche : `fix/wave-a1` (non fusionnée dans `main`)  
-Base inspectée : `1e825005bcad9e046157f71c01bd6d4ac07ef288`  
-Révision F0 A.1 : `d9394d1983b453ff4f8e95f5c1177d5322d2d2caf3` (contrats)  
-Révision testée (HEAD) : `0090685d2d67e7ee8cfda05b31897b0b2a751c67`  
+Branche : `fix/wave-a1` (**non fusionnée** dans `main`)  
+Base revue : `ed2344a9de504535ba48f6db91517645338a3f04`  
+Révision testée (contenu) : renseignée au push du candidat (docs seuls après)  
+Revue indépendante : [docs/qa/WAVE_A_1_INDEPENDENT_REVIEW.md](../qa/WAVE_A_1_INDEPENDENT_REVIEW.md)
 
-## Toolchain et SDK
+## Toolchain / SDK (vérifiés)
 
-| Élément | Valeur vérifiée |
+| Élément | Valeur |
 | --- | --- |
-| Nim | 2.4.0 (`nim --version`, git hash compilateur `14991af7…`) |
-| NimAgent | `bf22665ece77d7149dbe61df959a6024bf6b26f3` via `vendor/NimAgentLibrary` |
-| Résolution build | `config.nims` + `scripts/fetch_sdk.sh` (pas de dépendance implicite à `/opt` pour compiler) |
-| Commande globale | `./scripts/test_wave_a.sh` |
+| Nim | 2.4.0 |
+| NimAgent | `bf22665ece77d7149dbe61df959a6024bf6b26f3` |
+| Pin vérifié | `scripts/test_wave_a.sh` échoue si SHA ≠ pin (`nimagent_pin_verified=yes`) |
+| Build | `vendor/NimAgentLibrary` via `scripts/fetch_sdk.sh` |
 
-## Nature du « 8/8 » (clôture A) vs A.1
+## Preuves rouge → vert (A1-R1…R5)
 
-Le « 8/8 » de WAVE_A désignait **huit exécutables de tests** Nim (`nim c -r` sur huit fichiers), pas huit suites exhaustives ni la preuve de toutes les garanties d’interruption/concurrence.  
-A.1 ajoute `test_validation_strict` et `test_a1_component_probes` ; la commande globale a observé **10/10 OK** :
+Programme : `docs/qa/a1_independent_probe.nim` (sans façade).
 
-1. `tests/f0/test_contracts.nim`
-2. `tests/f0/test_message_roundtrip.nim`
-3. `tests/f0/test_fixture_consumers.nim`
-4. `tests/f0/test_validation_strict.nim` ← A.1
-5. `tests/f1/test_artifacts.nim`
-6. `tests/f3/test_journal.nim`
-7. `tests/f4/test_graph.nim`
-8. `tests/f14/test_budget.nim`
-9. `tests/f17/test_qualification_smoke.nim` (19 scénarios dont 5 A.1)
-10. `tests/f17/test_a1_component_probes.nim` ← A.1
+| État | Preuve |
+| --- | --- |
+| Rouge (avant correctifs) | [docs/qa/a1_independent_observations.jsonl](../qa/a1_independent_observations.jsonl) — **failed=7/10** (revue) ; reproduction locale **failed=5/10** avant correctifs restants |
+| Vert (après) | [docs/qa/a1_probe_green.jsonl](../qa/a1_probe_green.jsonl) — **failed=0/total=10**, exit 0 |
 
-Sortie observée :
-```
-WAVE_A_TESTS_OK count=10 sdk=bf22665ece77d7149dbe61df959a6024bf6b26f3
-```
-Consommateur façade : `examples/wave_a1_facade.nim` → `wave_a1_facade: ok`  
-LLM : **0**
+Témoins positifs conservés : doublon JSON littéral, handles F14 même chemin, epoch F3 explicite ancien, (et F4 cycle résiduel déjà rejeté).
 
-## Correspondance défaut → correction → test
+### Correspondance défaut → correction → test
 
-| ID revue | Lot | Défaut | Correction | Preuve |
+| ID | Lot | Défaut | Correction | Test |
 | --- | --- | --- | --- | --- |
-| R5 | F0 | meta/result/doublons/inconnus | validateurs stricts | `test_validation_strict` |
-| R4 | F1 | read sets non cumulatifs ; identité snapshot ; résolution non durable | versions immuables + identité canonique + index durable | `test_artifacts` + sondes F17 |
-| R2 | F3 | commitTransition epoch obsolète | garde epoch dans la transaction | `test_journal` + F17 probes |
-| F3+ | F3 | outbox publishing sans redistrib | `redistributeUnackedOutbox` | `test_journal` |
-| F3+ | F3 | SIGSEGV états manquants | rejet typé | `test_journal` |
-| R3 | F4 | ports requis non alimentés ; cycle parasite | validation structurelle | `test_graph` + F17 |
-| R1 | F14 | négatifs, dual-handle, persist/idempotence | autorité partagée + domaines + conflits | `test_budget` + F17 |
-| — | F14 | nom Sqlite trompeur | `FileBudgetLedger` ; alias déprécié | ADR + code |
+| A1-R1 | F14 | alias de chemin → deux autorités | `ledgerRoot` = `absolutePath(normalizedPath(...))` | probe `F14_equivalent_path_handles` |
+| A1-R2 | F1 | recapture écrase read sets | `capture` réutilise chaîne si même `snapshotId` | probe `F1_recapture_readset_immutability` |
+| A1-R3 | F4 | cycle évitant le contrôleur loop | cycles résiduels après retrait des loop | probe `F4_cycle_bypasses_loop_limit` |
+| A1-R4 | F3 | epoch omis contourne la garde | `epoch` entier obligatoire + égalité owner | probe `F3_missing_epoch_mutation` |
+| A1-R5 | F0 | `\uXXXX` mal décodé ; `required:"true"` | décodage Unicode ; types imbriqués needs | probe F0_* + `tests/f0/test_a1_r5.nim` |
 
-Détails par lot : [F0.md](F0.md), [F1.md](F1.md), [F3.md](F3.md), [F4.md](F4.md), [F14.md](F14.md), [F17.md](F17.md).  
-Revue source : [docs/qa/WAVE_A_REVIEW.md](../qa/WAVE_A_REVIEW.md).
+## Qualification complète observée
 
-## Doublures et intégrations
+```
+./scripts/test_wave_a.sh
+# nimagent_pin_verified=yes
+# WAVE_A_TESTS_OK count=12 sdk=bf22665ece77d7149dbe61df959a6024bf6b26f3 pin_verified=yes
+examples/wave_a1_facade.nim → wave_a1_facade: ok
+```
 
-- Adaptateurs réels : Message NimAgent (pin vendor), SQLite système pour F3, artefacts disque F1, ledger fichier F14
-- Doublures : registre handlers F4 simulé ; F17 oracles simulés + probes composants
-- Pas de fork Message (seul `message_codec` factory)
-
-## Limites restantes
-
-- F16 partiel / seeds F12 : hors A.1
-- F13 scripté prouve le broker, pas la qualité des petits modèles : hors A.1 (vague B)
-- F17 : qualification A.1 des contre-exemples ; pas campagne LLM / M4
-- F14 : backend fichier (pas SQLite) ; multi-processus dépend de l’autorité documentée dans F14.md
-- M1 : **non atteint** (pas de CLI F16 ni exécuteur F5)
+Journal : [docs/qa/a1_full_suite.log](../qa/a1_full_suite.log), [docs/qa/a1_facade.log](../qa/a1_facade.log).  
+LLM : **0**.
 
 ## Verdicts séparés
 
-| Objet | Verdict A.1 |
+| Objet | Verdict |
 | --- | --- |
-| **F0** | Conforme aux critères de validation effective |
-| **Composants A (F1, F3, F4, F14)** | Défauts revue corrigés et couverts par tests/probes |
-| **F17** | Étendu aux cas A.1 ; mode simulé + component_probe |
-| **M0** | **Atteint** après requalification A.1 (Message + validateurs/schémas) |
-| **M1** | **Non atteint** (exécuteur/CLI hors périmètre) |
+| **F0** | Écarts A1-R5 corrigés et couverts ; Message SDK réel utilisé via façade |
+| **Composants A (F1, F3, F4, F14)** | Écarts A1-R1…R4 corrigés ; tests existants + sondes vertes |
+| **M0** | **Reste à requalifier** (pas déclaré atteint ici ; revue indépendante à renouveler) |
+| **M1** | **Non atteint** (pas F5/F16) |
+
+## Limites
+
+- Pas de vague B, pas de merge `main`
+- F14 : identité de chemin normalisée in-process ; multi-processus non garanti
+- F17 : qualification simulée + probes ; pas M4/LLM
 
 ## Point d’arrêt
 
-A.1 corrigée, testée, prête pour revue sur `fix/wave-a1`.  
-**Pas** d’intégration vague B dans cette passe. **Pas** de merge `main`.
+Candidat A.1 prêt pour **nouvelle revue** sur `fix/wave-a1`. Fusion après validation externe.

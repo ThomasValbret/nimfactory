@@ -308,6 +308,31 @@ proc loopCoversScc(comp: HashSet[string];
       return true
   false
 
+proc residualCycleWithoutLoopControllers(comp: HashSet[string];
+    declaredLoops: HashSet[string]; adj: Table[string, HashSet[string]];
+    selfLoops: HashSet[string]): bool =
+  ## After removing declared loop controllers, any remaining cycle is uncontrolled.
+  var residual = initHashSet[string]()
+  for id in comp:
+    if id notin declaredLoops:
+      residual.incl(id)
+  if residual.len == 0:
+    return false
+  for id in residual:
+    if id in selfLoops:
+      return true
+  var subAdj = initTable[string, HashSet[string]]()
+  for id in residual:
+    subAdj[id] = initHashSet[string]()
+    if id in adj:
+      for nxt in adj[id]:
+        if nxt in residual:
+          subAdj[id].incl(nxt)
+  for scc in strongComponents(subAdj, residual):
+    if sccHasCycle(scc, selfLoops):
+      return true
+  false
+
 proc validateUndeclaredCycles(g: GraphSpec; nodes: Table[string, GraphNode];
                                 diags: var seq[Diagnostic]) =
   let adj = buildAdjacency(g)
@@ -319,13 +344,14 @@ proc validateUndeclaredCycles(g: GraphSpec; nodes: Table[string, GraphNode];
   for comp in strongComponents(adj, nodeIds):
     if not sccHasCycle(comp, selfLoops):
       continue
-    if not loopCoversScc(comp, declaredLoops):
+    if not loopCoversScc(comp, declaredLoops) or
+       residualCycleWithoutLoopControllers(comp, declaredLoops, adj, selfLoops):
       var refs: seq[string] = @[]
       for id in comp:
         refs.add(id)
       diags.add(diagnostic($fecDependencyCycle, "graph",
-        "undeclared cyclic wiring; each cycle must belong to a declared " &
-        "loop with exit and limit",
+        "undeclared cyclic wiring; each cycle must traverse a declared " &
+        "bounded loop controller",
         refs = refs))
 
 proc collectFedPorts(g: GraphSpec): Table[string, HashSet[string]] =

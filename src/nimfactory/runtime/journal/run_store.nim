@@ -167,19 +167,23 @@ method commitTransition*(s: SqliteRunStore; runId: string; transition: JsonNode)
   execSql(s.db, "BEGIN IMMEDIATE")
   try:
     let curEpoch = s.runEpochInTxn(runId)
-    if transition.hasKey("epoch"):
-      let txEpoch = transition["epoch"].getInt
-      if txEpoch != curEpoch:
-        raise newFactoryError(fecStaleSnapshot,
-          "transition epoch " & $txEpoch & " does not match run epoch " & $curEpoch,
-          phase = "journal", retryable = false)
+    ## Mutating transitions must carry an integer epoch matching the current owner.
+    if not transition.hasKey("epoch") or transition["epoch"].kind != JInt:
+      raise newFactoryError(fecMissingRequiredInput,
+        "transition.epoch required for mutating commit", phase = "journal",
+        retryable = false)
+    let txEpoch = transition["epoch"].getInt
+    if txEpoch != curEpoch:
+      raise newFactoryError(fecStaleSnapshot,
+        "transition epoch " & $txEpoch & " does not match run epoch " & $curEpoch,
+        phase = "journal", retryable = false)
     if transition.hasKey("state"):
       runPrepared(s.db,
         "UPDATE nf_runs SET state_json = ? WHERE run_id = ?",
         [$transition["state"], runId])
     let actId = transition{"activation_id"}.getStr("")
     let attId = transition{"attempt_id"}.getStr("")
-    let epoch = transition{"epoch"}.getInt(1)
+    let epoch = txEpoch
     let validated = if transition{"invocation_validated"}.getBool(false): "1" else: "0"
     if actId.len > 0:
       runPrepared(s.db,

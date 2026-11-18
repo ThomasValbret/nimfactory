@@ -68,10 +68,12 @@ proc fileBudgetLedgerCapabilities*(): FileBudgetLedgerCapabilities =
   )
 
 proc ledgerRoot(dbPath: string): string =
-  if dbPath.endsWith(".ledger"):
-    dbPath
-  else:
-    dbPath & ".ledger"
+  ## Canonical storage identity: absolute normalized path (collapses `.` / `..`).
+  var p = dbPath
+  if not p.endsWith(".ledger"):
+    p = p & ".ledger"
+  result = absolutePath(normalizedPath(p))
+
 
 proc ensureRegistryLock() =
   if not gRegistryInit:

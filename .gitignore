@@ -20,6 +20,7 @@ tests/f0/test_contracts
 tests/f0/test_fixture_consumers
 tests/f0/test_message_roundtrip
 tests/f0/test_validation_strict
+tests/f0/test_a1_r5
 tests/f1/test_artifacts
 tests/f1/snapshot_cold_reload
 tests/f3/test_journal

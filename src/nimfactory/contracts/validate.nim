@@ -1,7 +1,7 @@
 ## Shared JSON validation helpers for factory schemas.
 ## parseJsonStrict rejects duplicate object keys before std/json collapse.
 
-import std/[json, strutils, tables]
+import std/[json, strutils, tables, unicode]
 import ./errors
 
 proc rejectNonFiniteNumbers*(node: JsonNode; path = "$") =
@@ -67,12 +67,17 @@ proc parseStringRaw(c: var ScanCtx): string =
       of 'r': result.add('\r')
       of 't': result.add('\t')
       of 'u':
-        # Consume 4 hex digits; keep as escaped form for duplicate detection only.
+        # Decode \\uXXXX to the same code point the JSON parser would use.
+        var hex = ""
         for _ in 1 .. 4:
           if c.i >= c.s.len or peek(c) notin HexDigits:
             raise newFactoryError(fecInvalidJson, "bad unicode escape", phase = "validate")
-          result.add(peek(c))
+          hex.add(peek(c))
           advance(c)
+        let code = parseHexInt(hex)
+        if code < 0 or code > 0x10FFFF:
+          raise newFactoryError(fecInvalidJson, "bad unicode code point", phase = "validate")
+        result.add(toUTF8(Rune(code)))
       else:
         raise newFactoryError(fecInvalidJson, "bad escape", phase = "validate")
     else:

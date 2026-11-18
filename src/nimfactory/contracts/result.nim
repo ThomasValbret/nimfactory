@@ -137,23 +137,50 @@ proc resultFromJson*(node: JsonNode): CommonResult =
   # Never default missing status to ok — status field is required above.
   result.status = parseStatus(node["status"].getStr())
   result.outputs = node["outputs"]
+  const needAllowed = ["id", "target", "selector", "required", "reason"]
+  const diagAllowed = ["code", "phase", "message", "retryable", "refs"]
   for n in node["needs"]:
     if n.kind != JObject:
       raise newFactoryError(fecValidationFailed, "need must be object", phase = "result")
+    rejectUnknownKeys(n, needAllowed, "need")
+    var required = false
+    if n.hasKey("required"):
+      if n["required"].kind != JBool:
+        raise newFactoryError(fecValidationFailed,
+          "need.required must be boolean", phase = "result")
+      required = n["required"].getBool()
+    if n.hasKey("id") and n["id"].kind != JString:
+      raise newFactoryError(fecValidationFailed, "need.id must be string", phase = "result")
+    if n.hasKey("target") and n["target"].kind != JString:
+      raise newFactoryError(fecValidationFailed, "need.target must be string", phase = "result")
+    if n.hasKey("selector") and n["selector"].kind != JString:
+      raise newFactoryError(fecValidationFailed, "need.selector must be string", phase = "result")
+    if n.hasKey("reason") and n["reason"].kind != JString:
+      raise newFactoryError(fecValidationFailed, "need.reason must be string", phase = "result")
     result.needs.add(NeedItem(
       id: n{"id"}.getStr(""),
       chamberOrSource: n{"target"}.getStr(""),
       selector: n{"selector"}.getStr(""),
-      required: n{"required"}.getBool(false),
+      required: required,
       reason: n{"reason"}.getStr("")
     ))
   for d in node["diagnostics"]:
     if d.kind != JObject:
       raise newFactoryError(fecValidationFailed, "diagnostic must be object",
         phase = "result")
+    rejectUnknownKeys(d, diagAllowed, "diagnostic")
+    if d.hasKey("retryable") and d["retryable"].kind != JBool:
+      raise newFactoryError(fecValidationFailed,
+        "diagnostic.retryable must be boolean", phase = "result")
     var refs: seq[string] = @[]
-    if d.hasKey("refs") and d["refs"].kind == JArray:
+    if d.hasKey("refs"):
+      if d["refs"].kind != JArray:
+        raise newFactoryError(fecValidationFailed,
+          "diagnostic.refs must be array", phase = "result")
       for r in d["refs"]:
+        if r.kind != JString:
+          raise newFactoryError(fecValidationFailed,
+            "diagnostic.refs items must be strings", phase = "result")
         refs.add(r.getStr())
     result.diagnostics.add(diagnostic(
       d{"code"}.getStr(""), d{"phase"}.getStr(""), d{"message"}.getStr(""),
