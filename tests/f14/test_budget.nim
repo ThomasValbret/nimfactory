@@ -15,13 +15,20 @@ proc scopeRun(): string = "proj-1/run-1"
 proc scopePrep(): string = scopeRun() & "/prep-1"
 proc scopeTask(): string = scopePrep() & "/task-1"
 
-proc setupRunLedger(db: string): SqliteBudgetLedger =
-  let l = openSqliteBudgetLedger(db)
+proc setupRunLedger(db: string): FileBudgetLedger =
+  let l = openFileBudgetLedger(db)
   l.defineScope("proj-1", "1000000", 20)
   l.defineScope(scopeRun(), "500000", 10)
   l.defineScope(scopePrep(), "200000", 5)
   l.defineScope(scopeTask(), "100000", 2)
   l
+
+block capabilitiesHonestNaming:
+  let caps = fileBudgetLedgerCapabilities()
+  doAssert caps.backend == "file_journal"
+  doAssert caps.sharedInProcess
+  doAssert caps.journalRecovery
+  doAssert not caps.multiProcessLock
 
 block usageMissingCounterNotZero:
   let u = usageFromJson(%*{"accounting_kind": "reported", "input_tokens": 10})
@@ -29,6 +36,161 @@ block usageMissingCounterNotZero:
   doAssert not u.costPresent
   let (_, ok) = effectiveCostMicroUsd(u)
   doAssert not ok
+
+block rejectNegativeMicroUsdAndSends:
+  let db = tempDb("negative")
+  let l = openFileBudgetLedger(db)
+  l.defineScope("leaf", "100", 5)
+  var raisedUsd = false
+  try:
+    discard l.reserve("leaf", "att-neg-usd", 1, "-50")
+  except FactoryError as e:
+    raisedUsd = true
+    doAssert e.code == fecValidationFailed
+  doAssert raisedUsd
+  var raisedSends = false
+  try:
+    discard l.reserve("leaf", "att-neg-send", -3, "10")
+  except FactoryError as e:
+    raisedSends = true
+    doAssert e.code == fecValidationFailed
+  doAssert raisedSends
+  var reserved = parseBigIntStr("0")
+  for s in l.snapshot()["scopes"]:
+    if s["scope"].getStr == "leaf":
+      reserved = parseBigIntStr(s["reserved_microusd"].getStr)
+  doAssert reserved == 0
+  var raisedOver = false
+  try:
+    discard l.reserve("leaf", "att-over", 1, "120")
+  except FactoryError as e:
+    raisedOver = true
+    doAssert e.code == fecBudgetExhausted
+  doAssert raisedOver
+  l.closeFileBudgetLedger()
+
+block sharedInProcessHandlesShareAuthority:
+  let db = tempDb("shared-handles")
+  let l1 = openFileBudgetLedger(db)
+  l1.defineScope("leaf", "100", 10)
+  let l2 = openFileBudgetLedger(db)
+  doAssert cast[pointer](l1) == cast[pointer](l2)
+  discard l1.reserve("leaf", "att-a", 1, "70")
+  var raised = false
+  try:
+    discard l2.reserve("leaf", "att-b", 1, "70")
+  except FactoryError as e:
+    raised = true
+    doAssert e.code == fecBudgetExhausted
+  doAssert raised
+  var reserved = 0'i64
+  for s in l1.snapshot()["scopes"]:
+    if s["scope"].getStr == "leaf":
+      reserved = parseBigIntStr(s["reserved_microusd"].getStr)
+  doAssert reserved == 70
+  l1.closeFileBudgetLedger()
+  l2.closeFileBudgetLedger()
+
+block symlinkParentsSharePhysicalAuthority:
+  ## A1-R1: open both handles before reservation; symlink must not dual-count.
+  let base = getCurrentDir() / "build" / "f14-tmp" /
+             ("symlink-" & $getCurrentProcessId() & "-" & $rand(1_000_000_000))
+  if dirExists(base): removeDir(base)
+  createDir(base)
+  let realDir = base / "real"
+  createDir(realDir)
+  let aliasDir = base / "alias"
+  if symlinkExists(aliasDir) or fileExists(aliasDir) or dirExists(aliasDir):
+    removeFile(aliasDir)
+  createSymlink(realDir, aliasDir)
+  let l1 = openFileBudgetLedger(realDir / "book")
+  let l2 = openFileBudgetLedger(aliasDir / "book")
+  doAssert cast[pointer](l1) == cast[pointer](l2)
+  l1.defineScope("run", "100", 10)
+  discard l1.reserve("run", "att-a", 1, "70")
+  var raised = false
+  try:
+    discard l2.reserve("run", "att-b", 1, "70")
+  except FactoryError as e:
+    raised = true
+    doAssert e.code == fecBudgetExhausted
+  doAssert raised
+  l1.closeFileBudgetLedger()
+  l2.closeFileBudgetLedger()
+  let l3 = openFileBudgetLedger(aliasDir / "book")
+  var reserved = 0'i64
+  for s in l3.snapshot()["scopes"]:
+    if s["scope"].getStr == "run":
+      reserved = parseBigIntStr(s["reserved_microusd"].getStr)
+  doAssert reserved == 70
+  var raised2 = false
+  try:
+    discard l3.reserve("run", "att-c", 1, "70")
+  except FactoryError:
+    raised2 = true
+  doAssert raised2
+  l3.closeFileBudgetLedger()
+
+block persistFailureThenRetryCoherent:
+  let db = tempDb("persist-fail")
+  var l = openFileBudgetLedger(db)
+  l.defineScope("leaf", "1000", 10)
+  budgetLedgerTestPersistFail = true
+  var failed = false
+  try:
+    discard l.reserve("leaf", "att-persist", 1, "55")
+  except FactoryError as e:
+    failed = true
+    doAssert e.code == fecEffectOutcomeUnknown
+  doAssert failed
+  budgetLedgerTestPersistFail = false
+  var reservedMem = 0'i64
+  for s in l.snapshot()["scopes"]:
+    if s["scope"].getStr == "leaf":
+      reservedMem = parseBigIntStr(s["reserved_microusd"].getStr)
+  doAssert reservedMem == 0
+  let r2 = l.reserve("leaf", "att-persist", 1, "55")
+  doAssert r2["state"].getStr == "reserved"
+  l.closeFileBudgetLedger()
+  l = openFileBudgetLedger(db)
+  var reservedDisk = 0'i64
+  for s in l.snapshot()["scopes"]:
+    if s["scope"].getStr == "leaf":
+      reservedDisk = parseBigIntStr(s["reserved_microusd"].getStr)
+  doAssert reservedDisk == 55
+  l.closeFileBudgetLedger()
+
+block idempotencyConflictOnDifferentAmount:
+  let db = tempDb("idempotency-conflict")
+  let l = openFileBudgetLedger(db)
+  l.defineScope("leaf", "500", 10)
+  discard l.reserve("leaf", "att-x", 1, "10")
+  var raised = false
+  try:
+    discard l.reserve("leaf", "att-x", 1, "90")
+  except FactoryError as e:
+    raised = true
+    doAssert e.code == fecValidationFailed
+  doAssert raised
+  l.closeFileBudgetLedger()
+
+block journalTailRecoveryWithoutSnapshot:
+  let db = tempDb("journal-recovery")
+  var l = openFileBudgetLedger(db)
+  l.defineScope("leaf", "200", 5)
+  discard l.reserve("leaf", "att-jr", 1, "80")
+  let root = db & ".ledger"
+  let statePath = root / "state.json"
+  doAssert fileExists(statePath)
+  removeFile(statePath)
+  l.closeFileBudgetLedger()
+  l = openFileBudgetLedger(db)
+  var reserved = 0'i64
+  for s in l.snapshot()["scopes"]:
+    if s["scope"].getStr == "leaf":
+      reserved = parseBigIntStr(s["reserved_microusd"].getStr)
+  doAssert reserved == 80
+  l.closeFileBudgetLedger()
 
 block nestedReserveAndSettle:
   let db = tempDb("nested")
@@ -51,7 +213,7 @@ block nestedReserveAndSettle:
     if s["scope"].getStr == scopeRun():
       runSpent = s["spent_microusd"].getStr
   doAssert parseBigIntStr(runSpent) == 12000
-  l.closeSqliteBudgetLedger()
+  l.closeFileBudgetLedger()
 
 block idempotentReserveAndDuplicateSettle:
   let db = tempDb("idempotent")
@@ -67,7 +229,7 @@ block idempotentReserveAndDuplicateSettle:
     if s["scope"].getStr == scopeTask():
       spent = parseBigIntStr(s["spent_microusd"].getStr)
   doAssert spent == 9000
-  l.closeSqliteBudgetLedger()
+  l.closeFileBudgetLedger()
 
 block releaseBeforeSendOnly:
   let db = tempDb("release")
@@ -81,7 +243,7 @@ block releaseBeforeSendOnly:
     raised = true
     doAssert e.code == fecMissingRequiredInput
   doAssert raised
-  l.closeSqliteBudgetLedger()
+  l.closeFileBudgetLedger()
 
 block unknownSendKeepsReserve:
   let db = tempDb("unknown")
@@ -101,18 +263,18 @@ block unknownSendKeepsReserve:
     raised = true
     doAssert e.code == fecValidationFailed
   doAssert raised
-  l.closeSqliteBudgetLedger()
+  l.closeFileBudgetLedger()
 
 block resumeAfterReserve:
   let db = tempDb("resume")
   var l = setupRunLedger(db)
   discard l.reserve(scopeTask(), "att-resume", 1, "22000")
-  l.closeSqliteBudgetLedger()
-  l = openSqliteBudgetLedger(db)
+  l.closeFileBudgetLedger()
+  l = openFileBudgetLedger(db)
   let again = l.reserve(scopeTask(), "att-resume", 1, "22000")
   doAssert again["state"].getStr == "reserved"
   doAssert again["max_microusd"].getStr == "22000"
-  l.closeSqliteBudgetLedger()
+  l.closeFileBudgetLedger()
 
 block obsoleteAttemptStillCounts:
   let db = tempDb("obsolete")
@@ -129,7 +291,7 @@ block obsoleteAttemptStillCounts:
     if s["scope"].getStr == scopeTask():
       spent = parseBigIntStr(s["spent_microusd"].getStr)
   doAssert spent == 17500
-  l.closeSqliteBudgetLedger()
+  l.closeFileBudgetLedger()
 
 block preparerRelectorCosts:
   let db = tempDb("roles")
@@ -152,7 +314,7 @@ block preparerRelectorCosts:
     if s["scope"].getStr == scopePrep():
       prepSpent = parseBigIntStr(s["spent_microusd"].getStr)
   doAssert prepSpent == 11500
-  l.closeSqliteBudgetLedger()
+  l.closeFileBudgetLedger()
 
 block concurrentNearCeiling:
   let db = tempDb("concurrent")
@@ -163,7 +325,7 @@ block concurrentNearCeiling:
   var failCount = 0
   var countersLock: Lock
   initLock(countersLock)
-  type WorkerArg = (SqliteBudgetLedger, int)
+  type WorkerArg = (FileBudgetLedger, int)
   var threads: array[nThreads, Thread[WorkerArg]]
   proc worker(arg: WorkerArg) {.thread.} =
     let (ledger, tid) = arg
@@ -186,7 +348,7 @@ block concurrentNearCeiling:
   doAssert okCount >= 1
   doAssert failCount >= 1
   doAssert okCount + failCount == nThreads
-  l.closeSqliteBudgetLedger()
+  l.closeFileBudgetLedger()
 
 block nestedSubtasksShareParent:
   let db = tempDb("subtasks")
@@ -208,6 +370,6 @@ block nestedSubtasksShareParent:
     raised = true
     doAssert e.code == fecBudgetExhausted
   doAssert raised
-  l.closeSqliteBudgetLedger()
+  l.closeFileBudgetLedger()
 
 echo "test_budget: ok"

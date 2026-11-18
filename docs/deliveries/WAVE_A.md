@@ -36,8 +36,8 @@ Appels LLM : **0**.
 
 ## Jalons
 
-- **M0** : atteint (contrats Message + fixtures + deux consommateurs).
-- **M1 partiel** : artefacts, journal durable, validation graphe, budgets — sans CLI F16 ni exécuteur F5.
+- **M0** : **requalifié en A.1** — avis favorable [WAVE_A_1_ACCEPTANCE_REVIEW.md](../qa/WAVE_A_1_ACCEPTANCE_REVIEW.md) ; reçu [WAVE_A_1.md](WAVE_A_1.md) (preuves codeur ≠ exécutions indépendantes).
+- **M1** : **non atteint** (pas d’exécuteur F5 ni CLI F16).
 
 ## Limites restantes
 

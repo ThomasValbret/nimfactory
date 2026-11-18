@@ -93,6 +93,7 @@ block envelopeRoundtrip:
   env.factory.runId = "run-rt"
   env.factory.activationId = "act-rt"
   env.factory.attemptId = "try-rt"
+  env.factory.correlationId = "corr-rt"
   env.factory.payloadSchema = ResultSchema
   env.message = userMsg("ping")
   env.payload = resultToJson(defaultResult(rsOk))

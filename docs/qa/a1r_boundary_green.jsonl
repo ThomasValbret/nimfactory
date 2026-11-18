@@ -1,0 +1,6 @@
+{"case":"F14_symlink_same_storage","pass":true,"observed":{"first_reserve_ok":true,"second_reserve_rejected":true,"shared_handle":true,"authorized_total":70,"ceiling":100,"reopen_second_rejected":true,"reserved_after_reopen":70,"first_state":{"scopes":[{"scope":"run","ceiling_microusd":"100","max_sends":10,"reserved_microusd":"70","sends_reserved":1,"spent_microusd":"0","sends_spent":0}],"ledger_dir":"/tmp/nf-a1r-bound-1794996824-3051831/real/book.ledger","capabilities":{"backend":"file_journal","authority":"state_snapshot_with_journal_tail_replay","journal_line_count":2}},"second_state":{"scopes":[{"scope":"run","ceiling_microusd":"100","max_sends":10,"reserved_microusd":"70","sends_reserved":1,"spent_microusd":"0","sends_spent":0}],"ledger_dir":"/tmp/nf-a1r-bound-1794996824-3051831/real/book.ledger","capabilities":{"backend":"file_journal","authority":"state_snapshot_with_journal_tail_replay","journal_line_count":2}}}}
+{"case":"F0_surrogate_pair_duplicate","pass":true,"observed":{"rejected":true,"parsed":null}}
+{"case":"F0_single_surrogate_pair_valid","pass":true,"observed":{"accepted":true,"reason":""}}
+{"case":"F0_diagnostic_wrong_types","pass":true,"observed":{"rejected":true}}
+{"case":"F0_error_wrong_boolean","pass":true,"observed":{"rejected":true,"decoded_retryable":true}}
+{"summary":"a1r_boundary_probes","failed":0,"total":5}

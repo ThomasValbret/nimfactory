@@ -1,0 +1,186 @@
+{
+  "schema": "nimfactory.qualification.scenario/0.1",
+  "scenario_id": "qual-a1-f1-snapshot-readset",
+  "discriminator": "a1_f1_snapshot_identity",
+  "discriminating": false,
+  "description": "A.1 / R4 — cumulative read sets, snapshot identity over dependencies, durable reload.",
+  "wave": "A.1",
+  "qualification_mode": "simulated",
+  "corpus_snapshot_ref": "snap-qual-wave-a-001",
+  "oracle": {
+    "schema": "nimfactory.qualification.oracle/0.1",
+    "expected_pass_for_reference": true,
+    "checks": [
+      {
+        "id": "mode",
+        "kind": "a1_probe_mode",
+        "target": "",
+        "detail": "simulated"
+      },
+      {
+        "id": "cumulative_verdict",
+        "kind": "a1_outcome_verdict",
+        "target": "append_read_chain",
+        "detail": "accept"
+      },
+      {
+        "id": "read_version",
+        "kind": "a1_outcome_field_equals",
+        "target": "append_read_chain.read_set_version",
+        "detail": "3"
+      },
+      {
+        "id": "read_entries",
+        "kind": "a1_outcome_field_equals",
+        "target": "append_read_chain.entries_count",
+        "detail": "3"
+      },
+      {
+        "id": "read_ids_distinct",
+        "kind": "a1_outcome_field_equals",
+        "target": "append_read_chain.read_set_ids_distinct",
+        "detail": "true"
+      },
+      {
+        "id": "identity_verdict",
+        "kind": "a1_outcome_verdict",
+        "target": "recipe_index_identity",
+        "detail": "accept"
+      },
+      {
+        "id": "identity_distinct",
+        "kind": "a1_outcome_field_equals",
+        "target": "recipe_index_identity.snapshot_ids_distinct",
+        "detail": "true"
+      },
+      {
+        "id": "prior_unchanged",
+        "kind": "a1_outcome_field_equals",
+        "target": "recipe_index_identity.prior_snapshot_bytes_unchanged",
+        "detail": "true"
+      },
+      {
+        "id": "reload_verdict",
+        "kind": "a1_outcome_verdict",
+        "target": "durable_reload",
+        "detail": "accept"
+      },
+      {
+        "id": "reload_ok",
+        "kind": "a1_outcome_field_equals",
+        "target": "durable_reload.reload_after_new_instance",
+        "detail": "true"
+      }
+    ]
+  },
+  "reference_observation": {
+    "schema": "nimfactory.qualification.observation/0.1",
+    "qualification_mode": "simulated",
+    "scenario_id": "qual-a1-f1-snapshot-readset",
+    "snapshot_ref": "snap-qual-wave-a-001",
+    "selected_instruction_ids": [],
+    "fragment_refs": [],
+    "included": [],
+    "omitted": [],
+    "missing": [],
+    "read_set_entries": [
+      "read:src-a",
+      "read:src-b",
+      "read:src-c"
+    ],
+    "status": "ok",
+    "diagnostics": [
+      "a1_review:R4"
+    ],
+    "token_accounting": {},
+    "extensions": {
+      "a1_probe": {
+        "lot": "F1",
+        "review_id": "R4",
+        "mode": "simulated",
+        "outcomes": [
+          {
+            "step_id": "append_read_chain",
+            "verdict": "accept",
+            "error_code": "",
+            "fields": {
+              "read_set_version": "3",
+              "entries_count": "3",
+              "read_set_ids_distinct": "true"
+            }
+          },
+          {
+            "step_id": "recipe_index_identity",
+            "verdict": "accept",
+            "error_code": "",
+            "fields": {
+              "snapshot_ids_distinct": "true",
+              "prior_snapshot_bytes_unchanged": "true"
+            }
+          },
+          {
+            "step_id": "durable_reload",
+            "verdict": "accept",
+            "error_code": "",
+            "fields": {
+              "reload_after_new_instance": "true"
+            }
+          }
+        ]
+      }
+    }
+  },
+  "counterexample_observation": {
+    "schema": "nimfactory.qualification.observation/0.1",
+    "qualification_mode": "simulated",
+    "scenario_id": "qual-a1-f1-snapshot-readset",
+    "snapshot_ref": "snap-qual-wave-a-001",
+    "selected_instruction_ids": [],
+    "fragment_refs": [],
+    "included": [],
+    "omitted": [],
+    "missing": [],
+    "read_set_entries": [],
+    "status": "ok",
+    "diagnostics": [
+      "wave_a_defect:R4"
+    ],
+    "token_accounting": {},
+    "extensions": {
+      "a1_probe": {
+        "lot": "F1",
+        "review_id": "R4",
+        "mode": "simulated",
+        "outcomes": [
+          {
+            "step_id": "append_read_chain",
+            "verdict": "accept",
+            "error_code": "",
+            "fields": {
+              "read_set_version": "2",
+              "entries_count": "2",
+              "read_set_ids_distinct": "false"
+            }
+          },
+          {
+            "step_id": "recipe_index_identity",
+            "verdict": "accept",
+            "error_code": "",
+            "fields": {
+              "snapshot_ids_distinct": "false",
+              "prior_snapshot_bytes_unchanged": "false"
+            }
+          },
+          {
+            "step_id": "durable_reload",
+            "verdict": "reject",
+            "error_code": "missing_required_input",
+            "fields": {
+              "reload_after_new_instance": "false"
+            }
+          }
+        ]
+      }
+    }
+  }
+}

@@ -3,6 +3,45 @@
 import std/[json, strutils, tables]
 import types
 
+proc a1Probe(obs: QualObservation): JsonNode =
+  if obs.extensions.isNil or obs.extensions.kind != JObject:
+    return newJNull()
+  obs.extensions.getOrDefault("a1_probe")
+
+proc a1Outcomes(obs: QualObservation): seq[JsonNode] =
+  let probe = a1Probe(obs)
+  if probe.isNil or probe.kind != JObject:
+    return @[]
+  let outs = probe.getOrDefault("outcomes")
+  if outs.isNil or outs.kind != JArray:
+    return @[]
+  for item in outs:
+    result.add item
+
+proc a1OutcomeByStep(obs: QualObservation; stepId: string): JsonNode =
+  for item in a1Outcomes(obs):
+    if item{"step_id"}.getStr == stepId:
+      return item
+  newJNull()
+
+proc a1FieldValue(outcome: JsonNode; fieldPath: string): string =
+  if outcome.isNil or outcome.kind != JObject:
+    return ""
+  if fieldPath in outcome:
+    let n = outcome[fieldPath]
+    if n.kind == JString:
+      return n.getStr
+    return $n
+  let parts = fieldPath.split('.')
+  if parts.len == 2 and parts[0] == "fields":
+    let fields = outcome.getOrDefault("fields")
+    if fields.kind == JObject and parts[1] in fields:
+      let n = fields[parts[1]]
+      if n.kind == JString:
+        return n.getStr
+      return $n
+  ""
+
 proc evaluateCheck*(obs: QualObservation, check: OracleCheck): (bool, string) =
   case check.kind
   of ckInstructionMustInclude:
@@ -129,6 +168,58 @@ proc evaluateCheck*(obs: QualObservation, check: OracleCheck): (bool, string) =
       if d == check.target or d.startsWith(check.target & ":") or check.target in d:
         return (true, "")
     return (false, "diagnostic missing " & check.target)
+  of ckA1ProbeMode:
+    let probe = a1Probe(obs)
+    if probe.isNil or probe.kind != JObject:
+      return (false, "a1_probe extension missing")
+    let mode = probe.getOrDefault("mode").getStr
+    let expected =
+      if check.detail.len > 0: check.detail
+      else: check.target
+    if mode != expected:
+      return (false, "a1_probe.mode " & mode & " != " & expected)
+    return (true, "")
+  of ckA1OutcomeVerdict:
+    let outcome = a1OutcomeByStep(obs, check.target)
+    if outcome.isNil or outcome.kind != JObject:
+      return (false, "a1 step missing " & check.target)
+    let verdict = outcome{"verdict"}.getStr
+    if verdict != check.detail:
+      return (false, check.target & " verdict " & verdict & " != " & check.detail)
+    return (true, "")
+  of ckA1OutcomeErrorCode:
+    let outcome = a1OutcomeByStep(obs, check.target)
+    if outcome.isNil or outcome.kind != JObject:
+      return (false, "a1 step missing " & check.target)
+    let code = outcome.getOrDefault("error_code").getStr
+    if code != check.detail:
+      return (false, check.target & " error_code " & code & " != " & check.detail)
+    return (true, "")
+  of ckA1OutcomeFieldEquals:
+    let dot = check.target.rfind('.')
+    if dot < 0:
+      return (false, "a1 field target needs step.field form")
+    let stepId = check.target[0 ..< dot]
+    let field = check.target[dot + 1 .. ^1]
+    let outcome = a1OutcomeByStep(obs, stepId)
+    let got =
+      if field.startsWith("fields."):
+        a1FieldValue(outcome, field)
+      else:
+        a1FieldValue(outcome, "fields." & field)
+    if got != check.detail:
+      return (
+        false,
+        stepId & "." & field & " = " & got & " expected " & check.detail,
+      )
+    return (true, "")
+  of ckA1OutcomeNoMutation:
+    let outcome = a1OutcomeByStep(obs, check.target)
+    if outcome.isNil or outcome.kind != JObject:
+      return (false, "a1 step missing " & check.target)
+    if outcome.getOrDefault("state_mutated").getBool(false):
+      return (false, check.target & " mutated durable state")
+    return (true, "")
 
 proc evaluateOracle*(
     obs: QualObservation, checks: seq[OracleCheck]

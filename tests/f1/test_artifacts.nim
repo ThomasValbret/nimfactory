@@ -1,5 +1,5 @@
-import std/[os, strutils, random, times]
-import nimfactory
+import std/[os, strutils, random, times, osproc]
+import nimfactory/contracts/[errors, ids]
 import nimfactory/artifacts
 
 proc tempRoot(): string =
@@ -92,7 +92,7 @@ block appendReadDoesNotMutateSnapshot:
   let snapSrc = newLocalSnapshotSource(store)
   let srcPath = root / "doc.txt"
   writeFile(srcPath, "body")
-  let (snapshot, _) = snapSrc.capture(SourceCaptureRequest(
+  let (snapshot, rs1) = snapSrc.capture(SourceCaptureRequest(
     sources: @[SourceSpec(sourceId: "doc", path: srcPath, revisionLabel: "r0")]
   ))
   let snapCopy = snapshot
@@ -101,11 +101,115 @@ block appendReadDoesNotMutateSnapshot:
     sourceId: "missing",
     artifactRef: artifactRef(""),
     revision: "",
-    selector: "query:noop",
+    selector: "query:noop-a",
     emptySearch: true
   ))
   doAssert rs2.version == 2
   doAssert snapCopy.sourceRevisions == snapshot.sourceRevisions
   doAssert snapCopy.snapshotId == snapshot.snapshotId
+
+block cumulativeAppendReadVersions:
+  let root = tempRoot()
+  let store = newDirectoryArtifactStore(root)
+  let snapSrc = newLocalSnapshotSource(store)
+  let srcPath = root / "doc.txt"
+  writeFile(srcPath, "body")
+  let (snapshot, rs1) = snapSrc.capture(SourceCaptureRequest(
+    sources: @[SourceSpec(sourceId: "doc", path: srcPath, revisionLabel: "r0")]
+  ))
+  doAssert rs1.version == 1
+  doAssert rs1.predecessorReadSetId == ""
+  doAssert rs1.entries.len == 1
+  let rs2 = snapSrc.appendRead(snapshot, ReadSetEntry(
+    kind: "read", sourceId: "extra", artifactRef: artifactRef("art-sha256-dead"),
+    revision: "r1", selector: "q1", emptySearch: false
+  ))
+  let rs3 = snapSrc.appendRead(snapshot, ReadSetEntry(
+    kind: "negative_search", sourceId: "none", artifactRef: artifactRef(""),
+    revision: "", selector: "q2", emptySearch: true
+  ))
+  doAssert rs2.version == 2
+  doAssert rs3.version == 3
+  doAssert rs2.predecessorReadSetId == rs1.readSetId
+  doAssert rs3.predecessorReadSetId == rs2.readSetId
+  doAssert rs2.entries.len == 2
+  doAssert rs3.entries.len == 3
+  doAssert rs2.readSetId != rs3.readSetId
+  let rs2Again = snapSrc.reloadReadSet(rs2.readSetId)
+  let rs3Again = snapSrc.reloadReadSet(rs3.readSetId)
+  doAssert rs2Again.entries.len == 2
+  doAssert rs3Again.entries.len == 3
+  doAssert rs2Again.entries[1].selector == "q1"
+  doAssert rs3Again.entries[2].selector == "q2"
+
+block snapshotIdentityMetadata:
+  let root = tempRoot()
+  let store = newDirectoryArtifactStore(root)
+  let snapSrc = newLocalSnapshotSource(store)
+  let srcPath = root / "same-bytes.txt"
+  writeFile(srcPath, "fixed-payload")
+  let baseSources = @[SourceSpec(sourceId: "main", path: srcPath, revisionLabel: "v1")]
+  let (snapA, _) = snapSrc.capture(SourceCaptureRequest(
+    sources: baseSources,
+    recipeRefs: @["recipe/v1"],
+    indexRevisions: @[("idx", "1")]
+  ))
+  let (snapB, _) = snapSrc.capture(SourceCaptureRequest(
+    sources: baseSources,
+    recipeRefs: @["recipe/v2"],
+    indexRevisions: @[("idx", "1")]
+  ))
+  doAssert snapA.snapshotId != snapB.snapshotId
+  doAssert snapA.recipeRefs == @["recipe/v1"]
+  doAssert snapB.recipeRefs == @["recipe/v2"]
+  let reloadedA = snapSrc.reloadSnapshot(snapA.snapshotId)
+  doAssert reloadedA.recipeRefs == @["recipe/v1"]
+  doAssert reloadedA.indexRevisions == @[("idx", "1")]
+  doAssert snapSrc.reloadSnapshot(snapB.snapshotId).recipeRefs == @["recipe/v2"]
+
+block reloadSnapshotNewInstance:
+  let root = tempRoot()
+  let store = newDirectoryArtifactStore(root)
+  let snapSrc = newLocalSnapshotSource(store)
+  let srcPath = root / "persist.txt"
+  writeFile(srcPath, "persisted")
+  let (snapshot, _) = snapSrc.capture(SourceCaptureRequest(
+    sources: @[SourceSpec(sourceId: "p", path: srcPath, revisionLabel: "r1")],
+    chamberRevisions: @[("room", "c1")],
+    recipeRefs: @["rec-a"],
+    indexRevisions: @[("ix", "v0")]
+  ))
+  let snapId = snapshot.snapshotId
+  let freshStore = newDirectoryArtifactStore(root)
+  let freshSrc = newLocalSnapshotSource(freshStore)
+  let reloaded = freshSrc.reloadSnapshot(snapId)
+  doAssert reloaded.snapshotId == snapId
+  doAssert reloaded.chamberRevisions == @[("room", "c1")]
+  doAssert freshSrc.resolveSource(reloaded, "p") == "persisted"
+  let latest = freshSrc.resolveLatestReadSet(snapId)
+  doAssert latest.version == 1
+  doAssert latest.entries.len == 1
+
+block reloadSnapshotSeparateProcess:
+  let repo = getCurrentDir()
+  let root = tempRoot()
+  let store = newDirectoryArtifactStore(root)
+  let snapSrc = newLocalSnapshotSource(store)
+  let srcPath = root / "child.txt"
+  writeFile(srcPath, "child-probe")
+  let (snapshot, _) = snapSrc.capture(SourceCaptureRequest(
+    sources: @[SourceSpec(sourceId: "c", path: srcPath, revisionLabel: "r1")],
+    recipeRefs: @["recipe-child"]
+  ))
+  let nimBin = findExe("nim")
+  let probe = repo / "tests/f1/snapshot_cold_reload.nim"
+  let repoSrcPath = repo / "src"
+  let vendorPath = repo / "vendor/NimAgentLibrary/src"
+  let cmd = nimBin & " r --hints:off --warnings:off --skipUserCfg --skipParentCfg " &
+    "--path:" & quoteShell(repoSrcPath) & " --path:" & quoteShell(vendorPath) & " " &
+    quoteShell(probe) & " " & quoteShell(root) & " " & quoteShell(snapshot.snapshotId)
+  let (output, exitCode) = execCmdEx(cmd)
+  doAssert exitCode == 0
+  doAssert output.strip() == "recipe-child"
 
 echo "test_artifacts: ok"

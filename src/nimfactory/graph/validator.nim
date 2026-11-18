@@ -219,54 +219,220 @@ proc validateLoopSpecs(g: GraphSpec; nodes: Table[string, GraphNode];
 proc buildAdjacency(g: GraphSpec): Table[string, HashSet[string]] =
   result = initTable[string, HashSet[string]]()
   for e in g.edges:
-    let (fromNode, fromPort) = parsePortRef(e.fromPort)
+    let (fromNode, _) = parsePortRef(e.fromPort)
     let (toNode, _) = parsePortRef(e.toPort)
     if fromNode notin result:
       result[fromNode] = initHashSet[string]()
     result[fromNode].incl(toNode)
 
-proc findCycleNode(adj: Table[string, HashSet[string]]): string =
-  var visited, stack = initHashSet[string]()
-  var cycleAt = ""
+proc selfLoopNodes(g: GraphSpec): HashSet[string] =
+  result = initHashSet[string]()
+  for e in g.edges:
+    let (fromNode, _) = parsePortRef(e.fromPort)
+    let (toNode, _) = parsePortRef(e.toPort)
+    if fromNode == toNode:
+      result.incl(fromNode)
 
-  proc dfs(u: string): bool =
-    visited.incl(u)
-    stack.incl(u)
-    if u in adj:
-      for v in adj[u]:
-        if v notin visited:
-          if dfs(v):
-            return true
-        elif v in stack:
-          cycleAt = v
-          return true
-    stack.excl(u)
-    false
+type TarjanState = object
+  index: Table[string, int]
+  lowlink: Table[string, int]
+  stack: seq[string]
+  onStack: HashSet[string]
+  indexCounter: int
+  sccs: seq[HashSet[string]]
 
-  for start in adj.keys:
-    if start notin visited:
-      if dfs(start):
+proc tarjanVisit(u: string; adj: Table[string, HashSet[string]];
+                 st: var TarjanState) =
+  st.index[u] = st.indexCounter
+  st.lowlink[u] = st.indexCounter
+  inc st.indexCounter
+  st.stack.add(u)
+  st.onStack.incl(u)
+  if u in adj:
+    for v in adj[u]:
+      if v notin st.index:
+        tarjanVisit(v, adj, st)
+        st.lowlink[u] = min(st.lowlink[u], st.lowlink[v])
+      elif v in st.onStack:
+        st.lowlink[u] = min(st.lowlink[u], st.index[v])
+  if st.lowlink[u] == st.index[u]:
+    var scc = initHashSet[string]()
+    while st.stack.len > 0:
+      let w = st.stack.pop()
+      st.onStack.excl(w)
+      scc.incl(w)
+      if w == u:
         break
-  cycleAt
+    st.sccs.add(scc)
 
-proc hasUndeclaredCycle(g: GraphSpec): bool =
-  let adj = buildAdjacency(g)
-  let cycleNode = findCycleNode(adj)
-  if cycleNode.len == 0:
-    return false
-  var loopCovered = false
+proc strongComponents(adj: Table[string, HashSet[string]];
+                        nodeIds: HashSet[string]): seq[HashSet[string]] =
+  var st = TarjanState(
+    index: initTable[string, int](),
+    lowlink: initTable[string, int](),
+    stack: @[],
+    onStack: initHashSet[string](),
+    indexCounter: 0,
+    sccs: @[]
+  )
+  for id in nodeIds:
+    if id notin st.index:
+      tarjanVisit(id, adj, st)
+  st.sccs
+
+proc loopNodesWithSpec(g: GraphSpec;
+                       nodes: Table[string, GraphNode]): HashSet[string] =
+  result = initHashSet[string]()
+  var specIds = initHashSet[string]()
   for ls in g.loopSpecs:
-    if ls.loopNodeId.len > 0 and ls.exit.maxIterations > 0:
-      loopCovered = true
-      break
-  if not loopCovered:
+    if ls.loopNodeId.len == 0 or ls.exit.maxIterations <= 0:
+      continue
+    if ls.loopNodeId in nodes and nodes[ls.loopNodeId].kind == ckLoop:
+      specIds.incl(ls.loopNodeId)
+  for id in specIds:
+    result.incl(id)
+
+proc sccHasCycle(comp: HashSet[string];
+                 selfLoops: HashSet[string]): bool =
+  if comp.len > 1:
     return true
-  var hasLoopNode = false
+  if comp.len == 1:
+    for id in comp:
+      return id in selfLoops
+  false
+
+proc loopCoversScc(comp: HashSet[string];
+                   declaredLoops: HashSet[string]): bool =
+  for id in comp:
+    if id in declaredLoops:
+      return true
+  false
+
+proc residualCycleWithoutLoopControllers(comp: HashSet[string];
+    declaredLoops: HashSet[string]; adj: Table[string, HashSet[string]];
+    selfLoops: HashSet[string]): bool =
+  ## After removing declared loop controllers, any remaining cycle is uncontrolled.
+  var residual = initHashSet[string]()
+  for id in comp:
+    if id notin declaredLoops:
+      residual.incl(id)
+  if residual.len == 0:
+    return false
+  for id in residual:
+    if id in selfLoops:
+      return true
+  var subAdj = initTable[string, HashSet[string]]()
+  for id in residual:
+    subAdj[id] = initHashSet[string]()
+    if id in adj:
+      for nxt in adj[id]:
+        if nxt in residual:
+          subAdj[id].incl(nxt)
+  for scc in strongComponents(subAdj, residual):
+    if sccHasCycle(scc, selfLoops):
+      return true
+  false
+
+proc validateUndeclaredCycles(g: GraphSpec; nodes: Table[string, GraphNode];
+                                diags: var seq[Diagnostic]) =
+  let adj = buildAdjacency(g)
+  var nodeIds = initHashSet[string]()
   for n in g.nodes:
-    if n.kind == ckLoop:
-      hasLoopNode = true
-      break
-  not hasLoopNode
+    nodeIds.incl(n.id)
+  let selfLoops = selfLoopNodes(g)
+  let declaredLoops = loopNodesWithSpec(g, nodes)
+  for comp in strongComponents(adj, nodeIds):
+    if not sccHasCycle(comp, selfLoops):
+      continue
+    if not loopCoversScc(comp, declaredLoops) or
+       residualCycleWithoutLoopControllers(comp, declaredLoops, adj, selfLoops):
+      var refs: seq[string] = @[]
+      for id in comp:
+        refs.add(id)
+      diags.add(diagnostic($fecDependencyCycle, "graph",
+        "undeclared cyclic wiring; each cycle must traverse a declared " &
+        "bounded loop controller",
+        refs = refs))
+
+proc collectFedPorts(g: GraphSpec): Table[string, HashSet[string]] =
+  var fed = initTable[string, HashSet[string]]()
+  for ep in g.entrypoints:
+    let (nodeId, portName) = parsePortRef(ep.toPort)
+    if nodeId notin fed:
+      fed[nodeId] = initHashSet[string]()
+    fed[nodeId].incl(portName)
+  for e in g.edges:
+    let (toNode, toPort) = parsePortRef(e.toPort)
+    if toNode notin fed:
+      fed[toNode] = initHashSet[string]()
+    fed[toNode].incl(toPort)
+  fed
+
+proc allowsMultiProducer(node: GraphNode; portName: string): bool =
+  node.kind == ckLoop and portName == "in"
+
+proc validatePortProducers(g: GraphSpec; nodes: Table[string, GraphNode];
+                             diags: var seq[Diagnostic]) =
+  type PortKey = tuple[nodeId, portName: string]
+  var counts = initTable[PortKey, int]()
+  var refs = initTable[PortKey, seq[string]]()
+  proc note(nodeId, portName, refPort: string) =
+    let key = (nodeId, portName)
+    if key notin counts:
+      counts[key] = 0
+      refs[key] = @[]
+    inc counts[key]
+    refs[key].add(refPort)
+  for ep in g.entrypoints:
+    let (nodeId, portName) = parsePortRef(ep.toPort)
+    let src = if ep.inputName.len > 0: "entry:" & ep.inputName
+              else: "entrypoint"
+    note(nodeId, portName, src)
+  for e in g.edges:
+    let (toNode, toPort) = parsePortRef(e.toPort)
+    note(toNode, toPort, e.fromPort)
+  for key, n in counts.pairs:
+    if n <= 1:
+      continue
+    if key.nodeId notin nodes:
+      continue
+    let node = nodes[key.nodeId]
+    if allowsMultiProducer(node, key.portName):
+      continue
+    diags.add(diagnostic("ambiguous_multi_producer", "graph",
+      "port " & key.nodeId & "." & key.portName &
+      " has " & $n & " structural producers; at most one is supported",
+      refs = refs[key]))
+
+proc requiredInputPorts(registry: SimulatedHandlerRegistry;
+                        node: GraphNode): seq[PortDecl] =
+  if node.kind == ckHandler:
+    if ($node.handler).len == 0:
+      return @[]
+    let desc = registry.lookupHandler(node.handler)
+    for p in desc.inputs:
+      if p.required:
+        result.add(p)
+  else:
+    for p in controlInputPorts(node.kind):
+      if p.required:
+        result.add(p)
+
+proc validateRequiredPortsFed(registry: SimulatedHandlerRegistry;
+                                g: GraphSpec;
+                                nodes: Table[string, GraphNode];
+                                diags: var seq[Diagnostic]) =
+  let fed = collectFedPorts(g)
+  for n in g.nodes:
+    try:
+      for p in requiredInputPorts(registry, n):
+        let wired = n.id in fed and p.name in fed[n.id]
+        if not wired:
+          diags.add(diagnostic($fecMissingRequiredInput, "graph",
+            "required input port not fed: " & n.id & "." & p.name,
+            refs = @[n.id, n.id & "." & p.name]))
+    except FactoryError as e:
+      diags.add(diagnostic($e.code, "graph", e.msg, refs = @[n.id]))
 
 proc validateGraphSpec*(registry: SimulatedHandlerRegistry;
                         g: GraphSpec): CommonResult =
@@ -351,11 +517,9 @@ proc validateGraphSpec*(registry: SimulatedHandlerRegistry;
 
   validateJoinFeasibility(g, nodes, diags)
   validateLoopSpecs(g, nodes, diags)
-
-  if hasUndeclaredCycle(g):
-    diags.add(diagnostic($fecDependencyCycle, "graph",
-      "undeclared cyclic wiring; use loop with exit and limit",
-      refs = @[]))
+  validatePortProducers(g, nodes, diags)
+  validateRequiredPortsFed(registry, g, nodes, diags)
+  validateUndeclaredCycles(g, nodes, diags)
 
   if diags.len > 0:
     var r = defaultResult(rsFailed)

@@ -1,5 +1,5 @@
 import std/[os, json, times]
-import nimfactory
+import nimfactory/contracts/[errors, ids]
 import nimfactory/runtime/journal/run_store
 
 proc tempDb(name: string): string =
@@ -150,6 +150,111 @@ block staleEpochAfterResume:
   doAssert del.staleEpoch
   let rec = store.recover("run-1")
   doAssert rec["epoch"].getInt == 2
+  store.close()
+  removeFile(path)
+
+block staleEpochCommitRejected:
+  let path = tempDb("stale-commit")
+  let store = newSqliteRunStore(path)
+  discard store.commitTransition("run-1", baseTransition("tx-good"))
+  discard store.claimLease("run-1", "owner-2")
+  var hijack = baseTransition("tx-bad")
+  hijack["epoch"] = %1
+  hijack["state"] = %*{"phase": "hijacked"}
+  var rejected = false
+  try:
+    discard store.commitTransition("run-1", hijack)
+  except FactoryError as e:
+    rejected = true
+    doAssert e.code == fecStaleSnapshot
+  doAssert rejected
+  let rec = store.recover("run-1")
+  doAssert rec["state"]["phase"].getStr == "running"
+  doAssert rec["events"].len == 1
+  doAssert store.pendingOutbox("run-1").len == 1
+  store.close()
+  removeFile(path)
+
+block resumeCommitRaceAcrossHandles:
+  let path = tempDb("resume-race")
+  var storeA = newSqliteRunStore(path)
+  discard storeA.commitTransition("run-1", baseTransition("tx-race"))
+  let recBefore = storeA.recover("run-1")
+  storeA.close()
+  let storeB = newSqliteRunStore(path)
+  discard storeB.claimLease("run-1", "resumed-worker")
+  storeA = newSqliteRunStore(path)
+  var lateTx = baseTransition("tx-late-owner")
+  lateTx["epoch"] = %1
+  var failed = false
+  try:
+    discard storeA.commitTransition("run-1", lateTx)
+  except FactoryError as e:
+    failed = true
+    doAssert e.code == fecStaleSnapshot
+  doAssert failed
+  let rec = storeB.recover("run-1")
+  doAssert rec["epoch"].getInt == 2
+  doAssert $rec["state"] == $recBefore["state"]
+  doAssert rec["events"].len == recBefore["events"].len
+  storeA.close()
+  storeB.close()
+  removeFile(path)
+
+block interruptedPublishRedelivery:
+  let path = tempDb("publish-redeliver")
+  var store = newSqliteRunStore(path)
+  discard store.commitTransition("run-1", baseTransition("tx-pub"))
+  discard store.publishPending("run-1")
+  store.close()
+  store = newSqliteRunStore(path)
+  let rec = store.recover("run-1")
+  doAssert rec["outbox_pending"].len == 1
+  doAssert store.publishPending("run-1").len == 0
+  let unacked = store.redistributeUnackedOutbox("run-1")
+  doAssert unacked.len == 1
+  doAssert unacked[0]{"message_id"}.getStr == "out-msg-1"
+  let again = store.publishPending("run-1")
+  doAssert again.len == 1
+  doAssert again[0]{"message_id"}.getStr == "out-msg-1"
+  store.close()
+  removeFile(path)
+
+block incompleteTransitionRejected:
+  let path = tempDb("incomplete-tx")
+  let store = newSqliteRunStore(path)
+  var bad = %*{
+    "transition_id": "tx-incomplete",
+    "activation_id": "act-1",
+    "attempt_id": "try-1",
+    "epoch": 1,
+    "invocation_validated": false,
+    "state": {"phase": "running"},
+    "outbox": []
+  }
+  var rejected = false
+  try:
+    discard store.commitTransition("run-1", bad)
+  except FactoryError as e:
+    rejected = true
+    doAssert e.code == fecMissingRequiredInput
+  doAssert rejected
+  let rec = store.recover("run-1")
+  doAssert rec["events"].len == 0
+  store.close()
+  removeFile(path)
+
+block idempotentTransitionAfterLeaseBump:
+  let path = tempDb("idempotent-after-lease")
+  let store = newSqliteRunStore(path)
+  let tx = baseTransition("tx-replay")
+  discard store.commitTransition("run-1", tx)
+  discard store.claimLease("run-1", "new-owner")
+  let replayed = store.commitTransition("run-1", tx)
+  doAssert replayed["transition_id"].getStr == "tx-replay"
+  let rec = store.recover("run-1")
+  doAssert rec["events"].len == 1
+  doAssert store.pendingOutbox("run-1").len == 1
   store.close()
   removeFile(path)
 

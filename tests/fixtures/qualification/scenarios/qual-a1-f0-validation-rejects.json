@@ -1,0 +1,184 @@
+{
+  "schema": "nimfactory.qualification.scenario/0.1",
+  "scenario_id": "qual-a1-f0-validation-rejects",
+  "discriminator": "a1_f0_schema_validation",
+  "discriminating": false,
+  "description": "A.1 / R5 — F0 public deserializers reject missing fields, wrong types, duplicate JSON keys, and unknown properties.",
+  "wave": "A.1",
+  "qualification_mode": "simulated",
+  "corpus_snapshot_ref": "snap-qual-wave-a-001",
+  "oracle": {
+    "schema": "nimfactory.qualification.oracle/0.1",
+    "expected_pass_for_reference": true,
+    "checks": [
+      {
+        "id": "mode",
+        "kind": "a1_probe_mode",
+        "target": "",
+        "detail": "simulated"
+      },
+      {
+        "id": "meta_only",
+        "kind": "a1_outcome_verdict",
+        "target": "meta_only_schema",
+        "detail": "reject"
+      },
+      {
+        "id": "meta_only_code",
+        "kind": "a1_outcome_error_code",
+        "target": "meta_only_schema",
+        "detail": "missing_required_input"
+      },
+      {
+        "id": "result_no_status",
+        "kind": "a1_outcome_verdict",
+        "target": "result_missing_status",
+        "detail": "reject"
+      },
+      {
+        "id": "result_no_status_code",
+        "kind": "a1_outcome_error_code",
+        "target": "result_missing_status",
+        "detail": "missing_required_input"
+      },
+      {
+        "id": "outputs_type",
+        "kind": "a1_outcome_verdict",
+        "target": "result_outputs_not_object",
+        "detail": "reject"
+      },
+      {
+        "id": "outputs_type_code",
+        "kind": "a1_outcome_error_code",
+        "target": "result_outputs_not_object",
+        "detail": "validation_failed"
+      },
+      {
+        "id": "dup_keys",
+        "kind": "a1_outcome_verdict",
+        "target": "json_duplicate_epoch",
+        "detail": "reject"
+      },
+      {
+        "id": "dup_keys_code",
+        "kind": "a1_outcome_error_code",
+        "target": "json_duplicate_epoch",
+        "detail": "duplicate_key"
+      },
+      {
+        "id": "unknown_field",
+        "kind": "a1_outcome_verdict",
+        "target": "meta_unknown_property",
+        "detail": "reject"
+      },
+      {
+        "id": "unknown_field_code",
+        "kind": "a1_outcome_error_code",
+        "target": "meta_unknown_property",
+        "detail": "validation_failed"
+      }
+    ]
+  },
+  "reference_observation": {
+    "schema": "nimfactory.qualification.observation/0.1",
+    "qualification_mode": "simulated",
+    "scenario_id": "qual-a1-f0-validation-rejects",
+    "snapshot_ref": "snap-qual-wave-a-001",
+    "selected_instruction_ids": [],
+    "fragment_refs": [],
+    "included": [],
+    "omitted": [],
+    "missing": [],
+    "read_set_entries": [],
+    "status": "ok",
+    "diagnostics": [
+      "a1_review:R5"
+    ],
+    "token_accounting": {},
+    "extensions": {
+      "a1_probe": {
+        "lot": "F0",
+        "review_id": "R5",
+        "mode": "simulated",
+        "outcomes": [
+          {
+            "step_id": "meta_only_schema",
+            "verdict": "reject",
+            "error_code": "missing_required_input"
+          },
+          {
+            "step_id": "result_missing_status",
+            "verdict": "reject",
+            "error_code": "missing_required_input"
+          },
+          {
+            "step_id": "result_outputs_not_object",
+            "verdict": "reject",
+            "error_code": "validation_failed"
+          },
+          {
+            "step_id": "json_duplicate_epoch",
+            "verdict": "reject",
+            "error_code": "duplicate_key"
+          },
+          {
+            "step_id": "meta_unknown_property",
+            "verdict": "reject",
+            "error_code": "validation_failed"
+          }
+        ]
+      }
+    }
+  },
+  "counterexample_observation": {
+    "schema": "nimfactory.qualification.observation/0.1",
+    "qualification_mode": "simulated",
+    "scenario_id": "qual-a1-f0-validation-rejects",
+    "snapshot_ref": "snap-qual-wave-a-001",
+    "selected_instruction_ids": [],
+    "fragment_refs": [],
+    "included": [],
+    "omitted": [],
+    "missing": [],
+    "read_set_entries": [],
+    "status": "ok",
+    "diagnostics": [
+      "wave_a_defect:R5"
+    ],
+    "token_accounting": {},
+    "extensions": {
+      "a1_probe": {
+        "lot": "F0",
+        "review_id": "R5",
+        "mode": "simulated",
+        "outcomes": [
+          {
+            "step_id": "meta_only_schema",
+            "verdict": "accept",
+            "error_code": ""
+          },
+          {
+            "step_id": "result_missing_status",
+            "verdict": "accept",
+            "error_code": ""
+          },
+          {
+            "step_id": "result_outputs_not_object",
+            "verdict": "accept",
+            "error_code": ""
+          },
+          {
+            "step_id": "json_duplicate_epoch",
+            "verdict": "accept",
+            "error_code": ""
+          },
+          {
+            "step_id": "meta_unknown_property",
+            "verdict": "accept",
+            "error_code": ""
+          }
+        ]
+      }
+    }
+  }
+}

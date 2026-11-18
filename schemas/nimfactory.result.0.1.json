@@ -11,11 +11,49 @@
       "enum": ["ok", "partial", "blocked", "failed", "cancelled"]
     },
     "outputs": { "type": "object" },
-    "needs": { "type": "array" },
-    "diagnostics": { "type": "array" },
+    "needs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string" },
+          "target": { "type": "string" },
+          "selector": { "type": "string" },
+          "required": { "type": "boolean" },
+          "reason": { "type": "string" }
+        }
+      }
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "code": { "type": "string" },
+          "phase": { "type": "string" },
+          "message": { "type": "string" },
+          "retryable": { "type": "boolean" },
+          "refs": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
     "read_set_ref": { "type": ["string", "null"] },
     "usage_ref": { "type": ["string", "null"] },
-    "error": { "type": "object" }
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "code": { "type": "string" },
+        "phase": { "type": "string" },
+        "retryable": { "type": "boolean" },
+        "reason": { "type": "string" }
+      }
+    }
   },
   "additionalProperties": false
 }

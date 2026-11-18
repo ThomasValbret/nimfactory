@@ -1,6 +1,7 @@
 ## Shared JSON validation helpers for factory schemas.
+## parseJsonStrict rejects duplicate object keys before std/json collapse.
 
-import std/[json, strutils]
+import std/[json, strutils, tables, unicode]
 import ./errors
 
 proc rejectNonFiniteNumbers*(node: JsonNode; path = "$") =
@@ -21,7 +22,191 @@ proc rejectNonFiniteNumbers*(node: JsonNode; path = "$") =
   else:
     discard
 
+type
+  ScanCtx = object
+    s: string
+    i: int
+
+proc peek(c: ScanCtx): char =
+  if c.i >= c.s.len: '\0' else: c.s[c.i]
+
+proc advance(c: var ScanCtx) =
+  if c.i < c.s.len: inc c.i
+
+proc skipWs(c: var ScanCtx) =
+  while c.i < c.s.len and c.s[c.i] in {' ', '\t', '\n', '\r'}:
+    inc c.i
+
+proc expectChar(c: var ScanCtx; ch: char) =
+  skipWs(c)
+  if peek(c) != ch:
+    raise newFactoryError(fecInvalidJson,
+      "expected '" & $ch & "' at " & $c.i, phase = "validate")
+  advance(c)
+
+proc readUnicodeHex4(c: var ScanCtx): int =
+  var hex = ""
+  for _ in 1 .. 4:
+    if c.i >= c.s.len or peek(c) notin HexDigits:
+      raise newFactoryError(fecInvalidJson, "bad unicode escape", phase = "validate")
+    hex.add(peek(c))
+    advance(c)
+  result = parseHexInt(hex)
+
+proc parseStringRaw(c: var ScanCtx): string =
+  expectChar(c, '"')
+  result = ""
+  while true:
+    if c.i >= c.s.len:
+      raise newFactoryError(fecInvalidJson, "unterminated string", phase = "validate")
+    let ch = peek(c)
+    advance(c)
+    if ch == '"':
+      return
+    if ch == '\\':
+      if c.i >= c.s.len:
+        raise newFactoryError(fecInvalidJson, "bad escape", phase = "validate")
+      let e = peek(c)
+      advance(c)
+      case e
+      of '"', '\\', '/': result.add(e)
+      of 'b': result.add('\b')
+      of 'f': result.add('\f')
+      of 'n': result.add('\n')
+      of 'r': result.add('\r')
+      of 't': result.add('\t')
+      of 'u':
+        # Match std/json string decoding: combine UTF-16 surrogate pairs.
+        let code = readUnicodeHex4(c)
+        if code >= 0xD800 and code <= 0xDBFF:
+          if peek(c) != '\\':
+            raise newFactoryError(fecInvalidJson, "orphan high surrogate",
+              phase = "validate")
+          advance(c)
+          if peek(c) != 'u':
+            raise newFactoryError(fecInvalidJson, "orphan high surrogate",
+              phase = "validate")
+          advance(c)
+          let low = readUnicodeHex4(c)
+          if low < 0xDC00 or low > 0xDFFF:
+            raise newFactoryError(fecInvalidJson, "invalid surrogate pair",
+              phase = "validate")
+          let combined = 0x10000 + ((code - 0xD800) shl 10) + (low - 0xDC00)
+          result.add(toUTF8(Rune(combined)))
+        elif code >= 0xDC00 and code <= 0xDFFF:
+          raise newFactoryError(fecInvalidJson, "orphan low surrogate",
+            phase = "validate")
+        elif code < 0 or code > 0x10FFFF:
+          raise newFactoryError(fecInvalidJson, "bad unicode code point",
+            phase = "validate")
+        else:
+          result.add(toUTF8(Rune(code)))
+      else:
+        raise newFactoryError(fecInvalidJson, "bad escape", phase = "validate")
+    else:
+      result.add(ch)
+
+proc skipNumber(c: var ScanCtx) =
+  skipWs(c)
+  if peek(c) == '-': advance(c)
+  if peek(c) == '0':
+    advance(c)
+  elif peek(c) in {'1'..'9'}:
+    while peek(c) in {'0'..'9'}: advance(c)
+  else:
+    raise newFactoryError(fecInvalidJson, "bad number", phase = "validate")
+  if peek(c) == '.':
+    advance(c)
+    if peek(c) notin {'0'..'9'}:
+      raise newFactoryError(fecInvalidJson, "bad fraction", phase = "validate")
+    while peek(c) in {'0'..'9'}: advance(c)
+  if peek(c) in {'e', 'E'}:
+    advance(c)
+    if peek(c) in {'+', '-'}: advance(c)
+    if peek(c) notin {'0'..'9'}:
+      raise newFactoryError(fecInvalidJson, "bad exponent", phase = "validate")
+    while peek(c) in {'0'..'9'}: advance(c)
+
+proc skipValue(c: var ScanCtx)
+
+proc skipObject(c: var ScanCtx) =
+  expectChar(c, '{')
+  skipWs(c)
+  var seen = initTable[string, bool]()
+  if peek(c) == '}':
+    advance(c)
+    return
+  while true:
+    skipWs(c)
+    let key = parseStringRaw(c)
+    if key in seen:
+      raise newFactoryError(fecDuplicateKey,
+        "duplicate key: " & key, phase = "validate")
+    seen[key] = true
+    expectChar(c, ':')
+    skipValue(c)
+    skipWs(c)
+    if peek(c) == ',':
+      advance(c)
+      continue
+    elif peek(c) == '}':
+      advance(c)
+      return
+    else:
+      raise newFactoryError(fecInvalidJson, "expected , or }", phase = "validate")
+
+proc skipArray(c: var ScanCtx) =
+  expectChar(c, '[')
+  skipWs(c)
+  if peek(c) == ']':
+    advance(c)
+    return
+  while true:
+    skipValue(c)
+    skipWs(c)
+    if peek(c) == ',':
+      advance(c)
+      continue
+    elif peek(c) == ']':
+      advance(c)
+      return
+    else:
+      raise newFactoryError(fecInvalidJson, "expected , or ]", phase = "validate")
+
+proc skipValue(c: var ScanCtx) =
+  skipWs(c)
+  case peek(c)
+  of '{': skipObject(c)
+  of '[': skipArray(c)
+  of '"': discard parseStringRaw(c)
+  of '-', '0'..'9': skipNumber(c)
+  of 't':
+    for ch in "true":
+      if peek(c) != ch:
+        raise newFactoryError(fecInvalidJson, "expected true", phase = "validate")
+      advance(c)
+  of 'f':
+    for ch in "false":
+      if peek(c) != ch:
+        raise newFactoryError(fecInvalidJson, "expected false", phase = "validate")
+      advance(c)
+  of 'n':
+    for ch in "null":
+      if peek(c) != ch:
+        raise newFactoryError(fecInvalidJson, "expected null", phase = "validate")
+      advance(c)
+  else:
+    raise newFactoryError(fecInvalidJson, "unexpected token", phase = "validate")
+
+proc rejectDuplicateKeys*(raw: string) =
+  var c = ScanCtx(s: raw, i: 0)
+  skipValue(c)
+  skipWs(c)
+  if c.i != c.s.len:
+    raise newFactoryError(fecInvalidJson, "trailing data after JSON", phase = "validate")
+
 proc parseJsonStrict*(raw: string): JsonNode =
+  rejectDuplicateKeys(raw)
   try:
     result = parseJson(raw)
   except JsonParsingError as e:
@@ -37,6 +222,24 @@ proc requireStringField*(node: JsonNode; field: string) =
   if not node.hasKey(field) or node[field].kind != JString:
     raise newFactoryError(fecMissingRequiredInput,
       "missing string field: " & field, phase = "validate")
+
+proc requireField*(node: JsonNode; field: string; kinds: set[JsonNodeKind];
+                   path = "") =
+  let p = if path.len == 0: field else: path & "." & field
+  if not node.hasKey(field):
+    raise newFactoryError(fecMissingRequiredInput,
+      "missing field: " & p, phase = "validate")
+  if node[field].kind notin kinds:
+    raise newFactoryError(fecValidationFailed,
+      "wrong type for " & p, phase = "validate")
+
+proc rejectUnknownKeys*(node: JsonNode; allowed: openArray[string]; path = "$") =
+  var ok = initTable[string, bool]()
+  for k in allowed: ok[k] = true
+  for k, _ in node.pairs:
+    if k notin ok:
+      raise newFactoryError(fecValidationFailed,
+        "unexpected field " & path & "." & k, phase = "validate")
 
 proc schemaVersionParts*(schema: string): tuple[name, version: string] =
   let parts = schema.rsplit('/', 1)

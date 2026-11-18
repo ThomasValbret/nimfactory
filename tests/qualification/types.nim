@@ -8,6 +8,8 @@ const QualSchemaOracle* = "nimfactory.qualification.oracle/0.1"
 const QualSchemaObservation* = "nimfactory.qualification.observation/0.1"
 const QualSchemaCorpusManifest* = "nimfactory.qualification.corpus/0.1"
 const QualificationModeSimulated* = "simulated"
+const QualificationModeComponentProbe* = "component_probe"
+const QualWaveA1Tag* = "A.1"
 
 type
   OracleCheckKind* = enum
@@ -29,6 +31,11 @@ type
     ckBudgetScopesDistinct
     ckEffectUnknownNotSuccess
     ckDiagnosticMustInclude
+    ckA1ProbeMode
+    ckA1OutcomeVerdict
+    ckA1OutcomeErrorCode
+    ckA1OutcomeFieldEquals
+    ckA1OutcomeNoMutation
 
   OracleCheck* = object
     id*: string
@@ -77,6 +84,11 @@ proc kindFromString(s: string): OracleCheckKind =
   of "budget_scopes_distinct": ckBudgetScopesDistinct
   of "effect_unknown_not_success": ckEffectUnknownNotSuccess
   of "diagnostic_must_include": ckDiagnosticMustInclude
+  of "a1_probe_mode": ckA1ProbeMode
+  of "a1_outcome_verdict": ckA1OutcomeVerdict
+  of "a1_outcome_error_code": ckA1OutcomeErrorCode
+  of "a1_outcome_field_equals": ckA1OutcomeFieldEquals
+  of "a1_outcome_no_mutation": ckA1OutcomeNoMutation
   else: raise newException(ValueError, "unknown oracle check kind: " & s)
 
 proc parseOracleChecks*(j: JsonNode): seq[OracleCheck] =
