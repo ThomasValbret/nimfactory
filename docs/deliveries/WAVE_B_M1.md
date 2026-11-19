@@ -5,6 +5,7 @@ Dépôt : https://github.com/ThomasValbret/nimfactory
 Branche : `feature/wave-b-m1`  
 PR : https://github.com/ThomasValbret/nimfactory/pull/2 (**ouverte**, fusion réservée à la revue)  
 Base du défaut : `dd4fcf57e801c69cf0257edf06c140ef5a37b235`  
+SHA fonctionnel testé : `2cd338b27dcb9bca3ea5dbd11da4f9db9adba0d3`  
 SDK : `bf22665ece77d7149dbe61df959a6024bf6b26f3`  
 Nim : 2.4.0  
 
