@@ -68,3 +68,4 @@ tests/f17/test_m1_resume_recipe
 
 # E2E mission worktrees
 fixtures/e2e_bugfix/.wt*
+tests/mission/test_context_and_inject
