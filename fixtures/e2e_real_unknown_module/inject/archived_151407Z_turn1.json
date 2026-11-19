@@ -1,0 +1,10 @@
+{
+  "target_file": "src/glob.nim",
+  "decision": "expandGlob does not handle the pattern correctly for sibling directories",
+  "edits": [
+    {
+      "oldText": "return pattern",
+      "newText": "return expandGlob(pattern)"
+    }
+  ]
+}
