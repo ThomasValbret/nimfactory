@@ -1,0 +1,9 @@
+{
+  "exit_code": 4,
+  "ok": false,
+  "verdict": "verify_failed",
+  "provider_calls": 1,
+  "recovery_triggered": false,
+  "recovery_attempted": false,
+  "warning": "oracle reception failed"
+}

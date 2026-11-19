@@ -15,6 +15,7 @@ type
 
   ApplyResult* = object
     ok*: bool
+    identicalToOriginal*: bool ## true when proposed body equals current file (no-op)
     worktree*: string
     targetFile*: string
     decision*: string
@@ -129,13 +130,15 @@ proc applyDecision*(repoRoot, worktreeRoot: string; dec: FixDecision): ApplyResu
     return
   let before = readFile(dest)
   result.beforeHash = simpleHash(before)
-  writeFile(dest, dec.patchedContent)
   result.afterHash = simpleHash(dec.patchedContent)
   if before == dec.patchedContent:
     result.ok = false
+    result.identicalToOriginal = true
     result.message = "patched_content identical to original (no effective change)"
     return
+  writeFile(dest, dec.patchedContent)
   result.ok = true
+  result.identicalToOriginal = false
   result.message = "applied"
 
 proc decisionToJson*(d: FixDecision): JsonNode =
@@ -151,6 +154,7 @@ proc decisionToJson*(d: FixDecision): JsonNode =
 proc applyToJson*(a: ApplyResult): JsonNode =
   %*{
     "ok": a.ok,
+    "identical_to_original": a.identicalToOriginal,
     "worktree": a.worktree,
     "target_file": a.targetFile,
     "decision": a.decision,
@@ -158,3 +162,13 @@ proc applyToJson*(a: ApplyResult): JsonNode =
     "before_hash": a.beforeHash,
     "after_hash": a.afterHash
   }
+
+proc parseCannotFix*(raw: string): tuple[hit: bool; decision: string] =
+  ## Recovery may conclude it cannot propose a correction.
+  try:
+    let node = parseJson(extractJsonObject(raw))
+    if node{"cannot_fix"}.getBool(false):
+      return (true, node{"decision"}.getStr("cannot_fix"))
+  except CatchableError:
+    discard
+  (false, "")

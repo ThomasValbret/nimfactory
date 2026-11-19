@@ -41,6 +41,16 @@ Do not change unrelated files. Return ONLY JSON:
   target_file, decision, patched_content.
 """.strip()
 
+  ApiRecoverySystemPrompt* = """
+You are the software_fix role for NimFactory on a recovery turn.
+Your previous proposal did not change the chosen file.
+You may pick a different existing file or conclude you cannot propose a correction.
+Do not invent files. The product will not reveal an expected target or reception tests.
+Return ONLY a JSON object with either:
+  {"cannot_fix": true, "decision": "<why>"},
+or the usual keys target_file, decision, patched_content.
+""".strip()
+
 proc collectSrcNim*(repoRoot: string): seq[SourceFile] =
   let srcDir = repoRoot / "src"
   if not dirExists(srcDir):
@@ -56,7 +66,7 @@ proc collectSrcNim*(repoRoot: string): seq[SourceFile] =
       continue
     result.add(SourceFile(relPath: rel, content: readFile(p)))
 
-proc renderSources(sources: seq[SourceFile]): string =
+proc renderSources*(sources: seq[SourceFile]): string =
   var parts: seq[string] = @[]
   for s in sources:
     parts.add("### FILE " & s.relPath & "\n```nim\n" & s.content & "\n```")
@@ -95,10 +105,24 @@ proc buildApiContext*(repoRoot, symptomPath: string): MissionContext =
     renderSources(sources) &
     "\n\nProduce the JSON patch decision now."
 
+proc buildNoOpRecoveryContext*(base: MissionContext; chosenTarget: string): MissionContext =
+  ## Same authorized sources; tell the model its prior target was a no-op.
+  ## Does not reveal the expected target or the oracle.
+  result = base
+  result.route = "api"
+  result.systemPrompt = ApiRecoverySystemPrompt
+  result.userPrompt =
+    "Recovery turn.\n" &
+    "Chosen target: " & chosenTarget & "\n" &
+    "Finding: proposed content identical to the original.\n" &
+    "Reconsider the target among the same authorized sources, or conclude you cannot propose a correction.\n\n" &
+    "Symptom (from pilot):\n" & base.symptom.strip() & "\n\n" &
+    "Authorized repository sources:\n\n" & renderSources(base.sources) &
+    "\n\nProduce the JSON response now."
+
 proc buildLocalMicroPatchContext*(
     repoRoot, symptomPath, targetFile, diagnosis, constraint: string): MissionContext =
   ## Dedicated local constructor: target and diagnosis already known.
-  ## Only the named extract is presented, plus the constraint to preserve.
   result.route = "local"
   if targetFile.len == 0:
     result.ok = false

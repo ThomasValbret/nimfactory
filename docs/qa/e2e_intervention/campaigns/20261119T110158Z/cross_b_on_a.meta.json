@@ -1,0 +1,7 @@
+{
+  "exit_code": 4,
+  "ok": false,
+  "verdict": "verify_failed",
+  "provider_calls": 1,
+  "note": "inject replay; exit_code derived from ok"
+}

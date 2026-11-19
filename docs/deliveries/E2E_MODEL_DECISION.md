@@ -1,98 +1,68 @@
-# Delivery — E2E model decision / intervention choice
+# Delivery — E2E intervention choice + no-op recovery
 
 **Branch:** `feature/e2e-model-decision`  
 **PR:** [#4](https://github.com/ThomasValbret/nimfactory/pull/4) (draft)  
-**Tested SHA:** `1f5c78eff79e9038226fc830f7852130cfbc0907`  
-**PR #3:** role selects route; API scenarios use planned API; local micro-patch is a distinct mission.
+**Tested SHA:** _(tip)_
 
-## Conserved proof — CLI can obtain and apply a real API fix
+## Reference kept (prior campaign)
 
-Earlier trials on `fixtures/e2e_bugfix` (same symptom family, cause in one file) remain under `docs/qa/e2e_model_decision/api_variant_{a,b}.json`: both passed with `openai/gpt-4o-mini`. They prove end-to-end apply+oracle. They do **not** qualify *choice of intervention* across modules.
+Fixtures, oracle and traces under `docs/qa/e2e_intervention/` (non-`campaigns/`) remain the accepted reference: A failed first try with **identical content / no effect**, B passed.
 
-## Product fixes in this pass
+## Product changes
 
-1. **`--oracle` is executed** — `runOracle` compiles the `.nim` file from the supplied directory with `--path:<worktree>/src`. No hardcoded assertions.
-2. **CLI oracle cases:** missing → `oracle_missing` (exit 2); false oracle → `verify_failed` (exit 4); satisfied → `pass` (exit 0). Artifacts: `docs/qa/e2e_intervention/cli_oracle_*.json`.
-3. **`--worktree`** — never `removeDir`s an existing tree. Empty path → fresh mission dir under `$TMP`; occupied path → refuse (`apply_failed`).
-4. **Context** — pilot symptom only (no default normalize spec). Local route requires established `--target` + `--diagnosis` (micro-patch, not intervention choice).
-5. **API recipe** — `scripts/e2e_intervention.sh` does not launch Ollama. Optional local micro-patch is separate.
+1. **Campaign script** (`scripts/e2e_intervention.sh`): continues after A failure; records exit code + verdict per trial; writes under `docs/qa/e2e_intervention/campaigns/<UTC-stamp>/` with `summary.json`.
+2. **No-op recovery (API / inject-with-recovery)**: when `patched_content` equals the current file, one recovery turn returns to the model: chosen target, finding « contenu proposé identique à l’original », same authorized sources. May reconsider target or `{"cannot_fix":true,...}`. No expected target, no oracle. Initial success → zero recovery calls.
+3. **Local route** unchanged: micro-patch only (`--target` + `--diagnosis`).
 
-## Intervention fixtures
+## Offline qualification (no API)
 
-`fixtures/e2e_intervention/` — same pilot symptom, ordinary names, no bug/variant/decoy labels.
+`tests/mission/test_noop_recovery.nim`:
 
-| Repo | Cause module | Other modules |
+| Case | Calls | Result |
 | --- | --- | --- |
-| `repo_a` | `src/textutil.nim` (`isBlank` misses `""`) | `labels.nim` correct, `logging.nim` unrelated |
-| `repo_b` | `src/labels.nim` (no guest path) | `textutil.nim` correct, `logging.nim` unrelated |
+| no-op then recovery fix | 2 | pass |
+| no-op then cannot_fix | 2 | model_cannot_fix |
+| no-op then no-op again | 2 | apply_failed (stop) |
+| initial success | 1 | pass (no recovery) |
 
-Symptom (`SYMPTOM.md`): blank → guest label; non-blank → trimmed. Oracle outside context.
+Bench `test_intervention_bench.nim` still green.
 
-## Bench matrix (no API spend)
+## Campaign `20261119T110158Z` (live API)
 
-`tests/mission/test_intervention_bench.nim` + inject reference fixes:
-
-| Case | Result |
-| --- | --- |
-| original A / B vs oracle | fail / fail |
-| ref fix A on A | pass (`textutil`) |
-| ref fix B on B | pass (`labels`) |
-| ref A on B / ref B on A | fail / fail |
-| wrong target `logging.nim` | fail |
-| occupied worktree | refuse |
-| oracle missing / false / ok | missing / fail / pass |
-
-## Planned API trials (intervention choice)
-
-Build: `nim c -d:release -d:ssl … -o:build/nimfactory src/nimfactory_cli.nim`
+Command:
 
 ```bash
-./build/nimfactory mission-fix \
-  --repo fixtures/e2e_intervention/repo_a \
-  --symptom fixtures/e2e_intervention/SYMPTOM.md \
-  --oracle fixtures/e2e_intervention/oracle \
-  --route api --worktree /tmp/nf_wt_a_new
-
-./build/nimfactory mission-fix \
-  --repo fixtures/e2e_intervention/repo_b \
-  --symptom fixtures/e2e_intervention/SYMPTOM.md \
-  --oracle fixtures/e2e_intervention/oracle \
-  --route api --worktree /tmp/nf_wt_b_new
+bash scripts/e2e_intervention.sh
+# loads /opt/.keys when OPENAI_API_KEY unset; needs -d:ssl binary
 ```
 
-| Trial | Model | Sources presented | Decision / target | Diff effect | Verdict | Tokens | Est. cost |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| API A | gpt-4o-mini | labels, logging, textutil | text «isBlank…» but **target `labels.nim`**, body identical to original | no effective change | **apply_failed** | 293+91 | ≈ \$0.00010 |
-| API B | gpt-4o-mini | labels, logging, textutil | guest path in **`labels.nim`** | adds `isBlank` branch | **pass** | 276+90 | ≈ \$0.00010 |
-| Cross A→B | inject replay | (same apply path) | A's labels payload on B | fixes B's labels | **pass** | 0 new | \$0 |
-| Cross B→A | inject replay | | B's labels fix on A | A still broken in textutil | **verify_failed** | 0 new | \$0 |
+| Trial | Exit | Verdict | Calls | Recovery | Notes |
+| --- | --- | --- | --- | --- | --- |
+| API A | 4 | verify_failed | 1 | no | effective change on **wrong** file `labels.nim`; not a no-op → recovery not armed |
+| API B | 0 | pass | 1 | no | `labels.nim` guest path |
+| Cross A→B | — | pass | 1 inject | — | |
+| Cross B→A | — | verify_failed | 1 inject | — | |
 
-Tarif used: gpt-4o-mini ≈ \$0.15/1M in + \$0.60/1M out. New spend this pass ≈ **\$0.0002** (well under remaining €3). Prior conserved trials ≈ \$0.00025.
+**Attempt detail A**
 
-### Rupture on A (localized)
+| Attempt | Target | Effective change | Oracle | Tokens |
+| --- | --- | --- | --- | --- |
+| 1 initial | `src/labels.nim` | yes (wrong) | fail | 293+92 |
 
-- Facts in context: buggy `isBlank` in `textutil.nim`; `labels.nim` already correct.
-- Context sent: all three `src/*.nim` + pilot symptom (see `api_repo_a.json` → `context.user_prompt`).
-- Model output: diagnosed isBlank verbally but selected `src/labels.nim` and emitted the pre-existing labels body.
-- Apply: refused identical content.
-- Oracle: not reached.
-- Component: failure attributed to **model intervention choice** (`openai/gpt-4o-mini`), not to oracle/worktree plumbing.
+**Attempt detail B**
 
-### Cross-replay vs starting hypothesis
+| Attempt | Target | Effective change | Oracle | Tokens |
+| --- | --- | --- | --- | --- |
+| 1 initial | `src/labels.nim` | yes | pass | 276+93 |
 
-Hypothesis “each API answer fixes only its repo” is **partially contradicted**: A's no-op-on-A labels body still repairs B; B's correct-for-B patch does not repair A. Bench discrimination (reference inject matrix) remains solid.
+Est. new spend ≈ \$0.0002 (gpt-4o-mini public rates). Global campaign `global_ok=false` (A + cross B→A).
 
-## Attribution
+**Live no-op recovery:** not exercised this run (A was not identical-to-original). Wiring covered offline; mark live API recovery as **not demonstrated on this campaign**.
 
-| Step | Component |
-| --- | --- |
-| Context | `nimfactory.mission.context` |
-| Model | `openai/gpt-4o-mini` via NimAgent |
-| Parse/apply/worktree | `nimfactory.mission.apply` |
-| Oracle | caller `--oracle` via `nimfactory.mission.verify` |
+## Repro
 
-## Limits
-
-- Intervention choice on `repo_a` not yet demonstrated with the planned API (failure conserved).
-- Local micro-patch route exists but is not part of the API intervention recipe.
-- Rotate the temporary API key after review; never commit it.
+```bash
+nim c -d:release -d:ssl --path:src --path:vendor/NimAgentLibrary/src \
+  -o:build/nimfactory src/nimfactory_cli.nim
+bash scripts/e2e_intervention.sh
+```
