@@ -1,5 +1,6 @@
 ## End-to-end software_fix mission: context → model → apply → verify.
-## API route: one no-op recovery turn when proposed content equals the original.
+## Shared ceiling: at most two provider calls. Recovery after no-op or
+## functional verify failure. Compile errors and missing oracle stay distinct.
 
 import std/[json]
 import ./context
@@ -15,7 +16,8 @@ type
     worktreeRoot*: string
     route*: string          ## api | local | inject
     injectPath*: string
-    injectRecoveryPath*: string ## offline: second inject after no-op
+    injectRecoveryPath*: string ## offline second inject
+    recoveryViaApi*: bool   ## after inject first turn, recovery calls planned API
     localModel*: string
     targetFile*: string
     diagnosis*: string
@@ -23,13 +25,14 @@ type
 
   AttemptRecord* = object
     index*: int
-    role*: string           ## initial | noop_recovery
+    role*: string           ## initial | recovery
     provider*: ProviderCallResult
     decision*: FixDecision
     apply*: ApplyResult
     verify*: VerifyResult
     cannotFix*: bool
     effectiveChange*: bool
+    recoveryReason*: string ## noop | functional_fail | ""
 
   MissionReport* = object
     ok*: bool
@@ -37,14 +40,15 @@ type
     route*: string
     componentAttribution*: JsonNode
     context*: MissionContext
-    provider*: ProviderCallResult   ## last provider call (compat)
-    decision*: FixDecision          ## last decision (compat)
-    apply*: ApplyResult             ## last apply (compat)
-    verify*: VerifyResult           ## last verify (compat)
+    provider*: ProviderCallResult
+    decision*: FixDecision
+    apply*: ApplyResult
+    verify*: VerifyResult
     attempts*: seq[AttemptRecord]
     providerCalls*: int
     recoveryTriggered*: bool
     recoveryAttempted*: bool
+    recoveryReason*: string
     untested*: seq[string]
     warning*: string
 
@@ -56,6 +60,7 @@ proc attemptToJson(a: AttemptRecord): JsonNode =
   %*{
     "index": a.index,
     "role": a.role,
+    "recovery_reason": a.recoveryReason,
     "provider": providerToJson(a.provider),
     "decision": decisionToJson(a.decision),
     "apply": applyToJson(a.apply),
@@ -82,20 +87,96 @@ proc invokeModel(req: MissionRequest; ctx: MissionContext;
     result.message = "unknown route: " & req.route
     result.status = "failed"
 
-proc finishVerify(report: var MissionReport; req: MissionRequest;
-                  attempt: var AttemptRecord) =
-  attempt.verify = runOracle(attempt.apply.worktree, req.oracleDir)
-  report.verify = attempt.verify
+proc invokeRecovery(req: MissionRequest; ctx: MissionContext): ProviderCallResult =
+  if req.route == "api" or req.recoveryViaApi:
+    result = callPlannedApi(ctx)
+  elif req.route == "inject" and req.injectRecoveryPath.len > 0:
+    result = callFromInject(req.injectRecoveryPath)
+  else:
+    result.ok = false
+    result.available = false
+    result.message = "no recovery provider configured"
+    result.status = "failed"
+
+proc canUseRecoveryProvider(req: MissionRequest): bool =
+  req.route == "api" or req.recoveryViaApi or
+    (req.route == "inject" and req.injectRecoveryPath.len > 0)
+
+proc runRecovery(report: var MissionReport; req: MissionRequest;
+                 prior: AttemptRecord; reason, finding: string) =
+  report.recoveryTriggered = true
+  report.recoveryReason = reason
+  var recovery: AttemptRecord
+  recovery.index = 2
+  recovery.role = "recovery"
+  recovery.recoveryReason = reason
+  let recoveryCtx = buildRecoveryContext(
+    report.context,
+    prior.decision.targetFile,
+    prior.decision.decision,
+    prior.decision.patchedContent,
+    finding)
+  recovery.provider = invokeRecovery(req, recoveryCtx)
+  report.providerCalls += 1
+  report.recoveryAttempted = true
+  report.provider = recovery.provider
+
+  if not recovery.provider.ok:
+    report.ok = false
+    report.verdict = "model_failed"
+    report.warning = "recovery call failed: " & recovery.provider.message
+    if req.recoveryViaApi and not recovery.provider.available:
+      report.verdict = "api_unavailable"
+      report.warning =
+        "Quentin: planned OpenAI API unavailable on recovery (" &
+        recovery.provider.message & "). Live recovery untested."
+      report.untested.add("noop_or_verify recovery via API")
+    report.attempts.add(recovery)
+    return
+
+  let cannot = parseCannotFix(recovery.provider.rawText)
+  if cannot.hit:
+    recovery.cannotFix = true
+    recovery.decision.decision = cannot.decision
+    recovery.decision.parseOk = true
+    report.decision = recovery.decision
+    report.ok = false
+    report.verdict = "model_cannot_fix"
+    report.warning = cannot.decision
+    report.attempts.add(recovery)
+    return
+
+  recovery.decision = parseFixDecision(recovery.provider.rawText)
+  report.decision = recovery.decision
+  recovery.apply = applyDecision(req.repoRoot, "", recovery.decision)
+  report.apply = recovery.apply
+  if not recovery.apply.ok:
+    report.ok = false
+    report.verdict = "apply_failed"
+    report.warning = "recovery apply: " & recovery.apply.message
+    report.attempts.add(recovery)
+    return
+
+  recovery.effectiveChange = true
+  recovery.verify = runOracle(recovery.apply.worktree, req.oracleDir)
+  report.verify = recovery.verify
   report.componentAttribution["verify"] = %*("nimfactory.mission.verify + " & req.oracleDir)
-  if attempt.verify.ok:
+  if recovery.verify.ok:
     report.ok = true
     report.verdict = "pass"
   else:
     report.ok = false
-    report.verdict = "verify_failed"
-    report.warning =
-      if attempt.verify.message.len > 0: attempt.verify.message
-      else: "reception tests failed after applying model patch"
+    case recovery.verify.kind
+    of vkCompileError:
+      report.verdict = "compile_failed"
+    of vkFunctionalFail:
+      report.verdict = "verify_failed"
+    of vkOracleMissing:
+      report.verdict = "oracle_missing"
+    else:
+      report.verdict = "verify_failed"
+    report.warning = recovery.verify.message
+  report.attempts.add(recovery)
 
 proc runMission*(req: MissionRequest): MissionReport =
   result.route = req.route
@@ -109,6 +190,7 @@ proc runMission*(req: MissionRequest): MissionReport =
     result.ok = false
     result.verdict = "oracle_missing"
     result.warning = oracleCheck.message
+    result.verify.kind = vkOracleMissing
     result.verify.message = oracleCheck.message
     result.verify.stderr = oracleCheck.message
     result.verify.ok = false
@@ -127,7 +209,6 @@ proc runMission*(req: MissionRequest): MissionReport =
     result.warning = result.context.error
     return
 
-  # --- Initial model call ---
   var attempt: AttemptRecord
   attempt.index = 1
   attempt.role = "initial"
@@ -138,6 +219,9 @@ proc runMission*(req: MissionRequest): MissionReport =
     result.componentAttribution["model"] = %*("ollama/" & req.localModel)
   of "inject":
     result.componentAttribution["model"] = %*"inject (non-qualifying for LLM)"
+    if req.recoveryViaApi:
+      result.componentAttribution["recovery_model"] =
+        %*(PlannedApiProvider & "/" & PlannedApiModel)
   else:
     result.ok = false
     result.verdict = "invalid_route"
@@ -154,10 +238,10 @@ proc runMission*(req: MissionRequest): MissionReport =
     result.verdict = "api_unavailable"
     result.warning =
       "Quentin: planned OpenAI API unavailable (" & attempt.provider.message &
-      "). Untested: live software_fix intervention choice via API (incl. no-op recovery)."
+      "). Untested: live software_fix + recovery via API."
     result.untested = @[
       "callPlannedApi/live",
-      "noop_recovery via API",
+      "recovery via API",
       "parseFixDecision on API text",
       "applyDecision from API patch",
       "runOracle after API patch"
@@ -180,74 +264,54 @@ proc runMission*(req: MissionRequest): MissionReport =
 
   if attempt.apply.ok:
     attempt.effectiveChange = true
-    finishVerify(result, req, attempt)
+    attempt.verify = runOracle(attempt.apply.worktree, req.oracleDir)
+    result.verify = attempt.verify
+    result.componentAttribution["verify"] = %*("nimfactory.mission.verify + " & req.oracleDir)
+    if attempt.verify.ok:
+      result.ok = true
+      result.verdict = "pass"
+      result.attempts.add(attempt)
+      return
+
+    # Applied but reception failed — classify before considering recovery.
+    case attempt.verify.kind
+    of vkCompileError:
+      result.ok = false
+      result.verdict = "compile_failed"
+      result.warning = attempt.verify.message
+      result.attempts.add(attempt)
+      return
+    of vkOracleMissing:
+      result.ok = false
+      result.verdict = "oracle_missing"
+      result.warning = attempt.verify.message
+      result.attempts.add(attempt)
+      return
+    of vkFunctionalFail, vkOther:
+      if canUseRecoveryProvider(req):
+        result.attempts.add(attempt)
+        runRecovery(result, req, attempt, "functional_fail",
+          "patch applied and compiled, but the functional check still fails")
+        return
+      result.ok = false
+      result.verdict = "verify_failed"
+      result.warning = attempt.verify.message
+      result.attempts.add(attempt)
+      return
+    of vkPass:
+      discard
+
+  # Apply failed path: only identical-to-original is recoverable.
+  if attempt.apply.identicalToOriginal and canUseRecoveryProvider(req):
     result.attempts.add(attempt)
-    # Success on first attempt: no recovery call.
+    runRecovery(result, req, attempt, "noop",
+      "proposed content identical to the original")
     return
 
-  # --- Single no-op recovery (API always; inject when recovery path provided) ---
-  let canRecover =
-    attempt.apply.identicalToOriginal and
-    (req.route == "api" or
-     (req.route == "inject" and req.injectRecoveryPath.len > 0))
-
-  if not canRecover:
-    result.ok = false
-    result.verdict = "apply_failed"
-    result.warning = attempt.apply.message
-    result.attempts.add(attempt)
-    return
-
-  result.recoveryTriggered = true
+  result.ok = false
+  result.verdict = "apply_failed"
+  result.warning = attempt.apply.message
   result.attempts.add(attempt)
-
-  var recovery: AttemptRecord
-  recovery.index = 2
-  recovery.role = "noop_recovery"
-  let recoveryCtx = buildNoOpRecoveryContext(result.context, attempt.decision.targetFile)
-  if req.route == "api":
-    recovery.provider = callPlannedApi(recoveryCtx)
-  else:
-    recovery.provider = callFromInject(req.injectRecoveryPath)
-  result.providerCalls += 1
-  result.recoveryAttempted = true
-  result.provider = recovery.provider
-
-  if not recovery.provider.ok:
-    result.ok = false
-    result.verdict = "model_failed"
-    result.warning = "noop recovery call failed: " & recovery.provider.message
-    result.attempts.add(recovery)
-    return
-
-  let cannot = parseCannotFix(recovery.provider.rawText)
-  if cannot.hit:
-    recovery.cannotFix = true
-    recovery.decision.decision = cannot.decision
-    recovery.decision.parseOk = true
-    result.decision = recovery.decision
-    result.ok = false
-    result.verdict = "model_cannot_fix"
-    result.warning = cannot.decision
-    result.attempts.add(recovery)
-    return
-
-  recovery.decision = parseFixDecision(recovery.provider.rawText)
-  result.decision = recovery.decision
-  # Fresh worktree: never reuse the (possibly user-provided) occupied path.
-  recovery.apply = applyDecision(req.repoRoot, "", recovery.decision)
-  result.apply = recovery.apply
-
-  if not recovery.apply.ok:
-    result.ok = false
-    result.verdict = "apply_failed"
-    result.warning = "noop recovery apply: " & recovery.apply.message
-    result.attempts.add(recovery)
-    return
-
-  recovery.effectiveChange = true
-  finishVerify(result, req, recovery)
-  result.attempts.add(recovery)
 
 proc reportToJson*(r: MissionReport): JsonNode =
   var attempts = newJArray()
@@ -262,6 +326,7 @@ proc reportToJson*(r: MissionReport): JsonNode =
     "provider_calls": r.providerCalls,
     "recovery_triggered": r.recoveryTriggered,
     "recovery_attempted": r.recoveryAttempted,
+    "recovery_reason": r.recoveryReason,
     "attempts": attempts,
     "component_attribution": r.componentAttribution,
     "context": contextToJson(r.context),

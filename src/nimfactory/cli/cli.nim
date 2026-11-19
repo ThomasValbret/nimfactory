@@ -42,6 +42,7 @@ type
     target: string
     diagnosis: string
     constraint: string
+    recoveryApi: bool
 
 proc writeHuman(msg: string) =
   stderr.writeLine(msg)
@@ -79,6 +80,7 @@ Options:
   --target PATH         local: established file to patch
   --diagnosis TEXT      local: established diagnosis
   --constraint TEXT     local: constraint to preserve
+  --recovery-api        after inject first turn, recovery uses planned OpenAI API
   --json                machine mode (stdout JSON only; default)
 """)
 
@@ -105,7 +107,7 @@ proc parseArgs(args: seq[string]): CliOptions =
     return
   result.cmd = args[0]
   var p = initOptParser(args[1..^1], shortNoVal = {'h'},
-                        longNoVal = @["json", "human", "help"])
+                        longNoVal = @["json", "human", "help", "recovery-api"])
   while true:
     p.next()
     case p.kind
@@ -152,6 +154,8 @@ proc parseArgs(args: seq[string]): CliOptions =
         result.diagnosis = takeValue(p)
       of "constraint":
         result.constraint = takeValue(p)
+      of "recovery-api":
+        result.recoveryApi = true
       of "json":
         result.jsonMode = true
       of "human":
@@ -278,6 +282,7 @@ proc runCli*(args: seq[string]): int =
       req.targetFile = o.target
       req.diagnosis = o.diagnosis
       req.constraint = o.constraint
+      req.recoveryViaApi = o.recoveryApi
       let report = runMission(req)
       var outNode = reportToJson(report)
       outNode["command"] = %"mission-fix"

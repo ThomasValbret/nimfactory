@@ -1,0 +1,10 @@
+{
+  "exit_code": 0,
+  "ok": true,
+  "verdict": "pass",
+  "provider_calls": 1,
+  "recovery_triggered": false,
+  "recovery_attempted": false,
+  "recovery_reason": "",
+  "warning": ""
+}

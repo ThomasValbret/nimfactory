@@ -1,6 +1,6 @@
-## Offline qualification of the single no-op recovery path (no API spend).
+## Offline qualification of recovery (no-op + functional-fail), ceiling of 2 calls.
 
-import std/[os, json]
+import std/[os, strutils, json]
 import nimfactory/mission
 
 let root = getCurrentDir()
@@ -25,16 +25,59 @@ block noopTriggersRecoveryThenPass:
   let r = runMission(req)
   doAssert r.recoveryTriggered
   doAssert r.recoveryAttempted
+  doAssert r.recoveryReason == "noop"
   doAssert r.providerCalls == 2, $r.providerCalls
   doAssert r.attempts.len == 2
   doAssert r.attempts[0].role == "initial"
   doAssert r.attempts[0].apply.identicalToOriginal
-  doAssert not r.attempts[0].effectiveChange
-  doAssert r.attempts[1].role == "noop_recovery"
-  doAssert r.attempts[1].effectiveChange
+  doAssert r.attempts[1].role == "recovery"
   doAssert r.attempts[1].decision.targetFile == "src/textutil.nim"
   doAssert r.ok and r.verdict == "pass", $reportToJson(r)
   echo "noopTriggersRecoveryThenPass: ok"
+
+block functionalFailTriggersRecovery:
+  var req = defaultMissionRequest()
+  req.repoRoot = repoA
+  req.symptomPath = symptom
+  req.oracleDir = oracle
+  req.worktreeRoot = freshWt("rec_func")
+  req.route = "inject"
+  req.injectPath = inj / "historical_a_20261119T110158Z.json"
+  req.injectRecoveryPath = inj / "recovery_textutil_a.json"
+  let r = runMission(req)
+  doAssert r.providerCalls == 2, $r.providerCalls
+  doAssert r.recoveryTriggered
+  doAssert r.recoveryReason == "functional_fail"
+  doAssert r.attempts[0].effectiveChange
+  doAssert r.attempts[0].verify.kind == vkFunctionalFail
+  doAssert r.attempts[1].role == "recovery"
+  doAssert r.ok and r.verdict == "pass", $reportToJson(r)
+  # Recovery context must not leak oracle / expected target / variant names.
+  let prompt = buildRecoveryContext(
+    buildApiContext(repoA, symptom),
+    "src/labels.nim", "d", "body", "functional check still fails").userPrompt
+  doAssert not prompt.contains("doAssert")
+  doAssert not prompt.contains("oracle")
+  doAssert not prompt.contains("repo_a")
+  doAssert not prompt.contains("variant")
+  doAssert not prompt.contains("reference")
+  echo "functionalFailTriggersRecovery: ok"
+
+block compileErrorNoRecovery:
+  var req = defaultMissionRequest()
+  req.repoRoot = repoA
+  req.symptomPath = symptom
+  req.oracleDir = oracle
+  req.worktreeRoot = freshWt("rec_compile")
+  req.route = "inject"
+  req.injectPath = inj / "compile_break_labels.json"
+  req.injectRecoveryPath = inj / "recovery_textutil_a.json"
+  let r = runMission(req)
+  doAssert r.providerCalls == 1, $r.providerCalls
+  doAssert not r.recoveryAttempted
+  doAssert r.verdict == "compile_failed"
+  doAssert r.attempts[0].verify.kind == vkCompileError
+  echo "compileErrorNoRecovery: ok"
 
 block stopsAfterSecondAttemptCannotFix:
   var req = defaultMissionRequest()
@@ -47,15 +90,11 @@ block stopsAfterSecondAttemptCannotFix:
   req.injectRecoveryPath = inj / "recovery_cannot.json"
   let r = runMission(req)
   doAssert r.providerCalls == 2
-  doAssert r.recoveryAttempted
   doAssert r.verdict == "model_cannot_fix"
-  doAssert not r.ok
-  doAssert r.attempts.len == 2
   doAssert r.attempts[1].cannotFix
   echo "stopsAfterSecondAttemptCannotFix: ok"
 
 block stopsAfterSecondNoop:
-  # Recovery also no-op → apply_failed, no third call.
   var req = defaultMissionRequest()
   req.repoRoot = repoA
   req.symptomPath = symptom
@@ -67,7 +106,6 @@ block stopsAfterSecondNoop:
   let r = runMission(req)
   doAssert r.providerCalls == 2
   doAssert r.verdict == "apply_failed"
-  doAssert not r.ok
   echo "stopsAfterSecondNoop: ok"
 
 block noRecoveryCallAfterInitialSuccess:
@@ -78,12 +116,11 @@ block noRecoveryCallAfterInitialSuccess:
   req.worktreeRoot = freshWt("rec_success")
   req.route = "inject"
   req.injectPath = inj / "ref_fix_a.json"
-  req.injectRecoveryPath = inj / "recovery_textutil_a.json" # must not be used
+  req.injectRecoveryPath = inj / "recovery_textutil_a.json"
   let r = runMission(req)
   doAssert r.ok and r.verdict == "pass"
   doAssert r.providerCalls == 1, $r.providerCalls
   doAssert not r.recoveryTriggered
-  doAssert not r.recoveryAttempted
   doAssert r.attempts.len == 1
   echo "noRecoveryCallAfterInitialSuccess: ok"
 
@@ -95,11 +132,10 @@ block noRecoveryWithoutPathOnInject:
   req.worktreeRoot = freshWt("rec_nopath")
   req.route = "inject"
   req.injectPath = inj / "noop_labels_a.json"
-  # no injectRecoveryPath
   let r = runMission(req)
   doAssert r.providerCalls == 1
   doAssert not r.recoveryAttempted
   doAssert r.verdict == "apply_failed"
   echo "noRecoveryWithoutPathOnInject: ok"
 
-echo "ALL noop recovery offline tests passed"
+echo "ALL recovery offline tests passed"

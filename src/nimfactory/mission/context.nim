@@ -43,9 +43,10 @@ Do not change unrelated files. Return ONLY JSON:
 
   ApiRecoverySystemPrompt* = """
 You are the software_fix role for NimFactory on a recovery turn.
-Your previous proposal did not change the chosen file.
-You may pick a different existing file or conclude you cannot propose a correction.
-Do not invent files. The product will not reveal an expected target or reception tests.
+Your previous patch did not resolve the public symptom.
+You may follow calls between functions, choose a different existing file, revise the same file,
+or conclude you cannot propose a correction.
+Do not invent files. The product will not reveal expected targets or private reception checks.
 Return ONLY a JSON object with either:
   {"cannot_fix": true, "decision": "<why>"},
 or the usual keys target_file, decision, patched_content.
@@ -105,20 +106,31 @@ proc buildApiContext*(repoRoot, symptomPath: string): MissionContext =
     renderSources(sources) &
     "\n\nProduce the JSON patch decision now."
 
-proc buildNoOpRecoveryContext*(base: MissionContext; chosenTarget: string): MissionContext =
-  ## Same authorized sources; tell the model its prior target was a no-op.
-  ## Does not reveal the expected target or the oracle.
+proc buildRecoveryContext*(
+    base: MissionContext;
+    priorTarget, priorDecision, priorPatchedContent, finding: string): MissionContext =
+  ## Recovery turn: public symptom, authorized sources, first decision + proposed body,
+  ## and a product finding. Never includes oracle text, expected target, or variant id.
   result = base
   result.route = "api"
   result.systemPrompt = ApiRecoverySystemPrompt
   result.userPrompt =
     "Recovery turn.\n" &
-    "Chosen target: " & chosenTarget & "\n" &
-    "Finding: proposed content identical to the original.\n" &
-    "Reconsider the target among the same authorized sources, or conclude you cannot propose a correction.\n\n" &
+    "First decision target: " & priorTarget & "\n" &
+    "First decision summary: " & priorDecision & "\n" &
+    "Finding: " & finding & "\n" &
+    "First proposed file body (`" & priorTarget & "`):\n```nim\n" &
+    priorPatchedContent & "\n```\n\n" &
     "Symptom (from pilot):\n" & base.symptom.strip() & "\n\n" &
-    "Authorized repository sources:\n\n" & renderSources(base.sources) &
+    "Authorized repository sources (current originals):\n\n" &
+    renderSources(base.sources) &
     "\n\nProduce the JSON response now."
+
+proc buildNoOpRecoveryContext*(base: MissionContext; chosenTarget: string): MissionContext =
+  ## Compatibility wrapper for identical-content recovery.
+  buildRecoveryContext(
+    base, chosenTarget, "", "",
+    "proposed content identical to the original")
 
 proc buildLocalMicroPatchContext*(
     repoRoot, symptomPath, targetFile, diagnosis, constraint: string): MissionContext =

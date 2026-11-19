@@ -1,0 +1,10 @@
+{
+  "exit_code": 4,
+  "ok": false,
+  "verdict": "verify_failed",
+  "provider_calls": 2,
+  "recovery_triggered": true,
+  "recovery_attempted": true,
+  "recovery_reason": "functional_fail",
+  "warning": "oracle functional check failed"
+}

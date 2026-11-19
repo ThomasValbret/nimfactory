@@ -1,0 +1,5 @@
+{
+  "target_file": "src/labels.nim",
+  "decision": "intentionally broken syntax for compile classification",
+  "patched_content": "import ./textutil\n\nconst GuestLabel* = \"guest\"\n\nproc formatUserLabel*(name: string): string =\n  if isBlank(name)\n    return GuestLabel\n  result = trimText(name)\n"
+}

@@ -1,68 +1,75 @@
-# Delivery — E2E intervention choice + no-op recovery
+# Delivery — verify-fail recovery (PR #4)
 
 **Branch:** `feature/e2e-model-decision`  
 **PR:** [#4](https://github.com/ThomasValbret/nimfactory/pull/4) (draft)  
-**Tested SHA:** `f2d5e38` (campaign code `d492dda`)
+**Tested tip SHA:** _(filled at commit)_  
+**Feature commit for this lot:** _(same tip)_  
 
-## Reference kept (prior campaign)
+## Provenance (corrected)
 
-Fixtures, oracle and traces under `docs/qa/e2e_intervention/` (non-`campaigns/`) remain the accepted reference: A failed first try with **identical content / no effect**, B passed.
+| Claim | Value |
+| --- | --- |
+| Historical campaign dir | `docs/qa/e2e_intervention/campaigns/20261119T110158Z/` |
+| `summary.json` `sha` field in that campaign | `f8a2170…` (binary/script tip when the run executed) |
+| Campaign/recovery feature code first landed | `d492dda` |
+| Prior receipt text that mentioned | `f2d5e38` |
+| Base before this verify-recovery lot | `c253ca4` |
+| This trial base (recorded in new summary) | tip after commit of this lot |
 
-## Product changes
+Historical traces are **not** overwritten. New evidence: `campaigns/20261119T112212Z/`.
 
-1. **Campaign script** (`scripts/e2e_intervention.sh`): continues after A failure; records exit code + verdict per trial; writes under `docs/qa/e2e_intervention/campaigns/<UTC-stamp>/` with `summary.json`.
-2. **No-op recovery (API / inject-with-recovery)**: when `patched_content` equals the current file, one recovery turn returns to the model: chosen target, finding « contenu proposé identique à l’original », same authorized sources. May reconsider target or `{"cannot_fix":true,...}`. No expected target, no oracle. Initial success → zero recovery calls.
-3. **Local route** unchanged: micro-patch only (`--target` + `--diagnosis`).
+Reference outside campaigns (A no-op / B pass) remains under `docs/qa/e2e_intervention/*.json`.
 
-## Offline qualification (no API)
+## Product change
 
-`tests/mission/test_noop_recovery.nim`:
+Shared ceiling of **two** provider calls per mission:
 
-| Case | Calls | Result |
-| --- | --- | --- |
-| no-op then recovery fix | 2 | pass |
-| no-op then cannot_fix | 2 | model_cannot_fix |
-| no-op then no-op again | 2 | apply_failed (stop) |
-| initial success | 1 | pass (no recovery) |
+1. Initial success → stop.
+2. Recovery (one turn) when first outcome is:
+   - proposed content **identical** to original (`noop`), or
+   - patch **applied**, compiled, but **functional** oracle fails (`functional_fail`).
+3. **Not** recovered: `compile_failed`, `oracle_missing` (kept distinct).
 
-Bench `test_intervention_bench.nim` still green.
+Recovery context (API): public symptom, authorized sources, first target/decision, first proposed file body, finding.  
+**Excluded:** private oracle, assertions, reference target, variant name. No special-casing of particular symbols.
 
-## Campaign `20261119T110158Z` (live API)
+CLI: `--recovery-api` lets inject first turn + planned OpenAI recovery (`gpt-4o-mini`).
 
-Command:
+## Offline controls
+
+`tests/mission/test_noop_recovery.nim`: no-op→recovery, functional_fail→recovery, compile_error no recovery, success stops at 1 call, cannot_fix / second no-op stop at 2.
+
+## Campaign `20261119T112212Z`
 
 ```bash
-bash scripts/e2e_intervention.sh
-# loads /opt/.keys when OPENAI_API_KEY unset; needs -d:ssl binary
+bash scripts/e2e_verify_recovery.sh
+# loads /opt/.keys when unset
 ```
 
-| Trial | Exit | Verdict | Calls | Recovery | Notes |
-| --- | --- | --- | --- | --- | --- |
-| API A | 4 | verify_failed | 1 | no | effective change on **wrong** file `labels.nim`; not a no-op → recovery not armed |
-| API B | 0 | pass | 1 | no | `labels.nim` guest path |
-| Cross A→B | — | pass | 1 inject | — | |
-| Cross B→A | — | verify_failed | 1 inject | — | |
+### A — turn 1 replayed (inject), turn 2 real API
 
-**Attempt detail A**
+Inject file: `fixtures/e2e_intervention/inject/historical_a_20261119T110158Z.json` (exact body from `20261119T110158Z`).
 
-| Attempt | Target | Effective change | Oracle | Tokens |
-| --- | --- | --- | --- | --- |
-| 1 initial | `src/labels.nim` | yes (wrong) | fail | 293+92 |
+| Tour | Provenance | Target | Diff effect | Oracle | Tokens | Cost |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 initial | inject historical A | `src/labels.nim` | effective (`return trimText`) | vkFunctionalFail | 0 (inject) | \$0 |
+| 2 recovery | **openai/gpt-4o-mini** | `src/labels.nim` again | effective (`else: return trimText`) | vkFunctionalFail | 399+76 | ≈ \$0.000105 |
 
-**Attempt detail B**
+Verdict A: **verify_failed** (failure conserved). `provider_calls=2`, `recovery_reason=functional_fail`.
 
-| Attempt | Target | Effective change | Oracle | Tokens |
-| --- | --- | --- | --- | --- |
-| 1 initial | `src/labels.nim` | yes | pass | 276+93 |
+### B — success witness
 
-Est. new spend ≈ \$0.0002 (gpt-4o-mini public rates). Global campaign `global_ok=false` (A + cross B→A).
+| Tour | Model | Target | Oracle | Calls | Tokens | Cost |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | gpt-4o-mini | `src/labels.nim` | pass | **1** (no recovery) | 276+93 | ≈ \$0.000097 |
 
-**Live no-op recovery:** not exercised this run (A was not identical-to-original). Wiring covered offline; mark live API recovery as **not demonstrated on this campaign**.
+Sources presented (both): `labels.nim`, `logging.nim`, `textutil.nim`.
+
+Est. new API spend this campaign ≈ **\$0.00020**.
 
 ## Repro
 
 ```bash
-nim c -d:release -d:ssl --path:src --path:vendor/NimAgentLibrary/src \
-  -o:build/nimfactory src/nimfactory_cli.nim
-bash scripts/e2e_intervention.sh
+git checkout <tested-tip>
+bash scripts/e2e_verify_recovery.sh
 ```
