@@ -3,7 +3,7 @@
 **Branch:** `feature/e2e-model-decision`  
 **PR:** [#4](https://github.com/ThomasValbret/nimfactory/pull/4) (draft)  
 **Budget cap:** €3  
-**Feature tip after this lot:** *(filled at commit)*
+**Feature tip after this lot:** `1b3c625a8fc83ed32c1ee9f5a6ab058a417b78e3`
 
 ## Cart lot retained (novel follow-call)
 
