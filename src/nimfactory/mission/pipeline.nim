@@ -2,7 +2,7 @@
 ## Shared ceiling: at most two provider calls. Recovery after no-op or
 ## functional verify failure. Compile errors and missing oracle stay distinct.
 
-import std/[json]
+import std/[json, strutils]
 import ./context
 import ./provider
 import ./apply
@@ -102,6 +102,25 @@ proc canUseRecoveryProvider(req: MissionRequest): bool =
   req.route == "api" or req.recoveryViaApi or
     (req.route == "inject" and req.injectRecoveryPath.len > 0)
 
+proc priorBodyForRecovery(prior: AttemptRecord): string =
+  ## Prefer full patched body; otherwise summarize applied edits for the recovery prompt.
+  if prior.decision.patchedContent.len > 0:
+    return prior.decision.patchedContent
+  if prior.decision.edits.len > 0:
+    var parts: seq[string] = @[]
+    var i = 0
+    for e in prior.decision.edits:
+      inc i
+      parts.add("EDIT " & $i & " oldText:\n" & e.oldText & "\nEDIT " & $i &
+                " newText:\n" & e.newText)
+    return parts.join("\n\n")
+  ""
+
+proc markOracleNotRun(v: var VerifyResult) =
+  v.ok = false
+  v.phase = vpNone
+  v.message = "oracle not run"
+
 proc runRecovery(report: var MissionReport; req: MissionRequest;
                  prior: AttemptRecord; reason, finding: string) =
   report.recoveryTriggered = true
@@ -110,11 +129,12 @@ proc runRecovery(report: var MissionReport; req: MissionRequest;
   recovery.index = 2
   recovery.role = "recovery"
   recovery.recoveryReason = reason
+  markOracleNotRun(recovery.verify)
   let recoveryCtx = buildRecoveryContext(
     report.context,
     prior.decision.targetFile,
     prior.decision.decision,
-    prior.decision.patchedContent,
+    priorBodyForRecovery(prior),
     finding)
   recovery.provider = invokeRecovery(req, recoveryCtx)
   report.providerCalls += 1
@@ -125,6 +145,9 @@ proc runRecovery(report: var MissionReport; req: MissionRequest;
     report.ok = false
     report.verdict = "model_failed"
     report.warning = "recovery call failed: " & recovery.provider.message
+    # Preserve provider truncation motif when present.
+    if recovery.provider.code == "output_truncated":
+      report.warning = recovery.provider.message
     if req.recoveryViaApi and not recovery.provider.available:
       report.verdict = "api_unavailable"
       report.warning =
@@ -214,6 +237,8 @@ proc runMission*(req: MissionRequest): MissionReport =
   var attempt: AttemptRecord
   attempt.index = 1
   attempt.role = "initial"
+  markOracleNotRun(attempt.verify)
+  markOracleNotRun(result.verify)
   case req.route
   of "api":
     result.componentAttribution["model"] = %*(PlannedApiProvider & "/" & PlannedApiModel)
@@ -254,6 +279,7 @@ proc runMission*(req: MissionRequest): MissionReport =
   if not attempt.provider.ok:
     result.ok = false
     result.verdict = "model_failed"
+    # Keep NimAgent truncation motif (`code=output_truncated`, message unchanged).
     result.warning = attempt.provider.message
     result.attempts.add(attempt)
     return
@@ -326,6 +352,9 @@ proc runMission*(req: MissionRequest): MissionReport =
   result.ok = false
   result.verdict = "apply_failed"
   result.warning = attempt.apply.message
+  # apply failed ⇒ oracle deliberately not executed
+  markOracleNotRun(attempt.verify)
+  markOracleNotRun(result.verify)
   result.attempts.add(attempt)
 
 proc reportToJson*(r: MissionReport): JsonNode =

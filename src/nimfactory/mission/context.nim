@@ -24,13 +24,17 @@ const
   ApiSystemPrompt* = """
 You are the software_fix role for NimFactory.
 Examine the supplied repository sources and the pilot symptom.
-Choose exactly one existing file to change and produce its complete corrected body.
+Choose exactly one existing file to change.
+You own the diagnosis, the target file, and the modifications.
+Prefer bounded search/replace edits (Code Zero style) over rewriting the whole file.
 Do not invent files. Prefer the smallest change that addresses the symptom.
 Keep required imports for the language of the file.
 Return ONLY a JSON object with keys:
   target_file (string, path relative to repo root),
   decision (short string naming the cause you chose),
-  patched_content (full new file text).
+  edits (array of {oldText, newText} exact replacements in that file; multiple allowed).
+Each oldText must match the current file uniquely. All edits apply only if every anchor is valid.
+Legacy alternative (discouraged for large files): patched_content (full new file text) instead of edits.
 """.strip()
 
   LocalMicroPatchSystemPrompt* = """
@@ -47,9 +51,10 @@ Your previous patch did not resolve the public symptom.
 You may follow calls between functions, choose a different existing file, revise the same file,
 or conclude you cannot propose a correction.
 Do not invent files. The product will not reveal expected targets or private reception checks.
+Prefer edits: [{oldText, newText}, ...] for the chosen target_file.
 Return ONLY a JSON object with either:
   {"cannot_fix": true, "decision": "<why>"},
-or the usual keys target_file, decision, patched_content.
+or target_file, decision, and edits (or legacy patched_content).
 """.strip()
 
 proc collectSrcNim*(repoRoot: string): seq[SourceFile] =
