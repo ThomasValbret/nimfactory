@@ -1,0 +1,1 @@
+{"defect": "diamond_wait_cap1_resume_ckpt_1_and_3", "on_sha": "2cd338b27dcb9bca3ea5dbd11da4f9db9adba0d3", "present": true, "failures": ["sequential/1", "sequential/3", "concurrent/1", "concurrent/3"], "error": "pipe wait blocked with no consumer progress (deferred=1|2)", "note": "restoreSchedulerFromState + publishOutputs duplicated deliveries under wait/cap1"}

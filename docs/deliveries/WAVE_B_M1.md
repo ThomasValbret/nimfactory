@@ -1,51 +1,41 @@
-# Vague B — M1 : correctif entrées pending au checkpoint
+# Vague B — M1 : reprise saturation / start / faux completed
 
 Date : 2026-11-19  
-Dépôt : https://github.com/ThomasValbret/nimfactory  
-Branche : `feature/wave-b-m1`  
-PR : https://github.com/ThomasValbret/nimfactory/pull/2 (**ouverte**, fusion réservée à la revue)  
-Base du défaut : `dd4fcf57e801c69cf0257edf06c140ef5a37b235`  
-SHA fonctionnel testé : `2cd338b27dcb9bca3ea5dbd11da4f9db9adba0d3`  
-SDK : `bf22665ece77d7149dbe61df959a6024bf6b26f3`  
-Nim : 2.4.0  
+PR : https://github.com/ThomasValbret/nimfactory/pull/2 (**ouverte**)  
+Base des défauts : `2cd338b27dcb9bca3ea5dbd11da4f9db9adba0d3`  
+SDK : `bf22665ece77d7149dbe61df959a6024bf6b26f3` · Nim 2.4.0  
 
-## Défaut corrigé
+## Correctifs de cette passe
 
-À `--checkpoint-after 1`, une entrée initiale encore en attente (2ᵉ entrypoint) n’était pas durable. `resume` sans re-fournir l’input finalisait avec sorties partielles (`one` seul) ou `{}` (variante join).
+1. **Diamant wait/cap1** — si `pending_inputs` est présent, ne pas republier les sorties validées (évite deferred bloqués aux ckpt 1 et 3). Chemin legacy inchangé sans snapshot.
+2. **Démarrage durable** — `beginGraphRun` : seed puis `run:start` avec `run_inputs` + pending/ready. Reprise sans re-fournir l’input après crash post-start.
+3. **Faux completed** — bases produites par le binaire `dd4fcf5` : diagnostic `false completed…` ; run vraiment complet → exit 0 sans réinvocation.
 
-## Correctif
+## Avant / après
 
-- Snapshot `pending_inputs` / `ready` / `deferred` dans l’état de chaque commit d’activation (après fan-out).
-- Restauration à la reprise ; diagnostic explicite si un ancien run n’a pas de snapshot récupérable.
-- Activations déjà validées restent acquises.
+| Cas | Sur `2cd338b` / `dd4fcf5` | Après correctif |
+| --- | --- | --- |
+| Diamant wait/cap1 × 10 | 4 échecs (ckpt 1,3 seq+conc) | 10/10 completed |
+| Crash après `run:start` | entrées introuvables | resume = continu |
+| Faux completed two/join | silencieux partiel | diagnostic explicite |
 
-## Preuves
+Preuves : `docs/qa/m1_resume3_red/`, `docs/qa/m1_resume3_green/`, `scripts/m1_resume3_regression.sh`.
 
-| Artefact | Rôle |
-| --- | --- |
-| `docs/qa/m1_pending_input_red/` | Rouge CLI sur `dd4fcf5` |
-| `docs/qa/m1_pending_input_green/` | Vert après correctif |
-| `tests/f5/test_pending_resume.nim` | Réception unitaire + diagnostic irrécupérable |
-| `scripts/m1_pending_input_recipe.sh` | Recette CLI deux graphes |
-
-## Suites (régression)
+## Suites
 
 ```text
-./scripts/test_wave_a.sh          → WAVE_A_TESTS_OK count=14
-./scripts/test_wave_b_m1.sh       → WAVE_B_M1_OK count=6
-./scripts/m1_resume_recipe.sh     → checkpoints 1–5 OK
-./scripts/m1_pipe_backpressure_cli.sh → OK
+WAVE_A_TESTS_OK count=14
+WAVE_B_M1_OK count=8
+M1_RESUME3_REGRESSION_OK
 ```
 
 ## Jalon
 
 | Objet | Verdict |
 | --- | --- |
-| Wait/cap1 + run_id/epoch | Conservés |
-| Pending entrypoint resume | **Corrigé** |
-| **M1** | Correctif livré — requalification sur SHA fonctionnel ci-dessous |
+| Entrées indépendantes (passe précédente) | Conservé |
+| Trois cas reprise ci-dessus | **Corrigé** |
 | Fusion PR #2 | **Non** — revue humaine |
+| Mission modèle E2E | Branche dédiée (hors PR #2) |
 
-Worktree de vérification : `/opt/nimFactory-m1-pending-qual` @ `2cd338b` (Nim 2.4.0, SDK pin OK) — voir `docs/qa/m1_pending_input_green/worktree_*.log`.
-
-LLM : **0**.
+LLM : **0** sur cette passe M1.

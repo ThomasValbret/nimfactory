@@ -887,9 +887,22 @@ proc toReport(ex: LocalExecutor): ExecReport =
     skippedValidated: ex.skippedValidated
   )
 
-proc runGraph*(store: SqliteRunStore; registry: ExecutableRegistry;
-               graph: GraphSpec; runId: string; inputs: JsonNode;
-               config: ExecConfig): ExecReport =
+proc falseCompletedDiagnostic(ex: LocalExecutor; state: JsonNode): string =
+  ## Old binaries could seal phase=completed with partial outputs.
+  if not graphOutputsIncomplete(ex):
+    return ""
+  var missing: seq[string] = @[]
+  for name, _ in ex.graph.outputs.pairs:
+    if name notin ex.outputs:
+      missing.add(name)
+  result = "false completed run: durable phase is completed but graph outputs incomplete (missing: " &
+           missing.join(", ") & "); refuse silent success"
+
+proc beginGraphRun*(store: SqliteRunStore; registry: ExecutableRegistry;
+                    graph: GraphSpec; runId: string; inputs: JsonNode;
+                    config: ExecConfig): LocalExecutor =
+  ## Lease + seed entrypoints + durable ``run:start`` (inputs recoverable).
+  ## Call ``continueGraphRun`` to execute, or exit to simulate crash-after-start.
   var cfg = config
   if cfg.mode == emSequential:
     cfg.maxConcurrency = 1
@@ -905,6 +918,11 @@ proc runGraph*(store: SqliteRunStore; registry: ExecutableRegistry;
   ex.epoch = store.claimLease(runId, cfg.ownerToken)
   if cfg.deadlineMs > 0:
     ex.absoluteDeadline = nowMs() + cfg.deadlineMs
+  # Seed before the durable start commit so a crash after start still has inputs.
+  ex.seedEntrypoints(inputs)
+  let sched = schedulerStateFields(ex)
+  var runInputs = inputs
+  if runInputs.isNil: runInputs = newJObject()
   let startTid = stableRunTransitionId(runId, "start")
   let started = store.commitTransition(runId, %*{
     "transition_id": startTid,
@@ -913,7 +931,11 @@ proc runGraph*(store: SqliteRunStore; registry: ExecutableRegistry;
       "phase": "running",
       "mode": $cfg.mode,
       "graph_id": graph.graphId,
-      "outputs": newJObject()
+      "outputs": newJObject(),
+      "run_inputs": runInputs,
+      "pending_inputs": sched["pending_inputs"],
+      "ready": sched["ready"],
+      "deferred": sched["deferred"]
     },
     "activation_id": "run:start",
     "attempt_id": "att-start",
@@ -924,9 +946,17 @@ proc runGraph*(store: SqliteRunStore; registry: ExecutableRegistry;
   if started{"transition_id"}.getStr != startTid:
     raise newFactoryError(fecValidationFailed,
       "start transition dedup mismatch", phase = "executor")
-  ex.seedEntrypoints(inputs)
+  ex
+
+proc continueGraphRun*(ex: LocalExecutor): ExecReport =
   ex.runLoop()
   ex.toReport()
+
+proc runGraph*(store: SqliteRunStore; registry: ExecutableRegistry;
+               graph: GraphSpec; runId: string; inputs: JsonNode;
+               config: ExecConfig): ExecReport =
+  let ex = beginGraphRun(store, registry, graph, runId, inputs, config)
+  continueGraphRun(ex)
 
 proc resumeGraph*(store: SqliteRunStore; registry: ExecutableRegistry;
                   graph: GraphSpec; runId: string; config: ExecConfig): ExecReport =
@@ -961,19 +991,33 @@ proc resumeGraph*(store: SqliteRunStore; registry: ExecutableRegistry;
     ex.outputs = state["outputs"]
   let phase = state{"phase"}.getStr("")
   if phase == "completed":
-    # Second resume of a finished run: return durable outputs, no handler re-invoke.
+    let falseDiag = falseCompletedDiagnostic(ex, state)
+    if falseDiag.len > 0:
+      raise newFactoryError(fecMissingRequiredInput, falseDiag, phase = "executor")
+    # Genuine completed run: return durable outputs, no handler re-invoke.
     ex.status = esCompleted
     return ex.toReport()
   # Restore entrypoints / gathers that were still due at the last commit.
+  let hasPendingSnap = state.hasKey("pending_inputs")
   restoreSchedulerFromState(ex, state)
-  for aid, act in ex.completed:
-    if act.outputs.isNil: continue
-    if aid.startsWith("run:"): continue
-    var outs = initTable[string, JsonNode]()
-    if act.outputs.kind == JObject:
-      for k, v in act.outputs.pairs:
-        outs[k] = v
-    publishOutputs(ex, act.nodeId, act.branchKey, outs)
+  if hasPendingSnap:
+    # Snapshot already carries due work. Republishing validated outputs would
+    # recreate deliveries already represented and can stall wait/cap-1 pipes.
+    discard
+  else:
+    # Legacy format (pre-pending_inputs): reconstruct from validated outputs.
+    for aid, act in ex.completed:
+      if act.outputs.isNil: continue
+      if aid.startsWith("run:"): continue
+      var outs = initTable[string, JsonNode]()
+      if act.outputs.kind == JObject:
+        for k, v in act.outputs.pairs:
+          outs[k] = v
+      publishOutputs(ex, act.nodeId, act.branchKey, outs)
+    # Last-resort: re-seed from durable run_inputs if present and still empty.
+    if ex.ready.len == 0 and ex.deferred.len == 0 and
+        state.hasKey("run_inputs") and state["run_inputs"].kind == JObject:
+      ex.seedEntrypoints(state["run_inputs"])
   requeueReadyFromPending(ex)
   let diag = missingDurablePendingDiagnostic(ex, state)
   if diag.len > 0 and ex.ready.len == 0 and ex.deferred.len == 0 and

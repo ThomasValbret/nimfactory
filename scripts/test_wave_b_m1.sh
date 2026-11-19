@@ -28,6 +28,7 @@ mkdir -p "$CACHE" build/logs docs/qa
 TESTS=(
   tests/f5/test_executor.nim
   tests/f5/test_pending_resume.nim
+  tests/f5/test_resume_saturation_start_legacy.nim
   tests/f16/test_cli.nim
   tests/f17/test_m1_resume_recipe.nim
 )
@@ -51,6 +52,11 @@ ok=$((ok+1))
 echo "=== RUN scripts/m1_pipe_backpressure_cli.sh ==="
 chmod +x scripts/m1_pipe_backpressure_cli.sh
 ./scripts/m1_pipe_backpressure_cli.sh | tee docs/qa/m1_pipe_backpressure_cli.log
+ok=$((ok+1))
+
+echo "=== RUN scripts/m1_resume3_regression.sh ==="
+chmod +x scripts/m1_resume3_regression.sh
+./scripts/m1_resume3_regression.sh | tee docs/qa/m1_resume3_regression.log
 ok=$((ok+1))
 
 echo "WAVE_B_M1_OK count=${ok} sdk=${SDK_SHA} pin_verified=yes"
