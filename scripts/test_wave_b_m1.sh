@@ -27,6 +27,7 @@ mkdir -p "$CACHE" build/logs docs/qa
 
 TESTS=(
   tests/f5/test_executor.nim
+  tests/f5/test_pending_resume.nim
   tests/f16/test_cli.nim
   tests/f17/test_m1_resume_recipe.nim
 )

@@ -1,69 +1,48 @@
-# Vague B — M1 requalifié
+# Vague B — M1 : correctif entrées pending au checkpoint
 
 Date : 2026-11-19  
 Dépôt : https://github.com/ThomasValbret/nimfactory  
 Branche : `feature/wave-b-m1`  
-PR : https://github.com/ThomasValbret/nimfactory/pull/2 (restée ouverte)  
-SHA fonctionnel qualifié : `dd4fcf57e801c69cf0257edf06c140ef5a37b235`  
-SDK : `bf22665ece77d7149dbe61df959a6024bf6b26f3` (`pin_verified=yes`)  
+PR : https://github.com/ThomasValbret/nimfactory/pull/2 (**ouverte**, fusion réservée à la revue)  
+Base du défaut : `dd4fcf57e801c69cf0257edf06c140ef5a37b235`  
+SDK : `bf22665ece77d7149dbe61df959a6024bf6b26f3`  
 Nim : 2.4.0  
 
-## Verdict
+## Défaut corrigé
 
-**M1 requalifié** pour le SHA fonctionnel ci-dessus, après rejeu indépendant depuis un worktree propre détaché sur ce commit (pas une réutilisation des logs livraison).
+À `--checkpoint-after 1`, une entrée initiale encore en attente (2ᵉ entrypoint) n’était pas durable. `resume` sans re-fournir l’input finalisait avec sorties partielles (`one` seul) ou `{}` (variante join).
 
-La tête documentaire / preuve observée au départ de la qualification était `6d4a75b9f106aa016c8f3b4d26d6912565eb020a` (stamp docs uniquement : +2 lignes sur F5 / WAVE_B_M1). Diff fonctionnel candidat→cette tête : vide hors docs.
+## Correctif
 
-## Périmètre
+- Snapshot `pending_inputs` / `ready` / `deferred` dans l’état de chaque commit d’activation (après fan-out).
+- Restauration à la reprise ; diagnostic explicite si un ancien run n’a pas de snapshot récupérable.
+- Activations déjà validées restent acquises.
 
-F5 (exécuteur), parcours CLI F16, preuves F17. F2 / F13 / LLM hors passe. Fusion et lot suivant réservés à la revue humaine.
+## Preuves
 
-## Inventaire d’environnement (nouvelle exécution)
-
-Voir `docs/qa/m1_requal_2026-11-19/env_inventory.txt`.
-
-| Champ | Valeur |
+| Artefact | Rôle |
 | --- | --- |
-| Worktree | `/opt/nimFactory-m1-qual-dd4fcf5` @ `dd4fcf5` |
-| SDK | `bf22665…` match pin |
-| Git status au départ | propre + dossier requal untracked |
+| `docs/qa/m1_pending_input_red/` | Rouge CLI sur `dd4fcf5` |
+| `docs/qa/m1_pending_input_green/` | Vert après correctif |
+| `tests/f5/test_pending_resume.nim` | Réception unitaire + diagnostic irrécupérable |
+| `scripts/m1_pending_input_recipe.sh` | Recette CLI deux graphes |
 
-## Suites rejouées (nouvelles — distinctes des traces `011d7f6`)
+## Suites (régression)
 
-| Commande | Exit | Journal nouveau |
-| --- | --- | --- |
-| `./scripts/test_wave_a.sh` | 0 | `docs/qa/m1_requal_2026-11-19/test_wave_a.log` |
-| `./scripts/test_wave_b_m1.sh` | 0 | `docs/qa/m1_requal_2026-11-19/test_wave_b_m1.log` |
-| `./scripts/m1_resume_recipe.sh` | 0 | `docs/qa/m1_requal_2026-11-19/m1_resume_recipe.log` |
-| `./scripts/m1_pipe_backpressure_cli.sh` | 0 | `docs/qa/m1_requal_2026-11-19/m1_pipe_backpressure_cli.log` |
-
-Traces historiques de livraison (ex. logs mentionnant `011d7f6`) : conservées sous `docs/qa/m1_wave_*.log` antérieurs — **non** utilisées comme preuve de cette requalification.
-
-## Contre-épreuve F5 (interfaces publiques)
-
-Journal : `docs/qa/m1_requal_2026-11-19/counterproof_f5.jsonl` — `failures=0`.
-
-Points critiques observés à nouveau :
-
-- wait cap1 seq/conc : `waited>=1`, completed, branches oracle `left,right`
-- reject CLI : **exit exactement 4**
-- spill : `spilled>=1`, mêmes branches
-- `timed_out` interne ≠ harness `124` ; wait sous `timeout 8s` → exit 0
-- witness seq/conc : `run_id`/`epoch` = SQLite ; conc `peak>=2`
-- witness après reprise : `epoch_interrupt=2` → `epoch_after_resume=3`, témoins `[3,3]` (détecte une epoch figée à 2)
-- checkpoints 1–5 durables + 2ᵉ reprise sans réinvocation ; `run_id` inconnu sans création de ligne
-
-## Alignement script reject
-
-`scripts/m1_pipe_backpressure_cli.sh` exige désormais `reject` exit **4** (plus « tout non-zéro »). Recheck : `docs/qa/m1_requal_2026-11-19/pipe_cli_reject4_recheck.log`.
+```text
+./scripts/test_wave_a.sh          → WAVE_A_TESTS_OK count=14
+./scripts/test_wave_b_m1.sh       → WAVE_B_M1_OK count=6
+./scripts/m1_resume_recipe.sh     → checkpoints 1–5 OK
+./scripts/m1_pipe_backpressure_cli.sh → OK
+```
 
 ## Jalon
 
 | Objet | Verdict |
 | --- | --- |
-| M0 | Conservé |
-| **M1** | **Requalifié** @ `dd4fcf5` |
+| Wait/cap1 + run_id/epoch | Conservés |
+| Pending entrypoint resume | **Corrigé** |
+| **M1** | Correctif livré — requalification sur SHA fonctionnel ci-dessous |
 | Fusion PR #2 | **Non** — revue humaine |
-| Lot suivant | **Non ouvert** |
 
 LLM : **0**.

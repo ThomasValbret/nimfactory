@@ -138,6 +138,43 @@ proc stableActivationTransitionId*(activationId: string): string =
 proc stableRunTransitionId*(runId, kind: string): string =
   "run:" & runId & ":" & kind
 
+proc snapshotPendingInputs(ex: LocalExecutor; excludeAid = ""): JsonNode =
+  ## Durable pending port payloads for activations not yet validated.
+  result = newJObject()
+  for aid, ports in ex.pending.pairs:
+    if aid in ex.completed or aid == excludeAid:
+      continue
+    var po = newJObject()
+    for p, body in ports.pairs:
+      po[p] = body
+    if po.len > 0:
+      result[aid] = po
+
+proc snapshotReadyIds(ex: LocalExecutor; excludeAid = ""): JsonNode =
+  result = newJArray()
+  for aid in ex.ready:
+    if aid in ex.completed or aid == excludeAid:
+      continue
+    result.add(%aid)
+
+proc snapshotDeferred(ex: LocalExecutor): JsonNode =
+  result = newJArray()
+  for d in ex.deferred:
+    result.add(%*{
+      "to_node": d.toNode,
+      "to_port": d.toPort,
+      "branch_key": d.branchKey,
+      "body": d.body,
+      "message_id": d.messageId
+    })
+
+proc schedulerStateFields(ex: LocalExecutor; excludeAid = ""): JsonNode =
+  %*{
+    "pending_inputs": snapshotPendingInputs(ex, excludeAid),
+    "ready": snapshotReadyIds(ex, excludeAid),
+    "deferred": snapshotDeferred(ex)
+  }
+
 proc commitActivation(ex: LocalExecutor; act: ActivationRecord; phase = "running"): bool =
   ## Returns true only when the durable commit corresponds to this activation.
   acquire(ex.commitLock)
@@ -146,6 +183,7 @@ proc commitActivation(ex: LocalExecutor; act: ActivationRecord; phase = "running
   let tid = stableActivationTransitionId(act.activationId)
   var outObj = act.outputs
   if outObj.isNil: outObj = newJObject()
+  let sched = schedulerStateFields(ex, act.activationId)
   let transition = %*{
     "transition_id": tid,
     "epoch": ex.epoch,
@@ -164,7 +202,10 @@ proc commitActivation(ex: LocalExecutor; act: ActivationRecord; phase = "running
       "mode": $ex.config.mode,
       "graph_id": ex.graph.graphId,
       "activation_commits": ex.activationCommits + (if already: 0 else: 1),
-      "outputs": ex.outputs
+      "outputs": ex.outputs,
+      "pending_inputs": sched["pending_inputs"],
+      "ready": sched["ready"],
+      "deferred": sched["deferred"]
     }
   }
   let stored = ex.store.commitTransition(ex.runId, transition)
@@ -222,6 +263,76 @@ proc enqueueReady(ex: LocalExecutor; activationId: string) =
   if activationId in ex.ready:
     return
   ex.ready.add(activationId)
+
+proc restoreSchedulerFromState(ex: LocalExecutor; state: JsonNode) =
+  ## Reload pending / ready / deferred that were checkpointed with the run.
+  if state.isNil or state.kind != JObject:
+    return
+  if state.hasKey("pending_inputs") and state["pending_inputs"].kind == JObject:
+    for aid, ports in state["pending_inputs"].pairs:
+      if aid in ex.completed:
+        continue
+      if ports.kind != JObject:
+        continue
+      ensurePending(ex, aid)
+      for p, body in ports.pairs:
+        ex.pending[aid][p] = body
+  if state.hasKey("ready") and state["ready"].kind == JArray:
+    for n in state["ready"]:
+      let aid = n.getStr
+      if aid.len > 0:
+        enqueueReady(ex, aid)
+  if state.hasKey("deferred") and state["deferred"].kind == JArray:
+    for n in state["deferred"]:
+      if n.kind != JObject:
+        continue
+      ex.deferred.add(DeferredDelivery(
+        toNode: n{"to_node"}.getStr,
+        toPort: n{"to_port"}.getStr,
+        branchKey: n{"branch_key"}.getStr("main"),
+        body: n{"body"},
+        messageId: n{"message_id"}.getStr
+      ))
+
+proc requeueReadyFromPending(ex: LocalExecutor) =
+  for aid, _ in ex.pending.pairs:
+    if aid in ex.completed:
+      continue
+    let parts = aid.split({':'}, 1)
+    let nodeId = parts[0]
+    if nodeId notin ex.nodes:
+      continue
+    if ex.isReady(aid, ex.nodes[nodeId]):
+      enqueueReady(ex, aid)
+
+proc graphOutputsIncomplete(ex: LocalExecutor): bool =
+  for name, _ in ex.graph.outputs.pairs:
+    if name notin ex.outputs:
+      return true
+  false
+
+proc missingDurablePendingDiagnostic(ex: LocalExecutor; state: JsonNode): string =
+  var missing: seq[string] = @[]
+  for ep in ex.graph.entrypoints:
+    let (tn, tp) = parsePort(ep.toPort)
+    let aid = activationIdOf(tn, "main")
+    if aid in ex.completed:
+      continue
+    let hasPort = aid in ex.pending and tp in ex.pending[aid]
+    if not hasPort:
+      missing.add(ep.inputName & "->" & tn & "." & tp & " (" & aid & ")")
+  let hadSnap = not state.isNil and state.kind == JObject and
+                state.hasKey("pending_inputs")
+  if missing.len == 0 and not graphOutputsIncomplete(ex):
+    return ""
+  if not hadSnap:
+    return "irrecoverable pending inputs after resume (pre-pending_inputs checkpoint); missing: " &
+           missing.join(", ")
+  if missing.len > 0:
+    return "missing durable pending inputs after resume: " & missing.join(", ")
+  if graphOutputsIncomplete(ex) and ex.ready.len == 0 and ex.deferred.len == 0:
+    return "resume has incomplete graph outputs and no ready work (pending snapshot exhausted)"
+  ""
 
 proc acceptDelivery(ex: LocalExecutor; toNode, toPort, branchKey: string;
                     body: JsonNode; messageId: string): bool =
@@ -491,6 +602,9 @@ proc applyOutcome(ex: LocalExecutor; oc: HandlerOutcome) =
     outJson[k] = v
   # Graph outputs must be durable at this commit boundary (incl. last activation).
   collectGraphOutputs(ex, oc.nodeId, oc.outputs)
+  # Fan-out into pending/ready before the durable commit so a checkpoint
+  # snapshot retains sibling entrypoints and downstream gathers.
+  publishOutputs(ex, oc.nodeId, oc.branchKey, oc.outputs)
   let act = ActivationRecord(
     activationId: oc.activationId,
     nodeId: oc.nodeId,
@@ -508,13 +622,14 @@ proc applyOutcome(ex: LocalExecutor; oc: HandlerOutcome) =
   if not commitActivation(ex, act, phase):
     raise newFactoryError(fecValidationFailed,
       "activation commit rejected: " & act.activationId, phase = "executor")
-  publishOutputs(ex, oc.nodeId, oc.branchKey, oc.outputs)
   if ex.config.checkpointAfter > 0 and
       ex.activationCommits >= ex.config.checkpointAfter:
     ex.status = esInterrupted
     appendEvent(ex, "checkpoint", %*{
       "activation_commits": ex.activationCommits,
-      "outputs": ex.outputs
+      "outputs": ex.outputs,
+      "pending_inputs": snapshotPendingInputs(ex),
+      "ready": snapshotReadyIds(ex)
     })
 
 proc stillRunning(ex: LocalExecutor): bool =
@@ -667,8 +782,19 @@ proc runLoop(ex: LocalExecutor) =
   discard flushDeferred(ex)
   if stillRunning(ex) and ex.deferred.len > 0 and ex.ready.len == 0:
     observeNoPipeProgress(ex)
+  if ex.status == esCompleted and graphOutputsIncomplete(ex):
+    # Do not seal a partial run as completed (e.g. lost pending after resume).
+    let msg = "cannot finalize run with incomplete graph outputs (ready=" &
+              $ex.ready.len & ", deferred=" & $ex.deferred.len & ")"
+    ex.status = esFailed
+    appendEvent(ex, "incomplete_outputs", %*{
+      "outputs": ex.outputs, "ready": snapshotReadyIds(ex),
+      "pending_inputs": snapshotPendingInputs(ex)
+    })
+    raise newFactoryError(fecMissingRequiredInput, msg, phase = "executor")
   if ex.status == esCompleted:
     let tid = stableRunTransitionId(ex.runId, "final")
+    let sched = schedulerStateFields(ex)
     let stored = ex.store.commitTransition(ex.runId, %*{
       "transition_id": tid,
       "epoch": ex.epoch,
@@ -677,7 +803,10 @@ proc runLoop(ex: LocalExecutor) =
         "mode": $ex.config.mode,
         "graph_id": ex.graph.graphId,
         "activation_commits": ex.activationCommits,
-        "outputs": ex.outputs
+        "outputs": ex.outputs,
+        "pending_inputs": sched["pending_inputs"],
+        "ready": sched["ready"],
+        "deferred": sched["deferred"]
       },
       "activation_id": "run:final",
       "attempt_id": "att-final",
@@ -825,14 +954,18 @@ proc resumeGraph*(store: SqliteRunStore; registry: ExecutableRegistry;
     if not aid.startsWith("run:"):
       inc ex.activationCommits
   let rec = store.recover(runId)
-  if rec.hasKey("state") and rec["state"].kind == JObject:
-    if rec["state"].hasKey("outputs") and rec["state"]["outputs"].kind == JObject:
-      ex.outputs = rec["state"]["outputs"]
-  let phase = rec{"state"}{"phase"}.getStr("")
+  let state =
+    if rec.hasKey("state") and rec["state"].kind == JObject: rec["state"]
+    else: newJObject()
+  if state.hasKey("outputs") and state["outputs"].kind == JObject:
+    ex.outputs = state["outputs"]
+  let phase = state{"phase"}.getStr("")
   if phase == "completed":
     # Second resume of a finished run: return durable outputs, no handler re-invoke.
     ex.status = esCompleted
     return ex.toReport()
+  # Restore entrypoints / gathers that were still due at the last commit.
+  restoreSchedulerFromState(ex, state)
   for aid, act in ex.completed:
     if act.outputs.isNil: continue
     if aid.startsWith("run:"): continue
@@ -841,6 +974,11 @@ proc resumeGraph*(store: SqliteRunStore; registry: ExecutableRegistry;
       for k, v in act.outputs.pairs:
         outs[k] = v
     publishOutputs(ex, act.nodeId, act.branchKey, outs)
+  requeueReadyFromPending(ex)
+  let diag = missingDurablePendingDiagnostic(ex, state)
+  if diag.len > 0 and ex.ready.len == 0 and ex.deferred.len == 0 and
+      graphOutputsIncomplete(ex):
+    raise newFactoryError(fecMissingRequiredInput, diag, phase = "executor")
   ex.runLoop()
   ex.toReport()
 
