@@ -39,6 +39,9 @@ type
     route: string
     inject: string
     localModel: string
+    target: string
+    diagnosis: string
+    constraint: string
 
 proc writeHuman(msg: string) =
   stderr.writeLine(msg)
@@ -56,7 +59,7 @@ Commands:
   resume --store PATH --run-id ID --graph PATH [options]
   inspect --store PATH --run-id ID
   events --store PATH --run-id ID
-  mission-fix --repo PATH --route api|local|inject [options]
+  mission-fix --repo PATH --oracle PATH --route api|local|inject [options]
 
 Options:
   --mode sequential|concurrent
@@ -67,12 +70,15 @@ Options:
   --deadline-ms N
   --input PATH
   --repo PATH           fixture repo root for mission-fix
-  --symptom PATH        symptom file (default: repo/SYMPTOM.md or sibling)
-  --oracle PATH         reception tests dir (default: ../oracle)
-  --worktree PATH       isolated apply directory
+  --symptom PATH        pilot symptom file (or repo/SYMPTOM.md)
+  --oracle PATH         reception tests directory (required)
+  --worktree PATH       empty/new apply directory (refuse if occupied)
   --route api|local|inject
   --inject PATH         injected model JSON (non-qualifying)
-  --local-model NAME    ollama model for local route
+  --local-model NAME    ollama model for local micro-patch route
+  --target PATH         local: established file to patch
+  --diagnosis TEXT      local: established diagnosis
+  --constraint TEXT     local: constraint to preserve
   --json                machine mode (stdout JSON only; default)
 """)
 
@@ -140,6 +146,12 @@ proc parseArgs(args: seq[string]): CliOptions =
         result.inject = takeValue(p)
       of "local-model":
         result.localModel = takeValue(p)
+      of "target":
+        result.target = takeValue(p)
+      of "diagnosis":
+        result.diagnosis = takeValue(p)
+      of "constraint":
+        result.constraint = takeValue(p)
       of "json":
         result.jsonMode = true
       of "human":
@@ -246,8 +258,14 @@ proc runCli*(args: seq[string]): int =
       if o.repo.len == 0:
         writeHuman("mission-fix requires --repo")
         return ExitInvalid
+      if o.oracle.len == 0:
+        writeHuman("mission-fix requires --oracle")
+        return ExitInvalid
       if o.route == "inject" and o.inject.len == 0:
         writeHuman("mission-fix --route inject requires --inject")
+        return ExitInvalid
+      if o.route == "local" and (o.target.len == 0 or o.diagnosis.len == 0):
+        writeHuman("mission-fix --route local requires --target and --diagnosis")
         return ExitInvalid
       var req = defaultMissionRequest()
       req.repoRoot = o.repo
@@ -257,12 +275,16 @@ proc runCli*(args: seq[string]): int =
       req.route = o.route
       req.injectPath = o.inject
       req.localModel = o.localModel
+      req.targetFile = o.target
+      req.diagnosis = o.diagnosis
+      req.constraint = o.constraint
       let report = runMission(req)
       var outNode = reportToJson(report)
       outNode["command"] = %"mission-fix"
       writeMachine(outNode)
       if report.ok: return ExitOk
       if report.verdict == "api_unavailable": return ExitBlocked
+      if report.verdict == "oracle_missing": return ExitInvalid
       return ExitFailed
     else:
       writeHuman("unknown command: " & o.cmd)

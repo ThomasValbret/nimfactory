@@ -1,6 +1,6 @@
 ## End-to-end software_fix mission: context → model → apply → verify.
 
-import std/[os, json]
+import std/[json]
 import ./context
 import ./provider
 import ./apply
@@ -15,6 +15,9 @@ type
     route*: string          ## api | local | inject
     injectPath*: string
     localModel*: string
+    targetFile*: string     ## local micro-patch: established target
+    diagnosis*: string      ## local micro-patch: established diagnosis
+    constraint*: string     ## local micro-patch: constraint to preserve
 
   MissionReport* = object
     ok*: bool
@@ -38,13 +41,30 @@ proc runMission*(req: MissionRequest): MissionReport =
   result.componentAttribution = newJObject()
   result.untested = @[]
 
-  # 1. Context (deterministic factory component)
+  # 0. Oracle must be resolvable before any model spend / apply.
+  let oracleCheck = resolveOracleEntry(req.oracleDir)
+  if not oracleCheck.ok:
+    result.ok = false
+    result.verdict = "oracle_missing"
+    result.warning = oracleCheck.message
+    result.verify.message = oracleCheck.message
+    result.verify.stderr = oracleCheck.message
+    result.verify.ok = false
+    result.verify.exitCode = 2
+    return
+
+  # 1. Context
   if req.route == "local":
-    result.context = buildLocalMicroPatchContext(req.repoRoot, req.symptomPath)
+    result.context = buildLocalMicroPatchContext(
+      req.repoRoot, req.symptomPath, req.targetFile, req.diagnosis, req.constraint)
   else:
-    # api and inject share the API-shaped context package (inject still uses product context)
     result.context = buildApiContext(req.repoRoot, req.symptomPath)
   result.componentAttribution["context"] = %*"nimfactory.mission.context"
+  if not result.context.ok:
+    result.ok = false
+    result.verdict = "context_failed"
+    result.warning = result.context.error
+    return
 
   # 2. Model / inject
   case req.route
@@ -56,8 +76,7 @@ proc runMission*(req: MissionRequest): MissionReport =
       result.verdict = "api_unavailable"
       result.warning =
         "Quentin: planned OpenAI API unavailable (" & result.provider.message &
-        "). Untested: live software_fix decision via API, consumption of API " &
-        "patched_content under reception tests."
+        "). Untested: live software_fix intervention choice via API."
       result.untested = @[
         "callPlannedApi/live",
         "parseFixDecision on API text",
@@ -85,25 +104,19 @@ proc runMission*(req: MissionRequest): MissionReport =
     result.warning = result.provider.message
     return
 
-  # 3. Parse + apply
+  # 3. Parse + apply (safe worktree)
   result.decision = parseFixDecision(result.provider.rawText)
   result.componentAttribution["parse_apply"] = %*"nimfactory.mission.apply"
-  let wt =
-    if req.worktreeRoot.len > 0: req.worktreeRoot
-    else: req.repoRoot & ".worktree"
-  result.apply = applyDecision(req.repoRoot, wt, result.decision)
+  result.apply = applyDecision(req.repoRoot, req.worktreeRoot, result.decision)
   if not result.apply.ok:
     result.ok = false
     result.verdict = "apply_failed"
     result.warning = result.apply.message
     return
 
-  # 4. Verify with external oracle
-  let oracle =
-    if req.oracleDir.len > 0: req.oracleDir
-    else: parentDir(req.repoRoot) / "oracle"
-  result.verify = runOracle(wt, oracle)
-  result.componentAttribution["verify"] = %*"nimfactory.mission.verify + fixtures/e2e_bugfix/oracle"
+  # 4. Verify with the oracle directory actually supplied
+  result.verify = runOracle(result.apply.worktree, req.oracleDir)
+  result.componentAttribution["verify"] = %*("nimfactory.mission.verify + " & req.oracleDir)
 
   if result.verify.ok:
     result.ok = true
@@ -111,7 +124,9 @@ proc runMission*(req: MissionRequest): MissionReport =
   else:
     result.ok = false
     result.verdict = "verify_failed"
-    result.warning = "reception tests failed after applying model patch"
+    result.warning =
+      if result.verify.message.len > 0: result.verify.message
+      else: "reception tests failed after applying model patch"
 
 proc reportToJson*(r: MissionReport): JsonNode =
   %*{

@@ -1,6 +1,7 @@
-## Reception tests run against the isolated worktree (oracle stays out of model context).
+## Reception tests: compile and run the oracle directory supplied by the caller.
+## Assertions live only in that oracle — never hardcoded here, never in model context.
 
-import std/[os, osproc, strutils, json]
+import std/[os, osproc, strutils, json, algorithm]
 
 type
   VerifyResult* = object
@@ -10,38 +11,61 @@ type
     stderr*: string
     command*: string
     oraclePath*: string
+    message*: string
+
+proc listOracleNimFiles(oracleDir: string): seq[string] =
+  result = @[]
+  if not dirExists(oracleDir):
+    return
+  for kind, path in walkDir(oracleDir):
+    if kind == pcFile and path.endsWith(".nim"):
+      result.add(path)
+  result.sort()
+
+proc resolveOracleEntry*(oracleDir: string): tuple[ok: bool; path: string; message: string] =
+  if oracleDir.len == 0:
+    return (false, "", "oracle path required (--oracle)")
+  if not dirExists(oracleDir):
+    return (false, "", "oracle directory not found: " & oracleDir)
+  let files = listOracleNimFiles(oracleDir)
+  if files.len == 0:
+    return (false, "", "oracle directory has no .nim reception file: " & oracleDir)
+  # Prefer a single entry; if several, take the first sorted name.
+  (true, files[0], "")
 
 proc runOracle*(worktree, oracleDir: string): VerifyResult =
-  ## Compile a tiny driver that imports the worktree normalize module and
-  ## evaluates the reception assertions (oracle body stays outside model context).
-  let oracleSrc = oracleDir / "test_normalize.nim"
-  result.oraclePath = oracleSrc
-  let normalizePath = worktree / "src" / "normalize.nim"
-  if not fileExists(normalizePath):
+  ## Execute the oracle file from `--oracle` against sources in the worktree.
+  let resolved = resolveOracleEntry(oracleDir)
+  if not resolved.ok:
     result.ok = false
-    result.stderr = "worktree missing src/normalize.nim"
+    result.exitCode = 2
+    result.message = resolved.message
+    result.stderr = resolved.message
+    result.oraclePath = oracleDir
+    return
+  result.oraclePath = resolved.path
+  if not dirExists(worktree / "src"):
+    result.ok = false
+    result.exitCode = 2
+    result.message = "worktree missing src/ directory"
+    result.stderr = result.message
     return
   let tmpDir = getTempDir() / ("nf_oracle_" & $getCurrentProcessId())
   createDir(tmpDir)
-  let wrapper = tmpDir / "oracle_main.nim"
   let bin = tmpDir / "oracle_bin"
-  let normImport = normalizePath.replace('\\', '/')
-  writeFile(wrapper,
-    "import \"" & normImport & "\"\n" &
-    "doAssert normalize(\"\") == \"EMPTY\"\n" &
-    "doAssert normalize(\"   \") == \"EMPTY\"\n" &
-    "doAssert normalize(\" hi \") == \"hi\"\n" &
-    "doAssert normalize(\"x\") == \"x\"\n" &
-    "echo \"oracle_normalize: ok\"\n")
-  let cmd = "nim c -r --hints:off --warnings:off -o:" & quoteShell(bin) &
-            " " & quoteShell(wrapper)
+  # Compile the caller-provided oracle with worktree sources on the path.
+  let cmd = "nim c -r --hints:off --warnings:off --path:" & quoteShell(worktree / "src") &
+            " -o:" & quoteShell(bin) & " " & quoteShell(resolved.path)
   result.command = cmd
   let (outp, code) = execCmdEx(cmd)
   result.exitCode = code
   result.stdout = outp
-  result.ok = code == 0 and outp.contains("oracle_normalize: ok")
+  result.ok = code == 0
   if not result.ok:
     result.stderr = outp
+    result.message = "oracle reception failed"
+  else:
+    result.message = "oracle reception passed"
 
 proc verifyToJson*(v: VerifyResult): JsonNode =
   %*{
@@ -50,5 +74,6 @@ proc verifyToJson*(v: VerifyResult): JsonNode =
     "stdout": v.stdout,
     "stderr": v.stderr,
     "command": v.command,
-    "oracle_path": v.oraclePath
+    "oracle_path": v.oraclePath,
+    "message": v.message
   }

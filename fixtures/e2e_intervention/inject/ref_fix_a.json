@@ -1,0 +1,5 @@
+{
+  "target_file": "src/textutil.nim",
+  "decision": "blank detection misses empty string",
+  "patched_content": "import std/strutils\n\nproc isBlank*(s: string): bool =\n  s.strip.len == 0\n\nproc trimText*(s: string): string =\n  s.strip()\n"
+}

@@ -1,5 +1,7 @@
-## Context constructors for the software-fix mission (API vs local routes).
+## Context constructors for software_fix (API intervention choice) and
+## local micro-patch (target + diagnosis already established).
 ## Oracle / reception tests are never included in model context.
+## No default domain spec is invented when the pilot omits the symptom.
 
 import std/[os, strutils, sequtils, algorithm, json]
 
@@ -9,31 +11,34 @@ type
     content*: string
 
   MissionContext* = object
-    route*: string           ## "api" | "local"
+    route*: string
     symptom*: string
     sources*: seq[SourceFile]
     systemPrompt*: string
     userPrompt*: string
-    sourceIds*: seq[string]  ## relative paths actually supplied
+    sourceIds*: seq[string]
+    ok*: bool
+    error*: string
 
 const
   ApiSystemPrompt* = """
 You are the software_fix role for NimFactory.
-Examine the supplied repository sources and the symptom.
-Choose exactly one file to change and produce a complete corrected file body.
-Do not invent files. Do not touch unrelated helpers unless they are the true cause.
-If the file uses strip or other strutils helpers, keep `import std/strutils`.
+Examine the supplied repository sources and the pilot symptom.
+Choose exactly one existing file to change and produce its complete corrected body.
+Do not invent files. Prefer the smallest change that addresses the symptom.
+Keep required imports for the language of the file.
 Return ONLY a JSON object with keys:
   target_file (string, path relative to repo root),
-  decision (short string naming the cause),
+  decision (short string naming the cause you chose),
   patched_content (full new file text).
 """.strip()
 
-  LocalSystemPrompt* = """
+  LocalMicroPatchSystemPrompt* = """
 You perform a bounded local micro-patch.
-Given candidate source files and a symptom, pick the one broken file and rewrite it so the stated spec holds.
-Keep needed imports (e.g. std/strutils for strip).
-Return ONLY JSON: target_file, decision, patched_content.
+The intervention target and diagnosis are already established.
+Rewrite only the supplied extract so the stated constraint holds.
+Do not change unrelated files. Return ONLY JSON:
+  target_file, decision, patched_content.
 """.strip()
 
 proc collectSrcNim*(repoRoot: string): seq[SourceFile] =
@@ -47,7 +52,6 @@ proc collectSrcNim*(repoRoot: string): seq[SourceFile] =
   paths.sort()
   for p in paths:
     let rel = relativePath(p, repoRoot)
-    # Never pull oracle or reception tests into model context.
     if rel.contains("oracle") or rel.contains("test_"):
       continue
     result.add(SourceFile(relPath: rel, content: readFile(p)))
@@ -58,43 +62,79 @@ proc renderSources(sources: seq[SourceFile]): string =
     parts.add("### FILE " & s.relPath & "\n```nim\n" & s.content & "\n```")
   parts.join("\n\n")
 
+proc loadSymptom*(repoRoot, symptomPath: string): tuple[ok: bool; text: string; err: string] =
+  if symptomPath.len > 0:
+    if not fileExists(symptomPath):
+      return (false, "", "symptom file not found: " & symptomPath)
+    return (true, readFile(symptomPath), "")
+  let fallback = repoRoot / "SYMPTOM.md"
+  if fileExists(fallback):
+    return (true, readFile(fallback), "")
+  (false, "", "symptom required (pass --symptom or provide repo/SYMPTOM.md); no default domain spec")
+
 proc buildApiContext*(repoRoot, symptomPath: string): MissionContext =
-  ## Full API-route context: symptom + every src/*.nim candidate.
-  let symptom =
-    if symptomPath.len > 0 and fileExists(symptomPath): readFile(symptomPath)
-    elif fileExists(repoRoot / "SYMPTOM.md"): readFile(repoRoot / "SYMPTOM.md")
-    else: "normalize must map empty/whitespace to EMPTY and otherwise return trimmed text."
-  let sources = collectSrcNim(repoRoot)
+  ## API-route context: pilot symptom + every src/*.nim candidate. No invented spec.
   result.route = "api"
-  result.symptom = symptom
+  let sym = loadSymptom(repoRoot, symptomPath)
+  if not sym.ok:
+    result.ok = false
+    result.error = sym.err
+    return
+  let sources = collectSrcNim(repoRoot)
+  if sources.len == 0:
+    result.ok = false
+    result.error = "no source files under repo/src"
+    return
+  result.ok = true
+  result.symptom = sym.text
   result.sources = sources
   result.sourceIds = sources.mapIt(it.relPath)
   result.systemPrompt = ApiSystemPrompt
   result.userPrompt =
-    "Symptom:\n" & symptom.strip() & "\n\nRepository sources:\n\n" &
+    "Symptom (from pilot):\n" & sym.text.strip() & "\n\nRepository sources:\n\n" &
     renderSources(sources) &
     "\n\nProduce the JSON patch decision now."
 
-proc buildLocalMicroPatchContext*(repoRoot, symptomPath: string): MissionContext =
-  ## Dedicated local constructor: tighter prompt, same source selection rules,
-  ## never the API prompt verbatim or truncated.
-  let symptom =
-    if symptomPath.len > 0 and fileExists(symptomPath): readFile(symptomPath)
-    elif fileExists(repoRoot / "SYMPTOM.md"): readFile(repoRoot / "SYMPTOM.md")
-    else: "Spec: empty/whitespace → EMPTY; else trimmed."
-  let sources = collectSrcNim(repoRoot)
+proc buildLocalMicroPatchContext*(
+    repoRoot, symptomPath, targetFile, diagnosis, constraint: string): MissionContext =
+  ## Dedicated local constructor: target and diagnosis already known.
+  ## Only the named extract is presented, plus the constraint to preserve.
   result.route = "local"
-  result.symptom = symptom
-  result.sources = sources
-  result.sourceIds = sources.mapIt(it.relPath)
-  result.systemPrompt = LocalSystemPrompt
+  if targetFile.len == 0:
+    result.ok = false
+    result.error = "local micro-patch requires an established --target"
+    return
+  if diagnosis.len == 0:
+    result.ok = false
+    result.error = "local micro-patch requires an established --diagnosis"
+    return
+  let absTarget = repoRoot / targetFile
+  if not fileExists(absTarget):
+    result.ok = false
+    result.error = "local micro-patch target missing: " & targetFile
+    return
+  let sym = loadSymptom(repoRoot, symptomPath)
+  let symptomText = if sym.ok: sym.text else: ""
+  let constraintText =
+    if constraint.len > 0: constraint
+    else: "Preserve public signatures; fix only the diagnosed defect."
+  let body = readFile(absTarget)
+  result.ok = true
+  result.symptom = symptomText
+  result.sources = @[SourceFile(relPath: targetFile, content: body)]
+  result.sourceIds = @[targetFile]
+  result.systemPrompt = LocalMicroPatchSystemPrompt
   result.userPrompt =
-    "Local micro-patch task.\nSymptom: " & symptom.strip() &
-    "\nCandidates:\n" & renderSources(sources) &
-    "\nJSON only."
+    "Established target: " & targetFile & "\n" &
+    "Established diagnosis: " & diagnosis & "\n" &
+    "Constraint to preserve: " & constraintText & "\n" &
+    (if symptomText.len > 0: "Pilot symptom (background):\n" & symptomText.strip() & "\n" else: "") &
+    "Extract:\n```nim\n" & body & "\n```\nJSON only."
 
 proc contextToJson*(ctx: MissionContext): JsonNode =
   %*{
+    "ok": ctx.ok,
+    "error": ctx.error,
     "route": ctx.route,
     "source_ids": ctx.sourceIds,
     "system_prompt": ctx.systemPrompt,

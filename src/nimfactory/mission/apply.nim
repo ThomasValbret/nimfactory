@@ -1,6 +1,8 @@
 ## Parse model decision JSON and apply the patch inside an isolated worktree.
+## Never deletes an existing --worktree destination: create a fresh mission dir
+## or refuse an occupied path.
 
-import std/[os, json, strutils]
+import std/[os, json, strutils, times]
 
 type
   FixDecision* = object
@@ -20,7 +22,7 @@ type
     beforeHash*: string
     afterHash*: string
 
-proc extractJsonObject(raw: string): string =
+proc extractJsonObject*(raw: string): string =
   ## Tolerate fenced markdown around a JSON object.
   var t = raw.strip()
   if t.startsWith("```"):
@@ -51,10 +53,36 @@ proc parseFixDecision*(raw: string): FixDecision =
     result.parseOk = false
     result.parseError = e.msg
 
+proc dirIsOccupied(path: string): bool =
+  if fileExists(path):
+    return true
+  if not dirExists(path):
+    return false
+  for _ in walkDir(path):
+    return true
+  false
+
+proc allocateWorktree*(requested: string): tuple[ok: bool; path: string; message: string] =
+  ## If `requested` is empty, create a fresh mission-owned directory.
+  ## If provided, refuse when the path already exists or is occupied.
+  if requested.len == 0:
+    let path = getTempDir() / ("nf_mission_" & $getCurrentProcessId() & "_" &
+               $(epochTime().int))
+    createDir(path)
+    return (true, path, "allocated fresh worktree")
+  if fileExists(requested):
+    return (false, requested, "worktree path is an existing file; refuse to overwrite: " & requested)
+  if dirExists(requested):
+    if dirIsOccupied(requested):
+      return (false, requested,
+        "worktree already occupied; refuse to delete or reuse: " & requested)
+    # empty existing dir is acceptable
+    return (true, requested, "using empty worktree directory")
+  createDir(requested)
+  (true, requested, "created worktree directory")
+
 proc copyRepoToWorktree*(repoRoot, worktree: string) =
-  if dirExists(worktree):
-    removeDir(worktree)
-  createDir(worktree)
+  ## Copy repo contents into an already-prepared (empty) worktree. Does not removeDir.
   for kind, path in walkDir(repoRoot):
     let name = splitPath(path).tail
     if name in [".git", "oracle"]:
@@ -65,27 +93,36 @@ proc copyRepoToWorktree*(repoRoot, worktree: string) =
     elif kind == pcFile:
       copyFile(path, dest)
 
-proc simpleHash(s: string): string =
-  ## Stable short fingerprint for reports (not cryptographic).
+proc simpleHash*(s: string): string =
   var h: uint32 = 2166136261'u32
   for c in s:
     h = (h xor uint32(ord(c))) * 16777619'u32
   result = toHex(h)
 
 proc applyDecision*(repoRoot, worktreeRoot: string; dec: FixDecision): ApplyResult =
-  result.worktree = worktreeRoot
   result.targetFile = dec.targetFile
   result.decision = dec.decision
   if not dec.parseOk:
     result.ok = false
     result.message = "parse failed: " & dec.parseError
     return
-  if dec.targetFile.contains("..") or dec.targetFile.isAbsolute:
+  if dec.targetFile.contains("..") or isAbsolute(dec.targetFile):
     result.ok = false
     result.message = "refusing unsafe target_file: " & dec.targetFile
     return
-  copyRepoToWorktree(repoRoot, worktreeRoot)
-  let dest = worktreeRoot / dec.targetFile
+  let alloc = allocateWorktree(worktreeRoot)
+  result.worktree = alloc.path
+  if not alloc.ok:
+    result.ok = false
+    result.message = alloc.message
+    return
+  try:
+    copyRepoToWorktree(repoRoot, alloc.path)
+  except CatchableError as e:
+    result.ok = false
+    result.message = "copy to worktree failed: " & e.msg
+    return
+  let dest = alloc.path / dec.targetFile
   if not fileExists(dest):
     result.ok = false
     result.message = "target not present in worktree: " & dec.targetFile
