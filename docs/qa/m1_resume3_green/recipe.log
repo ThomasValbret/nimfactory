@@ -1,0 +1,18 @@
+=== diamond wait/cap1 checkpoints 1-5 seq+conc ===
+ok sequential ckpt=1
+ok sequential ckpt=2
+ok sequential ckpt=3
+ok sequential ckpt=4
+ok sequential ckpt=5
+ok concurrent ckpt=1
+ok concurrent ckpt=2
+ok concurrent ckpt=3
+ok concurrent ckpt=4
+ok concurrent ckpt=5
+=== durable start crash (beginGraphRun boundary) ===
+test_resume_saturation_start_legacy: ok
+=== false-completed legacy DBs ===
+false_two_diag_ok
+false_join_diag_ok
+M1_RESUME3_REGRESSION_OK
+m1_resume3_regression: ok sdk=bf22665ece77d7149dbe61df959a6024bf6b26f3

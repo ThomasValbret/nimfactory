@@ -19,6 +19,12 @@ export graph
 import nimfactory/budget/budget
 export budget
 
+import nimfactory/runtime/executor
+export executor
+
+import nimfactory/application
+export application
+
 const
   NimFactoryVersion* = "0.1.0"
   NimAgentPinnedRevision* = "bf22665ece77d7149dbe61df959a6024bf6b26f3"

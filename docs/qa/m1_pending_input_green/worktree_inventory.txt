@@ -1,0 +1,6 @@
+qualification_utc=2026-11-19T05:03:19Z
+functional_sha=2cd338b27dcb9bca3ea5dbd11da4f9db9adba0d3
+nim=Nim Compiler Version 2.4.0 [Linux: amd64]
+sdk=bf22665ece77d7149dbe61df959a6024bf6b26f3
+sdk_pin_match=yes
+?? docs/qa/m1_pending_input_green/worktree_inventory.txt

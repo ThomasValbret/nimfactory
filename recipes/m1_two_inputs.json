@@ -1,0 +1,16 @@
+{
+  "schema": "nimfactory.graph/0.1",
+  "graph_id": "m1-two-inputs",
+  "version": 1,
+  "nodes": [
+    {"id": "first", "handler": "noop.passthrough@0.1"},
+    {"id": "second", "handler": "noop.passthrough@0.1"}
+  ],
+  "entrypoints": [
+    {"input": "a", "to": "first.in"},
+    {"input": "b", "to": "second.in"}
+  ],
+  "edges": [],
+  "outputs": {"one": "first.out", "two": "second.out"},
+  "loop_specs": []
+}

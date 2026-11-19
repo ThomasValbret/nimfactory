@@ -1,0 +1,15 @@
+qualification_started_utc=2026-11-19T00:36:14Z
+worktree=/opt/nimFactory-m1-qual-dd4fcf5
+candidate_functional_sha=dd4fcf57e801c69cf0257edf06c140ef5a37b235
+pr_tip_observed=6d4a75b9f106aa016c8f3b4d26d6912565eb020a
+nim=Nim Compiler Version 2.4.0 [Linux: amd64]
+sdk=bf22665ece77d7149dbe61df959a6024bf6b26f3
+sdk_expected=bf22665ece77d7149dbe61df959a6024bf6b26f3
+sdk_pin_match=yes
+git_status:
+?? docs/qa/m1_requal_2026-11-19/
+diff_candidate_to_pr_tip:
+6d4a75b docs(wave-b): stamp F5 pipe/context corrective SHA dd4fcf5
+ docs/deliveries/F5.md        | 1 +
+ docs/deliveries/WAVE_B_M1.md | 1 +
+ 2 files changed, 2 insertions(+)

@@ -1,0 +1,25 @@
+{
+  "schema": "nimfactory.graph/0.1",
+  "graph_id": "m1-two-inputs-join",
+  "version": 1,
+  "nodes": [
+    {"id": "first", "handler": "noop.passthrough@0.1"},
+    {"id": "second", "handler": "noop.passthrough@0.1"},
+    {"id": "join", "kind": "join", "control": {
+      "policy": "all_required",
+      "on_failure": "fail",
+      "on_late": "discard",
+      "on_cancel": "fail"
+    }}
+  ],
+  "entrypoints": [
+    {"input": "a", "to": "first.in"},
+    {"input": "b", "to": "second.in"}
+  ],
+  "edges": [
+    {"from": "first.out", "to": "join.in_left"},
+    {"from": "second.out", "to": "join.in_right"}
+  ],
+  "outputs": {"result": "join.out"},
+  "loop_specs": []
+}
