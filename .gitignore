@@ -65,3 +65,6 @@ build/nimfactory_cli
 tests/f5/test_executor
 tests/f16/test_cli
 tests/f17/test_m1_resume_recipe
+
+# E2E mission worktrees
+fixtures/e2e_bugfix/.wt*

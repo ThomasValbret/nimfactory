@@ -1,10 +1,11 @@
-## Minimal M1 CLI: validate, run, resume, inspect, events (F16).
+## Minimal M1 CLI: validate, run, resume, inspect, events (F16) + mission-fix.
 
 import std/[os, parseopt, strutils, json, sequtils]
 import nimfactory/contracts/[errors, result]
 import nimfactory/runtime/executor/types
 import nimfactory/application/compose
 import nimfactory/runtime/executor/executor
+import nimfactory/mission/pipeline
 
 const
   ExitOk* = 0
@@ -31,6 +32,13 @@ type
     jsonMode: bool
     help: bool
     err: string
+    repo: string
+    symptom: string
+    oracle: string
+    worktree: string
+    route: string
+    inject: string
+    localModel: string
 
 proc writeHuman(msg: string) =
   stderr.writeLine(msg)
@@ -48,6 +56,7 @@ Commands:
   resume --store PATH --run-id ID --graph PATH [options]
   inspect --store PATH --run-id ID
   events --store PATH --run-id ID
+  mission-fix --repo PATH --route api|local|inject [options]
 
 Options:
   --mode sequential|concurrent
@@ -57,6 +66,13 @@ Options:
   --checkpoint-after N
   --deadline-ms N
   --input PATH
+  --repo PATH           fixture repo root for mission-fix
+  --symptom PATH        symptom file (default: repo/SYMPTOM.md or sibling)
+  --oracle PATH         reception tests dir (default: ../oracle)
+  --worktree PATH       isolated apply directory
+  --route api|local|inject
+  --inject PATH         injected model JSON (non-qualifying)
+  --local-model NAME    ollama model for local route
   --json                machine mode (stdout JSON only; default)
 """)
 
@@ -76,6 +92,8 @@ proc parseArgs(args: seq[string]): CliOptions =
   result.checkpointAfter = 0
   result.deadlineMs = 0
   result.jsonMode = true
+  result.route = "api"
+  result.localModel = "qwen2.5-coder:7b"
   if args.len == 0:
     result.help = true
     return
@@ -108,6 +126,20 @@ proc parseArgs(args: seq[string]): CliOptions =
         result.deadlineMs = parseBiggestInt(takeValue(p))
       of "input":
         result.input = takeValue(p)
+      of "repo":
+        result.repo = takeValue(p)
+      of "symptom":
+        result.symptom = takeValue(p)
+      of "oracle":
+        result.oracle = takeValue(p)
+      of "worktree":
+        result.worktree = takeValue(p)
+      of "route":
+        result.route = takeValue(p)
+      of "inject":
+        result.inject = takeValue(p)
+      of "local-model":
+        result.localModel = takeValue(p)
       of "json":
         result.jsonMode = true
       of "human":
@@ -210,6 +242,28 @@ proc runCli*(args: seq[string]): int =
       else:
         writeMachine(ev)
       return ExitOk
+    of "mission-fix":
+      if o.repo.len == 0:
+        writeHuman("mission-fix requires --repo")
+        return ExitInvalid
+      if o.route == "inject" and o.inject.len == 0:
+        writeHuman("mission-fix --route inject requires --inject")
+        return ExitInvalid
+      var req = defaultMissionRequest()
+      req.repoRoot = o.repo
+      req.symptomPath = o.symptom
+      req.oracleDir = o.oracle
+      req.worktreeRoot = o.worktree
+      req.route = o.route
+      req.injectPath = o.inject
+      req.localModel = o.localModel
+      let report = runMission(req)
+      var outNode = reportToJson(report)
+      outNode["command"] = %"mission-fix"
+      writeMachine(outNode)
+      if report.ok: return ExitOk
+      if report.verdict == "api_unavailable": return ExitBlocked
+      return ExitFailed
     else:
       writeHuman("unknown command: " & o.cmd)
       usage()

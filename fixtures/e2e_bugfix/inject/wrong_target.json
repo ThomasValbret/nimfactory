@@ -1,0 +1,5 @@
+{
+  "target_file": "src/util_misc.nim",
+  "decision": "wrong_file_red_herring",
+  "patched_content": "## Still a red herring\nproc stamp*(x: int): int = x + 2\n"
+}

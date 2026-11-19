@@ -1,0 +1,5 @@
+{
+  "target_file": "src/normalize.nim",
+  "decision": "off_by_one_forces_single_char_to_EMPTY",
+  "patched_content": "## Fixed normalize — empty and whitespace map to EMPTY.\nimport std/strutils\n\nproc normalize*(s: string): string =\n  let t = s.strip()\n  if t.len == 0:\n    return \"EMPTY\"\n  result = t\n"
+}
