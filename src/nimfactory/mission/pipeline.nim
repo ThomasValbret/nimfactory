@@ -1,6 +1,7 @@
 ## End-to-end software_fix mission: context → model → apply → verify.
-## Shared ceiling: at most two provider calls. Recovery after no-op or
-## functional verify failure. Compile errors and missing oracle stay distinct.
+## Shared ceiling: at most two provider calls. Recovery after no-op,
+## functional verify failure, or anchor_ambiguous apply refusal.
+## Compile errors and missing oracle stay distinct.
 
 import std/[json, strutils]
 import ./context
@@ -32,7 +33,7 @@ type
     verify*: VerifyResult
     cannotFix*: bool
     effectiveChange*: bool
-    recoveryReason*: string ## noop | functional_fail | ""
+    recoveryReason*: string ## noop | functional_fail | anchor_ambiguous | ""
 
   MissionReport* = object
     ok*: bool
@@ -102,8 +103,10 @@ proc canUseRecoveryProvider(req: MissionRequest): bool =
   req.route == "api" or req.recoveryViaApi or
     (req.route == "inject" and req.injectRecoveryPath.len > 0)
 
-proc priorBodyForRecovery(prior: AttemptRecord): string =
-  ## Prefer full patched body; otherwise summarize applied edits for the recovery prompt.
+proc priorProposalForRecovery(prior: AttemptRecord): string =
+  ## Exact proposal JSON when available; otherwise a textual fallback.
+  if prior.decision.exactProposalJson.len > 0:
+    return prior.decision.exactProposalJson
   if prior.decision.patchedContent.len > 0:
     return prior.decision.patchedContent
   if prior.decision.edits.len > 0:
@@ -114,12 +117,7 @@ proc priorBodyForRecovery(prior: AttemptRecord): string =
       parts.add("EDIT " & $i & " oldText:\n" & e.oldText & "\nEDIT " & $i &
                 " newText:\n" & e.newText)
     return parts.join("\n\n")
-  ""
-
-proc markOracleNotRun(v: var VerifyResult) =
-  v.ok = false
-  v.phase = vpNone
-  v.message = "oracle not run"
+  prior.provider.rawText
 
 proc runRecovery(report: var MissionReport; req: MissionRequest;
                  prior: AttemptRecord; reason, finding: string) =
@@ -134,7 +132,7 @@ proc runRecovery(report: var MissionReport; req: MissionRequest;
     report.context,
     prior.decision.targetFile,
     prior.decision.decision,
-    priorBodyForRecovery(prior),
+    priorProposalForRecovery(prior),
     finding)
   recovery.provider = invokeRecovery(req, recoveryCtx)
   report.providerCalls += 1
@@ -333,7 +331,7 @@ proc runMission*(req: MissionRequest): MissionReport =
       result.warning = attempt.verify.message
       result.attempts.add(attempt)
       return
-    of vkOther:
+    of vkNotRun, vkOther:
       result.ok = false
       result.verdict = "verify_failed"
       result.warning = attempt.verify.message
@@ -342,11 +340,20 @@ proc runMission*(req: MissionRequest): MissionReport =
     of vkPass:
       discard
 
-  # Apply failed path: only identical-to-original is recoverable.
+  # Apply failed path: noop and ambiguous-anchor refusals may recover.
   if attempt.apply.identicalToOriginal and canUseRecoveryProvider(req):
     result.attempts.add(attempt)
     runRecovery(result, req, attempt, "noop",
       "proposed content identical to the original")
+    return
+
+  if attempt.apply.refuseCode == "anchor_ambiguous" and canUseRecoveryProvider(req):
+    let proposal =
+      if attempt.decision.exactProposalJson.len > 0: attempt.decision.exactProposalJson
+      else: attempt.provider.rawText
+    let finding = buildAmbiguousFinding(attempt.apply, proposal)
+    result.attempts.add(attempt)
+    runRecovery(result, req, attempt, "anchor_ambiguous", finding)
     return
 
   result.ok = false

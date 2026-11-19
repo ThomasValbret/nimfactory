@@ -1,0 +1,18 @@
+{
+  "target_file": "src/sample.nim",
+  "decision": "narrow anchors for dupLine/otherDup",
+  "edits": [
+    {
+      "oldText": "  dupLine* = \"same\"\n",
+      "newText": "  dupLine* = \"changed\"\n"
+    },
+    {
+      "oldText": "  alpha* = 1\n",
+      "newText": "  alpha* = 2\n"
+    },
+    {
+      "oldText": "  beta* = 1\n",
+      "newText": "  beta* = 3\n"
+    }
+  ]
+}

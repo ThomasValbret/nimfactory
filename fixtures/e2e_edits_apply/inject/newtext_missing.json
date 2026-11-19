@@ -1,0 +1,9 @@
+{
+  "target_file": "src/sample.nim",
+  "decision": "missing newText",
+  "edits": [
+    {
+      "oldText": "  alpha* = 1\n"
+    }
+  ]
+}

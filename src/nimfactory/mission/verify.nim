@@ -17,13 +17,14 @@ type
     vkCompileError     ## oracle/sources failed to compile
     vkLaunchError      ## compile OK but binary could not be started
     vkOracleMissing
+    vkNotRun           ## oracle deliberately not executed (apply/provider refused earlier)
     vkOther
 
   VerifyResult* = object
     ok*: bool
     kind*: VerifyKind
     phase*: VerifyPhase          ## furthest phase reached
-    exitCode*: int               ## exit of the failing/successful terminal step
+    exitCode*: int               ## exit of the failing/successful terminal step; -1 if not run
     compileExitCode*: int
     runExitCode*: int
     stdout*: string
@@ -33,6 +34,7 @@ type
     command*: string             ## compat: last command attempted
     oraclePath*: string
     message*: string
+    ran*: bool                   ## false when oracle was not executed
 
 proc listOracleNimFiles(oracleDir: string): seq[string] =
   result = @[]
@@ -53,10 +55,23 @@ proc resolveOracleEntry*(oracleDir: string): tuple[ok: bool; path: string; messa
     return (false, "", "oracle directory has no .nim reception file: " & oracleDir)
   (true, files[0], "")
 
+proc markOracleNotRun*(v: var VerifyResult) =
+  ## Unambiguous JSON/status when reception never executed.
+  v.ok = false
+  v.kind = vkNotRun
+  v.phase = vpNone
+  v.exitCode = -1
+  v.compileExitCode = -1
+  v.runExitCode = -1
+  v.ran = false
+  v.message = "oracle not run"
+
 proc runOracle*(worktree, oracleDir: string): VerifyResult =
   ## Compile oracle against worktree sources; run binary only if compile succeeds.
   result.compileExitCode = -1
   result.runExitCode = -1
+  result.exitCode = -1
+  result.ran = true
   result.phase = vpResolve
   let resolved = resolveOracleEntry(oracleDir)
   if not resolved.ok:
@@ -135,6 +150,7 @@ proc runOracle*(worktree, oracleDir: string): VerifyResult =
 proc verifyToJson*(v: VerifyResult): JsonNode =
   %*{
     "ok": v.ok,
+    "ran": v.ran,
     "kind": $v.kind,
     "phase": $v.phase,
     "exit_code": v.exitCode,

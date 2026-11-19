@@ -47,10 +47,12 @@ Do not change unrelated files. Return ONLY JSON:
 
   ApiRecoverySystemPrompt* = """
 You are the software_fix role for NimFactory on a recovery turn.
-Your previous patch did not resolve the public symptom.
-You may follow calls between functions, choose a different existing file, revise the same file,
+Your previous proposal was refused or did not resolve the public symptom.
+You may revise the cause, choose a different existing file, refine oldText anchors,
 or conclude you cannot propose a correction.
 Do not invent files. The product will not reveal expected targets or private reception checks.
+When an anchor matched multiple times, the product does not choose an occurrence for you —
+narrow oldText yourself, pick another edit, change target_file, or return cannot_fix.
 Prefer edits: [{oldText, newText}, ...] for the chosen target_file.
 Return ONLY a JSON object with either:
   {"cannot_fix": true, "decision": "<why>"},
@@ -117,9 +119,9 @@ proc buildApiContext*(repoRoot, symptomPath: string): MissionContext =
 
 proc buildRecoveryContext*(
     base: MissionContext;
-    priorTarget, priorDecision, priorPatchedContent, finding: string): MissionContext =
-  ## Recovery turn: public symptom, authorized sources, first decision + proposed body,
-  ## and a product finding. Never includes oracle text, expected target, or variant id.
+    priorTarget, priorDecision, priorProposal, finding: string): MissionContext =
+  ## Recovery turn: public symptom, authorized sources, first decision + exact proposal,
+  ## and a product finding. Never includes oracle text, historical fix, or compile diagnosis.
   result = base
   result.route = "api"
   result.systemPrompt = ApiRecoverySystemPrompt
@@ -127,9 +129,8 @@ proc buildRecoveryContext*(
     "Recovery turn.\n" &
     "First decision target: " & priorTarget & "\n" &
     "First decision summary: " & priorDecision & "\n" &
-    "Finding: " & finding & "\n" &
-    "First proposed file body (`" & priorTarget & "`):\n```nim\n" &
-    priorPatchedContent & "\n```\n\n" &
+    "Finding:\n" & finding & "\n\n" &
+    "First proposal payload:\n```\n" & priorProposal & "\n```\n\n" &
     "Symptom (from pilot):\n" & base.symptom.strip() & "\n\n" &
     "Authorized repository sources (current originals):\n\n" &
     renderSources(base.sources) &
