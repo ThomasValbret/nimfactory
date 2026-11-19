@@ -2,7 +2,7 @@
 
 **Branch:** `feature/e2e-model-decision`  
 **PR:** [#4](https://github.com/ThomasValbret/nimfactory/pull/4) (draft)  
-**Tested tip SHA:** `6da697ae57e7aa185762b8ab1c019531b3535828`  
+**Tested tip SHA:** `db4e777fe82fd67ce50c68dfa7233f30314a8005`  
 **Feature commit for this lot:** `48bd2d4e033d83ef2441ad3c11b094786ef5620e`  
 
 ## Provenance (corrected)
