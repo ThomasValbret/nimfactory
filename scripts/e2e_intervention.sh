@@ -17,6 +17,22 @@ FIX=fixtures/e2e_intervention
 SHA="$(git rev-parse HEAD)"
 echo "SHA=$SHA"
 
+# Load planned-API key from host file when unset (never commit /opt/.keys).
+if [[ -z "${OPENAI_API_KEY:-}" && -f /opt/.keys ]]; then
+  # File may be either `OPENAI_API_KEY=...` or a raw sk-... line.
+  # shellcheck disable=SC1091
+  if grep -q '^OPENAI_API_KEY=' /opt/.keys 2>/dev/null; then
+    set -a
+    # shellcheck disable=SC1090
+    source /opt/.keys
+    set +a
+  else
+    OPENAI_API_KEY="$(tr -d ' \t\r\n' < /opt/.keys)"
+    export OPENAI_API_KEY
+  fi
+  echo "OPENAI_API_KEY loaded from /opt/.keys"
+fi
+
 set +e
 "$BIN" mission-fix --repo "$FIX/repo_a" --symptom "$FIX/SYMPTOM.md" \
   --oracle "$FIX/no_such_oracle" --route inject \
