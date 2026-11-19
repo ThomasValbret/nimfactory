@@ -1,87 +1,105 @@
-# Delivery — oracle phases + novel follow-call API (PR #4)
+# Delivery — oracle phases, novel cart API, real unknown-module (PR #4)
 
 **Branch:** `feature/e2e-model-decision`  
 **PR:** [#4](https://github.com/ThomasValbret/nimfactory/pull/4) (draft)  
-**Campaign tip SHA (pre-commit stamp):** `973b743858978a5235dc1066482caf9cc0d9a6c8`  
-**Paid API calls this lot:** **1** (`gpt-4o-mini`, novel follow-call)  
-**Estimated cost:** **≈ $0.00023** (734 prompt + 195 completion tokens; budget cap €3)
+**Budget cap:** €3  
+**Feature tip after this lot:** *(filled at commit)*
 
-## Provenance (corrected, historical traces kept)
+## Cart lot retained (novel follow-call)
 
 | Item | Value |
 | --- | --- |
-| Campaign `20261119T110158Z` `summary.json` sha field | `f8a2170` |
-| Campaign/recovery feature commit | `d492dda` |
-| Verify-recovery live campaign | `20261119T112212Z` (A failure conserved) |
-| Offline oracle-phase lot | `20261119T113716Z` (`paid_api_calls=0`) |
-| Novel follow-call API | `20261119T114309Z` |
+| Campaign | `20261119T114309Z` |
+| Stamp tip | `973b743` |
+| Model | `gpt-4o-mini`, **1** call, **pass**, target `src/cart.nim` |
+| Cost | ≈ $0.00023 |
 
-## Product change (oracle phases)
+**Caveat (method):** the buggy `lineTotal` comment stated the diagnosis explicitly
+(`## Current: adds the unit price one extra time after the loop.`). That text was
+in the model context. The cart pass therefore does **not** alone prove that
+NimFactory can locate a responsible module when the pilot only has a reproducer.
 
-`runOracle` now:
+## Provenance table
 
-1. Resolves `--oracle` → missing ⇒ `oracle_missing`
-2. **Compiles** the oracle against the worktree (`nim c`, no `-r`)
-3. Records `phase=vpCompile`, `compile_exit_code`
-4. **Runs** the binary only if compile exit is 0
-5. Records `phase=vpRun`, `run_exit_code`
-6. Launch failure after successful compile ⇒ `oracle_launch_failed` (no recovery)
-
-Recovery (2nd model call) is authorized only for:
-
-- identical proposed content (`noop`), or
-- **functional** failure after a successful launch (`functional_fail`)
-
-Compile failures do **not** recover.
-
-## Table cases (before/after decision)
-
-| Case | Oracle | Phase | Kind | Verdict | Recovery |
-| --- | --- | --- | --- | --- | --- |
-| `quit(1)` at run | `oracle_quit1` | `vpRun` | `vkFunctionalFail` | then recovery → `model_cannot_fix` (inject) | **yes** |
-| `static: doAssert false` | `oracle_static_fail` | `vpCompile` | `vkCompileError` | `compile_failed` | **no** |
-
-Offline tests: `tests/mission/test_oracle_phases.nim`.
-
-## Campaign `20261119T113716Z` (inject only)
-
-```bash
-bash scripts/e2e_oracle_phase_offline.sh
-```
-
-| Trial | Injected | Network | Verifications | Verdict | Recovery |
-| --- | --- | --- | --- | --- | --- |
-| phase_quit1 | 2 | 0 | 1 | model_cannot_fix | yes (functional_fail) |
-| phase_static_fail | 1 | 0 | 1 | compile_failed | no |
-| offline_a_archived_failure | 2 | 0 | 2 | **verify_failed** | yes (A failure conserved) |
-| offline_b_archived_success | 1 | 0 | 1 | pass | no |
-
-`network_calls_total=0`, `paid_api_calls=0`.
-
-## Campaign `20261119T114309Z` — novel follow-call (live API)
-
-```bash
-bash scripts/e2e_novel_followcall_api.sh
-# key: /opt/.keys/api_provider_key (or OPENAI_API_KEY)
-```
-
-Fixture: `fixtures/e2e_novel_followcall/` — public `repro.nim` + private oracle; bug is extra `total += unit` after the qty loop in `src/cart.nim`.
-
-| Step | Result |
+| Item | Value |
 | --- | --- |
-| Original oracle | exit 1 (`AssertionDefect` on `lineTotal(bread,1)==120`) |
-| Ref inject fix | `verdict=pass`, 0 paid calls |
-| Live API (`gpt-4o-mini`) | `verdict=pass`, **1** call, recovery **false** |
-| Target chosen | `src/cart.nim` |
-| Tokens | 734 + 195 |
-| Estimated USD | 0.0002271 |
+| Verify-recovery (A conserved) | `20261119T112212Z` |
+| Offline oracle-phase | `20261119T113716Z` (0 paid) |
+| Novel cart API | `20261119T114309Z` (1 paid) |
+| Real unknown-module API | `20261119T120527Z` (1 paid, **failure conserved**) |
 
-**Model decision tested:** yes (real OpenAI route). First call produced an effective change; oracle `vkPass` / `vpRun`.
+## Product change — nested `src/` collector
 
-Key loading: scripts accept `/opt/.keys/api_provider_key` (directory layout) or a flat `/opt/.keys` file.
+`collectSrcNim` / `buildApiContext` now walk **`src/**/*.nim` recursively**,
+preserving relative paths (no flattening, no hand-picked culprit). Nested
+packages such as `src/glob/regexer.nim` are included when present.
 
-## Limits
+Offline check: `tests/mission/test_context_and_inject.nim` →
+`sources=src/glob.nim,src/glob/regexer.nim`.
 
-- Historical intervention **A** failure remains conserved (`20261119T112212Z` / offline replay).
-- Cost estimate is token×list price arithmetic in the campaign script; mission JSON still reports `cost_known=false` until pricing is wired in-mission.
-- Uncommitted campaign stamp SHA is the tip **before** this receipt/script commit; re-stamp after publish if a SHA field must match HEAD.
+## Real unknown-module lot — question
+
+Can NimFactory repair a real defect when a user can reproduce it but does not
+know which module is responsible?
+
+### Upstream case
+
+| Field | Value |
+| --- | --- |
+| Repository | https://github.com/haltcase/glob |
+| Issue | https://github.com/haltcase/glob/issues/29 |
+| Faulty commit (fixture tree) | [`589671a897c12398113605193130d1c60ffab282`](https://github.com/haltcase/glob/commit/589671a897c12398113605193130d1c60ffab282) |
+| Historical fix | [`1fa54df5fa57e38adc43de2cb050c7748c305047`](https://github.com/haltcase/glob/commit/1fa54df5fa57e38adc43de2cb050c7748c305047) |
+| Layout kept | `src/glob.nim` (public `walkGlob`) → `src/glob/regexer.nim` (pattern compile) |
+
+Symptom: `fixtures/e2e_real_unknown_module/SYMPTOM.md`.  
+Historical diff / fixed body / cause notes: `reference/` (**out of model context**).  
+Private oracle: `oracle/test_walk_shallow.nim`.  
+Public reproducer: `public/repro.nim` (outside `repo/src`).
+
+```bash
+bash scripts/e2e_real_unknown_module_api.sh
+# key: /opt/.keys/api_provider_key
+```
+
+### Independent controls (campaign `20261119T120527Z`)
+
+| Control | Result |
+| --- | --- |
+| Public repro on faulty tree | exit 0, `observed=@[]` |
+| Private oracle on faulty tree | exit 1 (`got=@[]`) |
+| Oracle after historical fix body | exit 0, `oracle_glob_walk: ok` |
+| Inject of historical fix | `bench_ref_historical_exit=0` |
+| `buildApiContext` sources | `src/glob.nim`, `src/glob/regexer.nim` |
+
+### Live mission (first result conserved)
+
+| Field | Value |
+| --- | --- |
+| Tested SHA (pre-commit stamp) | `4bb2462c107b60fe7c23a5126df19e2d42d6ea1f` |
+| Campaign | `20261119T120527Z` |
+| Model | `gpt-4o-mini` |
+| Calls | **1** (recovery not entered) |
+| Tokens | 7051 prompt + 2048 completion |
+| Estimated cost | **≈ $0.00229** |
+| Provider | `ok=false`, `status=rsPartial`, warning **Output truncated by provider** |
+| Verdict | **`model_failed`** |
+
+Turn 1 (truncated JSON, not applied — no worktree diff):
+
+- Intended `target_file`: `src/glob.nim` (correct module, not hand-selected)
+- Intended decision excerpt: *Fix logic in walkGlobKinds to properly yield paths that match one-level glob patterns*
+- `patched_content` cut off mid-file by the NimAgent default **`maxTokens=2048`** ceiling while rewriting the full `src/glob.nim` body
+- Parse/apply skipped; oracle not run on a model patch
+
+### Behavioural judgment
+
+- **Module choice without spoilers:** yes — the model named `src/glob.nim` given only the symptom + recursive `src/` sources.
+- **Repair achieved:** **no** on this first run — truncation prevented an applied patch, so public repro / private oracle were never re-checked against a model edit.
+- A different patch than the historical `shouldDescend` diff would have been acceptable if behaviour matched; that bar was not reached here.
+- Product limit exposed: full-file rewrite of a ~22 KiB module exceeds the default 2048 completion budget.
+
+## Oracle-phase product change (prior)
+
+`runOracle` compiles then runs; recovery only for no-op or launched functional fail.
+Offline campaign `20261119T113716Z` conserved A’s failure with 0 paid calls.

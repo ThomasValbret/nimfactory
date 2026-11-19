@@ -53,19 +53,23 @@ or the usual keys target_file, decision, patched_content.
 """.strip()
 
 proc collectSrcNim*(repoRoot: string): seq[SourceFile] =
+  ## Collect every `.nim` under `src/` recursively (nested packages included).
+  ## Does not flatten paths and does not hand-pick a culprit file.
   let srcDir = repoRoot / "src"
   if not dirExists(srcDir):
     return @[]
   var paths: seq[string] = @[]
-  for kind, path in walkDir(srcDir):
-    if kind == pcFile and path.endsWith(".nim"):
+  for path in walkDirRec(srcDir):
+    if path.endsWith(".nim") and fileExists(path):
       paths.add(path)
   paths.sort()
   for p in paths:
     let rel = relativePath(p, repoRoot)
-    if rel.contains("oracle") or rel.contains("test_"):
+    let norm = rel.replace('\\', '/')
+    if norm.contains("/oracle/") or norm.contains("oracle/") or
+       "/test_" in ("/" & norm) or norm.extractFilename.startsWith("test_"):
       continue
-    result.add(SourceFile(relPath: rel, content: readFile(p)))
+    result.add(SourceFile(relPath: norm, content: readFile(p)))
 
 proc renderSources*(sources: seq[SourceFile]): string =
   var parts: seq[string] = @[]
