@@ -2,7 +2,7 @@
 
 **Branch:** `feature/e2e-model-decision`  
 **PR:** [#4](https://github.com/ThomasValbret/nimfactory/pull/4) (draft)  
-**Tested SHA:** 
+**Tested SHA:** `26e9bb63400869bbe54ca809984a514f50a0f015`
 
 ## Reference kept (prior campaign)
 
