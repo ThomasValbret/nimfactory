@@ -1,0 +1,6 @@
+/opt/nimFactory/fixtures/e2e_novel_followcall/oracle/test_cart_total.nim(4) test_cart_total
+/root/.choosenim/toolchains/nim-2.4.0/lib/std/assertions.nim(45) failedAssertImpl
+/root/.choosenim/toolchains/nim-2.4.0/lib/std/assertions.nim(40) raiseAssert
+/root/.choosenim/toolchains/nim-2.4.0/lib/system/fatal.nim(62) sysFatal
+Error: unhandled exception: /opt/nimFactory/fixtures/e2e_novel_followcall/oracle/test_cart_total.nim(4, 1) `lineTotal(Line(skuId: "bread", qty: 1)) == 120`  [AssertionDefect]
+Error: execution of an external program failed: '/tmp/nf_novel_oracle_orig'

@@ -1,10 +1,10 @@
-# Delivery — oracle compile/run phases (PR #4)
+# Delivery — oracle phases + novel follow-call API (PR #4)
 
 **Branch:** `feature/e2e-model-decision`  
 **PR:** [#4](https://github.com/ThomasValbret/nimfactory/pull/4) (draft)  
-**Base:** `6f188ee`  
-**Tested tip SHA:** `71e434bc30107a71b61c839c9ecb17ba5f908b6e` (feature `e0446a9`)  
-**Paid API calls this lot:** **0**
+**Campaign tip SHA (pre-commit stamp):** `973b743858978a5235dc1066482caf9cc0d9a6c8`  
+**Paid API calls this lot:** **1** (`gpt-4o-mini`, novel follow-call)  
+**Estimated cost:** **≈ $0.00023** (734 prompt + 195 completion tokens; budget cap €3)
 
 ## Provenance (corrected, historical traces kept)
 
@@ -12,12 +12,11 @@
 | --- | --- |
 | Campaign `20261119T110158Z` `summary.json` sha field | `f8a2170` |
 | Campaign/recovery feature commit | `d492dda` |
-| Prior receipt citation | `f2d5e38` |
 | Verify-recovery live campaign | `20261119T112212Z` (A failure conserved) |
-| This offline lot campaign | `20261119T113716Z` |
-| This lot base | `6f188ee` |
+| Offline oracle-phase lot | `20261119T113716Z` (`paid_api_calls=0`) |
+| Novel follow-call API | `20261119T114309Z` |
 
-## Product change
+## Product change (oracle phases)
 
 `runOracle` now:
 
@@ -59,7 +58,30 @@ bash scripts/e2e_oracle_phase_offline.sh
 
 `network_calls_total=0`, `paid_api_calls=0`.
 
-## Next lot prepared (not API-run here)
+## Campaign `20261119T114309Z` — novel follow-call (live API)
 
-`fixtures/e2e_novel_followcall/`: cart total too high; public `repro.nim`; bug in `cart.lineTotal` (extra unit after loop); private oracle `oracle/test_cart_total.nim`.  
-Reserved for a real `mission-fix --route api` with the planned model. If API unavailable then: **model decision remains untested**.
+```bash
+bash scripts/e2e_novel_followcall_api.sh
+# key: /opt/.keys/api_provider_key (or OPENAI_API_KEY)
+```
+
+Fixture: `fixtures/e2e_novel_followcall/` — public `repro.nim` + private oracle; bug is extra `total += unit` after the qty loop in `src/cart.nim`.
+
+| Step | Result |
+| --- | --- |
+| Original oracle | exit 1 (`AssertionDefect` on `lineTotal(bread,1)==120`) |
+| Ref inject fix | `verdict=pass`, 0 paid calls |
+| Live API (`gpt-4o-mini`) | `verdict=pass`, **1** call, recovery **false** |
+| Target chosen | `src/cart.nim` |
+| Tokens | 734 + 195 |
+| Estimated USD | 0.0002271 |
+
+**Model decision tested:** yes (real OpenAI route). First call produced an effective change; oracle `vkPass` / `vpRun`.
+
+Key loading: scripts accept `/opt/.keys/api_provider_key` (directory layout) or a flat `/opt/.keys` file.
+
+## Limits
+
+- Historical intervention **A** failure remains conserved (`20261119T112212Z` / offline replay).
+- Cost estimate is token×list price arithmetic in the campaign script; mission JSON still reports `cost_known=false` until pricing is wired in-mission.
+- Uncommitted campaign stamp SHA is the tip **before** this receipt/script commit; re-stamp after publish if a SHA field must match HEAD.
