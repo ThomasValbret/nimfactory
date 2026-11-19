@@ -1,75 +1,65 @@
-# Delivery — verify-fail recovery (PR #4)
+# Delivery — oracle compile/run phases (PR #4)
 
 **Branch:** `feature/e2e-model-decision`  
 **PR:** [#4](https://github.com/ThomasValbret/nimfactory/pull/4) (draft)  
-**Tested tip SHA:** `db4e777fe82fd67ce50c68dfa7233f30314a8005`  
-**Feature commit for this lot:** `48bd2d4e033d83ef2441ad3c11b094786ef5620e`  
+**Base:** `6f188ee`  
+**Tested tip SHA:** _(stamp)_  
+**Paid API calls this lot:** **0**
 
-## Provenance (corrected)
+## Provenance (corrected, historical traces kept)
 
-| Claim | Value |
+| Item | Value |
 | --- | --- |
-| Historical campaign dir | `docs/qa/e2e_intervention/campaigns/20261119T110158Z/` |
-| `summary.json` `sha` field in that campaign | `f8a2170…` (binary/script tip when the run executed) |
-| Campaign/recovery feature code first landed | `d492dda` |
-| Prior receipt text that mentioned | `f2d5e38` |
-| Base before this verify-recovery lot | `c253ca4` |
-| This trial base (recorded in new summary) | tip after commit of this lot |
-
-Historical traces are **not** overwritten. New evidence: `campaigns/20261119T112212Z/`.
-
-Reference outside campaigns (A no-op / B pass) remains under `docs/qa/e2e_intervention/*.json`.
+| Campaign `20261119T110158Z` `summary.json` sha field | `f8a2170` |
+| Campaign/recovery feature commit | `d492dda` |
+| Prior receipt citation | `f2d5e38` |
+| Verify-recovery live campaign | `20261119T112212Z` (A failure conserved) |
+| This offline lot campaign | `20261119T113716Z` |
+| This lot base | `6f188ee` |
 
 ## Product change
 
-Shared ceiling of **two** provider calls per mission:
+`runOracle` now:
 
-1. Initial success → stop.
-2. Recovery (one turn) when first outcome is:
-   - proposed content **identical** to original (`noop`), or
-   - patch **applied**, compiled, but **functional** oracle fails (`functional_fail`).
-3. **Not** recovered: `compile_failed`, `oracle_missing` (kept distinct).
+1. Resolves `--oracle` → missing ⇒ `oracle_missing`
+2. **Compiles** the oracle against the worktree (`nim c`, no `-r`)
+3. Records `phase=vpCompile`, `compile_exit_code`
+4. **Runs** the binary only if compile exit is 0
+5. Records `phase=vpRun`, `run_exit_code`
+6. Launch failure after successful compile ⇒ `oracle_launch_failed` (no recovery)
 
-Recovery context (API): public symptom, authorized sources, first target/decision, first proposed file body, finding.  
-**Excluded:** private oracle, assertions, reference target, variant name. No special-casing of particular symbols.
+Recovery (2nd model call) is authorized only for:
 
-CLI: `--recovery-api` lets inject first turn + planned OpenAI recovery (`gpt-4o-mini`).
+- identical proposed content (`noop`), or
+- **functional** failure after a successful launch (`functional_fail`)
 
-## Offline controls
+Compile failures do **not** recover.
 
-`tests/mission/test_noop_recovery.nim`: no-op→recovery, functional_fail→recovery, compile_error no recovery, success stops at 1 call, cannot_fix / second no-op stop at 2.
+## Table cases (before/after decision)
 
-## Campaign `20261119T112212Z`
+| Case | Oracle | Phase | Kind | Verdict | Recovery |
+| --- | --- | --- | --- | --- | --- |
+| `quit(1)` at run | `oracle_quit1` | `vpRun` | `vkFunctionalFail` | then recovery → `model_cannot_fix` (inject) | **yes** |
+| `static: doAssert false` | `oracle_static_fail` | `vpCompile` | `vkCompileError` | `compile_failed` | **no** |
 
-```bash
-bash scripts/e2e_verify_recovery.sh
-# loads /opt/.keys when unset
-```
+Offline tests: `tests/mission/test_oracle_phases.nim`.
 
-### A — turn 1 replayed (inject), turn 2 real API
-
-Inject file: `fixtures/e2e_intervention/inject/historical_a_20261119T110158Z.json` (exact body from `20261119T110158Z`).
-
-| Tour | Provenance | Target | Diff effect | Oracle | Tokens | Cost |
-| --- | --- | --- | --- | --- | --- | --- |
-| 1 initial | inject historical A | `src/labels.nim` | effective (`return trimText`) | vkFunctionalFail | 0 (inject) | \$0 |
-| 2 recovery | **openai/gpt-4o-mini** | `src/labels.nim` again | effective (`else: return trimText`) | vkFunctionalFail | 399+76 | ≈ \$0.000105 |
-
-Verdict A: **verify_failed** (failure conserved). `provider_calls=2`, `recovery_reason=functional_fail`.
-
-### B — success witness
-
-| Tour | Model | Target | Oracle | Calls | Tokens | Cost |
-| --- | --- | --- | --- | --- | --- | --- |
-| 1 | gpt-4o-mini | `src/labels.nim` | pass | **1** (no recovery) | 276+93 | ≈ \$0.000097 |
-
-Sources presented (both): `labels.nim`, `logging.nim`, `textutil.nim`.
-
-Est. new API spend this campaign ≈ **\$0.00020**.
-
-## Repro
+## Campaign `20261119T113716Z` (inject only)
 
 ```bash
-git checkout <tested-tip>
-bash scripts/e2e_verify_recovery.sh
+bash scripts/e2e_oracle_phase_offline.sh
 ```
+
+| Trial | Injected | Network | Verifications | Verdict | Recovery |
+| --- | --- | --- | --- | --- | --- |
+| phase_quit1 | 2 | 0 | 1 | model_cannot_fix | yes (functional_fail) |
+| phase_static_fail | 1 | 0 | 1 | compile_failed | no |
+| offline_a_archived_failure | 2 | 0 | 2 | **verify_failed** | yes (A failure conserved) |
+| offline_b_archived_success | 1 | 0 | 1 | pass | no |
+
+`network_calls_total=0`, `paid_api_calls=0`.
+
+## Next lot prepared (not API-run here)
+
+`fixtures/e2e_novel_followcall/`: cart total too high; public `repro.nim`; bug in `cart.lineTotal` (extra unit after loop); private oracle `oracle/test_cart_total.nim`.  
+Reserved for a real `mission-fix --route api` with the planned model. If API unavailable then: **model decision remains untested**.

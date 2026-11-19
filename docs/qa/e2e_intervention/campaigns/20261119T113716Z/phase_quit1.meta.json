@@ -1,0 +1,20 @@
+{
+  "exit_code": 4,
+  "ok": false,
+  "verdict": "model_cannot_fix",
+  "provider_calls": 2,
+  "injected_turns": 2,
+  "network_calls": 0,
+  "verifications_run": 1,
+  "verify_phases": [
+    {
+      "role": "initial",
+      "phase": "vpRun",
+      "kind": "vkFunctionalFail",
+      "compile_exit_code": 0,
+      "run_exit_code": 1
+    }
+  ],
+  "recovery_triggered": true,
+  "recovery_reason": "functional_fail"
+}

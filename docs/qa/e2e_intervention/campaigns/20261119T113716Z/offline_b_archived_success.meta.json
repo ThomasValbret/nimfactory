@@ -1,0 +1,20 @@
+{
+  "exit_code": 0,
+  "ok": true,
+  "verdict": "pass",
+  "provider_calls": 1,
+  "injected_turns": 1,
+  "network_calls": 0,
+  "verifications_run": 1,
+  "verify_phases": [
+    {
+      "role": "initial",
+      "phase": "vpRun",
+      "kind": "vkPass",
+      "compile_exit_code": 0,
+      "run_exit_code": 0
+    }
+  ],
+  "recovery_triggered": false,
+  "recovery_reason": ""
+}

@@ -173,6 +173,8 @@ proc runRecovery(report: var MissionReport; req: MissionRequest;
       report.verdict = "verify_failed"
     of vkOracleMissing:
       report.verdict = "oracle_missing"
+    of vkLaunchError:
+      report.verdict = "oracle_launch_failed"
     else:
       report.verdict = "verify_failed"
     report.warning = recovery.verify.message
@@ -287,12 +289,25 @@ proc runMission*(req: MissionRequest): MissionReport =
       result.warning = attempt.verify.message
       result.attempts.add(attempt)
       return
-    of vkFunctionalFail, vkOther:
+    of vkLaunchError:
+      result.ok = false
+      result.verdict = "oracle_launch_failed"
+      result.warning = attempt.verify.message
+      result.attempts.add(attempt)
+      return
+    of vkFunctionalFail:
+      ## Only a launched functional failure authorizes recovery.
       if canUseRecoveryProvider(req):
         result.attempts.add(attempt)
         runRecovery(result, req, attempt, "functional_fail",
           "patch applied and compiled, but the functional check still fails")
         return
+      result.ok = false
+      result.verdict = "verify_failed"
+      result.warning = attempt.verify.message
+      result.attempts.add(attempt)
+      return
+    of vkOther:
       result.ok = false
       result.verdict = "verify_failed"
       result.warning = attempt.verify.message

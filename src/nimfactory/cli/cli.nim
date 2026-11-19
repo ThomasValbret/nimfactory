@@ -38,6 +38,7 @@ type
     worktree: string
     route: string
     inject: string
+    injectRecovery: string
     localModel: string
     target: string
     diagnosis: string
@@ -76,6 +77,7 @@ Options:
   --worktree PATH       empty/new apply directory (refuse if occupied)
   --route api|local|inject
   --inject PATH         injected model JSON (non-qualifying)
+  --inject-recovery PATH  offline second inject after no-op / functional fail
   --local-model NAME    ollama model for local micro-patch route
   --target PATH         local: established file to patch
   --diagnosis TEXT      local: established diagnosis
@@ -146,6 +148,8 @@ proc parseArgs(args: seq[string]): CliOptions =
         result.route = takeValue(p)
       of "inject":
         result.inject = takeValue(p)
+      of "inject-recovery":
+        result.injectRecovery = takeValue(p)
       of "local-model":
         result.localModel = takeValue(p)
       of "target":
@@ -278,6 +282,7 @@ proc runCli*(args: seq[string]): int =
       req.worktreeRoot = o.worktree
       req.route = o.route
       req.injectPath = o.inject
+      req.injectRecoveryPath = o.injectRecovery
       req.localModel = o.localModel
       req.targetFile = o.target
       req.diagnosis = o.diagnosis

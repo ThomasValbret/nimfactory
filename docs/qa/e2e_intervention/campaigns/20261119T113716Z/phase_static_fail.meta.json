@@ -1,0 +1,20 @@
+{
+  "exit_code": 4,
+  "ok": false,
+  "verdict": "compile_failed",
+  "provider_calls": 1,
+  "injected_turns": 1,
+  "network_calls": 0,
+  "verifications_run": 1,
+  "verify_phases": [
+    {
+      "role": "initial",
+      "phase": "vpCompile",
+      "kind": "vkCompileError",
+      "compile_exit_code": 1,
+      "run_exit_code": -1
+    }
+  ],
+  "recovery_triggered": false,
+  "recovery_reason": ""
+}
