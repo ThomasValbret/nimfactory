@@ -70,7 +70,7 @@ Après livraison de F0, ses fichiers partagés ont un seul propriétaire à la f
 ### Déterminisme et petits modèles
 
 - Privilégier le code déterministe pour filtrer, valider, fermer les dépendances, réserver un budget, appliquer un changement et ordonnancer.
-- Utiliser les petits modèles sur des tâches bornées et qualifiées : extraction, classification, classement ou proposition d'identifiants.
+- Confier au modèle local une mission bornée et qualifiée, par exemple un micro-patch, un classement contextuel, une objection intermédiaire ou un choix parmi quelques candidats. Préparer pour lui un contexte dédié à la mission. Le rôle chargé de la synthèse finale conserve cette responsabilité.
 - Valider une sortie sur son schéma **et** sur ses références et critères de domaine. Une confiance déclarée ou un JSON valide ne démontre pas la justesse.
 - Les préparateurs assistés utilisent le même outillage, avec recette de démarrage déterministe, parentage, limites de profondeur, d'itérations et de dépenses.
 - Les recettes d'un run restent figées. L'amélioration automatique du système n'appartient pas au premier périmètre.
@@ -85,7 +85,7 @@ Après livraison de F0, ses fichiers partagés ont un seul propriétaire à la f
 - Une opération externe d'issue inconnue reste inconnue jusqu'à réconciliation. Ne pas la convertir en succès ou en retry automatique.
 - Chaque envoi fournisseur, y compris réparation, relecture et repli, consomme le budget commun.
 - Les coûts des préparateurs et évaluateurs comptent dans le bilan. Un compteur absent ne vaut pas zéro.
-- Aucun appel payant n'est autorisé par ce fichier seul. Utiliser les budgets déjà explicitement accordés ; sinon qualifier avec des fournisseurs scriptés.
+- Les appels payants utilisent les budgets explicitement accordés. Si l’API requise est inaccessible ou si le budget manque, le signaler à Quentin, nommer les fonctions dépendantes restées non testées et poursuivre les travaux indépendants.
 
 ## 6. Organisation du travail
 
@@ -103,7 +103,7 @@ Ne pas lancer un déploiement, publication, changement de licence ou nettoyage d
 
 Vérifier les exigences observables avec des cas discriminants. Un test recopiant le résultat du code testé n'est pas un oracle. Les cas de panne, de reprise et de concurrence sont nécessaires lorsqu'ils portent la garantie du lot.
 
-Employer les commandes du dépôt ; ne pas inventer une CI « verte ». Les tests réels de modèle restent séparés des tests scriptés. Un résultat obtenu uniquement avec des doublures est étiqueté comme tel.
+Employer les commandes du dépôt ; ne pas inventer une CI « verte ». Un test déterministe atteste la fonction exercée (contrat, ordonnanceur, reprise, contrôle d’une sortie). Pour qualifier une décision confiée à un LLM, exécuter le parcours du produit avec son constructeur de contexte et le modèle prévu, puis vérifier comment le produit exploite sa réponse. Un pilote peut fournir l’entrée du scénario. Lui faire fournir la décision, la coder en dur ou injecter une réponse préparée laisse la fonction LLM non testée.
 
 Créer ou mettre à jour `docs/deliveries/F<n>.md` avec :
 
