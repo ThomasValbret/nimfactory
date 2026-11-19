@@ -75,9 +75,9 @@ rm -f "$STORE"; rm -rf "${STORE}.spill"
 rej_ec="$(run_bounded reject build/logs/m1_pipe_reject.jsonl \
   run --graph "$GRAPH" --store "$STORE" --run-id pipe-reject \
   --mode sequential --pipe-capacity 1 --pipe-policy reject --input "$INPUT")"
-# Expect non-zero (failed) — not hang, not success
-if [ "$rej_ec" -eq 0 ] || [ "$rej_ec" -eq 124 ]; then
-  echo "reject expected failure exit, got ${rej_ec}" >&2
+# Saturation reject must surface as CLI ExitFailed == 4 (not hang 124, not success).
+if [ "$rej_ec" -ne 4 ]; then
+  echo "reject expected exact exit 4, got ${rej_ec}" >&2
   cat build/logs/m1_pipe_reject.jsonl >&2 || true
   exit 5
 fi
