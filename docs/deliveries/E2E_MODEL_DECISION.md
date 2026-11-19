@@ -2,7 +2,7 @@
 
 **Branch:** `feature/e2e-model-decision`  
 **Base:** `4de8a3d` (Wave B M1 tip; resume fixes remain on PR #2)  
-**Tested SHA:** `432d38c56e4464dc812bb5f6f0cb3ef366891669` (code `79f8896`)  
+**Tested SHA:** `a25b95b` (tip of `feature/e2e-model-decision`; functional mission code from `79f8896`)  
 **PR #3 read:** decision — role selects model/route; API scenarios use planned API; if unavailable, receipt names cause + untested functions; local missions use dedicated context constructors.
 
 ## Mission
