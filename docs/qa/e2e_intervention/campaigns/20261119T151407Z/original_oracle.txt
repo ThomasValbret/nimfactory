@@ -1,0 +1,6 @@
+/opt/nimFactory/fixtures/e2e_real_unknown_module/oracle/test_walk_shallow.nim(21) test_walk_shallow
+/root/.choosenim/toolchains/nim-2.4.0/lib/std/assertions.nim(45) failedAssertImpl
+/root/.choosenim/toolchains/nim-2.4.0/lib/std/assertions.nim(40) raiseAssert
+/root/.choosenim/toolchains/nim-2.4.0/lib/system/fatal.nim(62) sysFatal
+Error: unhandled exception: /opt/nimFactory/fixtures/e2e_real_unknown_module/oracle/test_walk_shallow.nim(21, 1) `got == expect` got=@[] expect=@["bar/a.txt", "baz/a.txt", "foo/a.txt"] [AssertionDefect]
+Error: execution of an external program failed: '/tmp/nf_glob_oracle_orig'

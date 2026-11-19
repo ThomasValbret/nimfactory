@@ -3,7 +3,8 @@
 **Branch:** `feature/e2e-model-decision`  
 **PR:** [#4](https://github.com/ThomasValbret/nimfactory/pull/4) (draft)  
 **Budget cap:** €3  
-**NimAgent pin:** `bf22665` (Code Zero `oldText`/`newText` edits at this revision)
+**NimAgent pin:** `bf22665` (Code Zero `oldText`/`newText` edits)  
+**Clean tip before live call:** `3b5caa27085238edbedad31649a253fe237756c3`
 
 ## Cart lot retained
 
@@ -13,11 +14,11 @@ comment leaked the diagnosis into model context.
 ## Prior unknown-module failure conserved
 
 Campaign `20261119T120527Z`: full-file rewrite truncated at completion **2048**
-(`code=output_truncated`, message `Output truncated by provider`). First result kept.
+(`code=output_truncated`). First result kept.
 
 ## Product — bounded `edits` for API large-file repair
 
-API `mission-fix` accepts Code Zero–style replacements reused for the product path:
+API `mission-fix` accepts Code Zero–style replacements:
 
 ```json
 {
@@ -27,40 +28,58 @@ API `mission-fix` accepts Code Zero–style replacements reused for the product 
 }
 ```
 
-- Multiple replacements in the **chosen** file are allowed.
-- Each `oldText` must match **exactly once** in the evolving buffer (missing → refuse; ambiguous → refuse).
-- The set is written to the worktree **only if every** replacement validates; otherwise the target file stays the copied original (no partial write).
-- Legacy `patched_content` remains readable; local micro-patch context constructor still requests `patched_content` only.
-- Provider motif `output_truncated` / `Output truncated by provider` conserved on truncated API replies.
-- When the oracle does not execute, reports say **`oracle not run`** (`phase=vpNone`).
+- Multiple replacements in the chosen file allowed.
+- Each `oldText` must match exactly once (missing / ambiguous → refuse entire set).
+- Worktree target written only when every replacement validates; otherwise unchanged copy.
+- Legacy `patched_content` still parsed; local micro-patch context still uses `patched_content`.
+- Motif `output_truncated` / `Output truncated by provider` conserved.
+- When oracle does not execute: message **`oracle not run`**, `phase=vpNone`.
 
-Offline proof: `tests/mission/test_edits_apply.nim` — valid / missing / ambiguous / truncated.
+Offline: `tests/mission/test_edits_apply.nim` — valid / missing / ambiguous / truncated.
 
 ## Real unknown-module retry (edits path)
-
-Same upstream tree and symptom; historical fix stays in `reference/` only.
 
 | Field | Value |
 | --- | --- |
 | Repo | https://github.com/haltcase/glob |
-| Faulty SHA | [`589671a897c12398113605193130d1c60ffab282`](https://github.com/haltcase/glob/commit/589671a897c12398113605193130d1c60ffab282) |
-| Historical fix | [`1fa54df5fa57e38adc43de2cb050c7748c305047`](https://github.com/haltcase/glob/commit/1fa54df5fa57e38adc43de2cb050c7748c305047) |
-| Model / ceiling | `gpt-4o-mini`, max completion **2048**, ≤ 2 calls |
+| Faulty SHA | [`589671a`](https://github.com/haltcase/glob/commit/589671a897c12398113605193130d1c60ffab282) |
+| Historical fix (out of context) | [`1fa54df`](https://github.com/haltcase/glob/commit/1fa54df5fa57e38adc43de2cb050c7748c305047) |
+| Model / ceiling | `gpt-4o-mini`, completion **2048**, ≤ 2 calls |
 
-Private oracle extended: `*/a.txt` must return the three one-level hits and **exclude**
-`deep/x/a.txt`. Validated on the historical fix body before the live call.
+Oracle extended before the call: `*/a.txt` finds one-level hits and excludes `deep/x/a.txt`
+(verified on historical fix: pass; on faulty tree: fail).
 
-```bash
-bash scripts/e2e_real_unknown_module_api.sh
-```
+### Independent controls (`20261119T151407Z`)
 
-### Live mission (filled after clean-tip run)
+| Control | Result |
+| --- | --- |
+| Public repro | `observed=@[]` |
+| Oracle on faulty | exit 1 |
+| Oracle on historical fix | exit 0 (incl. depth exclusion) |
+| Historical inject | pass |
+| Context sources | `src/glob.nim`, `src/glob/regexer.nim` |
+
+### Live mission (first result archived)
 
 | Field | Value |
 | --- | --- |
-| Clean tip SHA | *pending commit* |
-| Campaign | *pending* |
-| Target / edits applied | *pending* |
-| Public repro / oracle | *pending* |
-| Calls / tokens / cost | *pending* |
-| Verdict | *pending* |
+| Tip | `3b5caa2` |
+| Campaign | `20261119T151407Z` |
+| Calls | **1** (no recovery) |
+| Tokens | 7129 + **67** |
+| Est. cost | ≈ **$0.00111** |
+| Provider | `ok=true`, completed (under 2048 ceiling) |
+| Target | `src/glob.nim` |
+| Mode | `edits` (1 proposed) |
+| Edits applied | **0** — `oldText` `"return pattern"` ambiguous (2 matches) |
+| Worktree target | unchanged (`before_hash == after_hash`) |
+| Public repro after model | not re-checked (no applied edit) |
+| Oracle | **oracle not run** |
+| Verdict | **`apply_failed`** (conserved) |
+
+### Judgment
+
+The edits path unblocked short structured replies under the 2048 ceiling. The model
+chose the right file without spoilers but proposed a non-unique anchor; the product
+refused the write and left the tree intact. Behavioural repair of the glob defect was
+**not** achieved on this first archived run.
