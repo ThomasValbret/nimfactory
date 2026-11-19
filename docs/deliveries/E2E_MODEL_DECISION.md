@@ -2,7 +2,7 @@
 
 **Branch:** `feature/e2e-model-decision`  
 **PR:** [#4](https://github.com/ThomasValbret/nimfactory/pull/4) (draft)  
-**Tested SHA:** _(tip)_  
+**Tested SHA:** `1f5c78eff79e9038226fc830f7852130cfbc0907`  
 **PR #3:** role selects route; API scenarios use planned API; local micro-patch is a distinct mission.
 
 ## Conserved proof — CLI can obtain and apply a real API fix
