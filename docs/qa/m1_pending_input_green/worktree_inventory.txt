@@ -1,0 +1,4 @@
+sha=2cd338b27dcb9bca3ea5dbd11da4f9db9adba0d3
+nim=Nim Compiler Version 2.4.0 [Linux: amd64]
+sdk=
+status=1 untracked_or_dirty_lines
