@@ -3,6 +3,7 @@
 Date : 2026-11-19  
 PR : https://github.com/ThomasValbret/nimfactory/pull/2 (**ouverte**)  
 Base des défauts : `2cd338b27dcb9bca3ea5dbd11da4f9db9adba0d3`  
+SHA fonctionnel testé : `416c418143d1c1edbe96c3d0bb17497db5b40d98`  
 SDK : `bf22665ece77d7149dbe61df959a6024bf6b26f3` · Nim 2.4.0  
 
 ## Correctifs de cette passe
