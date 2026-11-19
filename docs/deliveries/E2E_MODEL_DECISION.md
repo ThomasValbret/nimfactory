@@ -3,7 +3,7 @@
 **Branch:** `feature/e2e-model-decision`  
 **PR:** [#4](https://github.com/ThomasValbret/nimfactory/pull/4) (draft)  
 **Base:** `6f188ee`  
-**Tested tip SHA:** `e0446a92b9d729f26aca620feb64903c2b711028`  
+**Tested tip SHA:** `71e434bc30107a71b61c839c9ecb17ba5f908b6e` (feature `e0446a9`)  
 **Paid API calls this lot:** **0**
 
 ## Provenance (corrected, historical traces kept)
