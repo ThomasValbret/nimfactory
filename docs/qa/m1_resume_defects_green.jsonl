@@ -1,0 +1,4 @@
+{"check":"G1_stable_matched_transition_ids","ok":true,"detail":{"bad":[],"saw_act_split":true}}
+{"check":"G2_durable_outputs_unknown_refused","ok":true,"detail":{"status":"interrupted","match":true,"unknown_raised":true,"created":false,"durable_keys":1}}
+{"check":"G3_real_peak_and_idempotent_resume","ok":true,"detail":{"peak":2,"resume2":"completed","resume3":"completed","second_peak":0}}
+{"summary":"m1_resume_defects_green","failures":0}

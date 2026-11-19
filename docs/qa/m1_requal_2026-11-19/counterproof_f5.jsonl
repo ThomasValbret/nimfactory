@@ -1,0 +1,12 @@
+{"check":"pipe_wait_sequential","ok":true,"detail":{"status":"completed","branches":["left","right"],"waited":6,"peak_depth":1,"peak_conc":1}}
+{"check":"pipe_wait_concurrent","ok":true,"detail":{"status":"completed","branches":["left","right"],"waited":6,"peak_depth":1,"peak_conc":1}}
+{"check":"pipe_reject_exit_exactly_4","ok":true,"detail":{"exit":4,"stdout_prefix":"{\"error\":\"pipe full: rejected_full\",\"code\":\"validation_failed\",\"phase\":\"executor\"}\n","stderr":"error: pipe full: rejected_full\n"}}
+{"check":"pipe_spill_oracle","ok":true,"detail":{"status":"completed","spilled":1,"branches":["left","right"]}}
+{"check":"internal_timeout_not_harness_124","ok":true,"detail":{"status":"timed_out","event_kind":"timeout","note":"harness 124 is timeout(1) kill; this is executor timed_out"}}
+{"check":"wait_under_external_guard_not_124","ok":true,"detail":{"exit":0,"note":"124 would mean hang killed by harness"}}
+{"check":"witness_sequential_matches_sqlite","ok":true,"detail":{"epoch":2,"status":"completed"}}
+{"check":"witness_concurrent_peak_and_epoch","ok":true,"detail":{"epoch":2,"peak":2,"status":"completed"}}
+{"check":"witness_after_resume_epoch_not_frozen","ok":true,"detail":{"epoch_interrupt":2,"epoch_after_resume":3,"witness_epochs":[3,3],"skipped":["run:start","split:main"],"status":"completed"}}
+{"check":"checkpoints_1_to_5_durable_and_second_resume","ok":true,"detail":{"runs":[{"n":1,"intr":"interrupted","res":"completed","second_peak":0,"branches":["left","right"]},{"n":2,"intr":"interrupted","res":"completed","second_peak":0,"branches":["left","right"]},{"n":3,"intr":"interrupted","res":"completed","second_peak":0,"branches":["left","right"]},{"n":4,"intr":"interrupted","res":"completed","second_peak":0,"branches":["left","right"]},{"n":5,"intr":"interrupted","res":"completed","second_peak":0,"branches":["left","right"]}]}}
+{"check":"unknown_resume_no_row","ok":true,"detail":{"raised":true,"has_run":false}}
+{"summary":"m1_requal_counterproof","failures":0,"candidate":"dd4fcf57e801c69cf0257edf06c140ef5a37b235"}

@@ -1,0 +1,106 @@
+{
+  "sha": "6f188ee2273a6380da60272ea4b04657648f7083",
+  "paid_api_calls": 0,
+  "network_calls_total": 0,
+  "injected_turns_total": 6,
+  "verifications_run_total": 5,
+  "provenance": {
+    "historical_campaign_110158Z_summary_sha": "f8a2170",
+    "campaign_feature_commit": "d492dda",
+    "prior_receipt_sha": "f2d5e38",
+    "verify_recovery_campaign": "20261119T112212Z",
+    "base_before_this_lot": "6f188ee",
+    "this_trial_sha": "6f188ee2273a6380da60272ea4b04657648f7083",
+    "a_failure_conserved": true,
+    "novel_case_prepared": "fixtures/e2e_novel_followcall (API decision not run in this lot)"
+  },
+  "trials": {
+    "offline_a_archived_failure": {
+      "exit_code": 4,
+      "ok": false,
+      "verdict": "verify_failed",
+      "provider_calls": 2,
+      "injected_turns": 2,
+      "network_calls": 0,
+      "verifications_run": 2,
+      "verify_phases": [
+        {
+          "role": "initial",
+          "phase": "vpRun",
+          "kind": "vkFunctionalFail",
+          "compile_exit_code": 0,
+          "run_exit_code": 1
+        },
+        {
+          "role": "recovery",
+          "phase": "vpRun",
+          "kind": "vkFunctionalFail",
+          "compile_exit_code": 0,
+          "run_exit_code": 1
+        }
+      ],
+      "recovery_triggered": true,
+      "recovery_reason": "functional_fail"
+    },
+    "offline_b_archived_success": {
+      "exit_code": 0,
+      "ok": true,
+      "verdict": "pass",
+      "provider_calls": 1,
+      "injected_turns": 1,
+      "network_calls": 0,
+      "verifications_run": 1,
+      "verify_phases": [
+        {
+          "role": "initial",
+          "phase": "vpRun",
+          "kind": "vkPass",
+          "compile_exit_code": 0,
+          "run_exit_code": 0
+        }
+      ],
+      "recovery_triggered": false,
+      "recovery_reason": ""
+    },
+    "phase_quit1": {
+      "exit_code": 4,
+      "ok": false,
+      "verdict": "model_cannot_fix",
+      "provider_calls": 2,
+      "injected_turns": 2,
+      "network_calls": 0,
+      "verifications_run": 1,
+      "verify_phases": [
+        {
+          "role": "initial",
+          "phase": "vpRun",
+          "kind": "vkFunctionalFail",
+          "compile_exit_code": 0,
+          "run_exit_code": 1
+        }
+      ],
+      "recovery_triggered": true,
+      "recovery_reason": "functional_fail"
+    },
+    "phase_static_fail": {
+      "exit_code": 4,
+      "ok": false,
+      "verdict": "compile_failed",
+      "provider_calls": 1,
+      "injected_turns": 1,
+      "network_calls": 0,
+      "verifications_run": 1,
+      "verify_phases": [
+        {
+          "role": "initial",
+          "phase": "vpCompile",
+          "kind": "vkCompileError",
+          "compile_exit_code": 1,
+          "run_exit_code": -1
+        }
+      ],
+      "recovery_triggered": false,
+      "recovery_reason": ""
+    }
+  }
+}

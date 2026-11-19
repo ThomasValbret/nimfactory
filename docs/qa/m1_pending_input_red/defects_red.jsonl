@@ -1,0 +1,1 @@
+{"defect": "pending_entrypoint_lost_at_checkpoint", "candidate": "dd4fcf57e801c69cf0257edf06c140ef5a37b235", "present": true, "two_inputs": {"resume_outputs": {"one": {"v": "alpha"}}, "missing": "two"}, "join": {"resume_outputs": {}, "expected": "result with count 2"}, "note": "CLI checkpoint-after 1 then resume without input; second entrypoint pending discarded"}

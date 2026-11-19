@@ -1,0 +1,5 @@
+{
+  "target_file": "src/labels.nim",
+  "decision": "Calling formatUserLabel with a blank name should yield the guest label.",
+  "patched_content": "import ./textutil\n\nconst GuestLabel* = \"guest\"\n\nproc formatUserLabel*(name: string): string =\n  if isBlank(name):\n    result = GuestLabel\n  else:\n    result = trimText(name)"
+}

@@ -1,0 +1,7 @@
+{
+  "target_file": "src/sample.nim",
+  "decision": "malformed",
+  "edits": [
+    "not-an-object"
+  ]
+}

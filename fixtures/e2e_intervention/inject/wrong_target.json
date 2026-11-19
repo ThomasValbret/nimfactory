@@ -1,0 +1,5 @@
+{
+  "target_file": "src/logging.nim",
+  "decision": "unrelated logging change",
+  "patched_content": "proc note*(msg: string): string =\n  \"log:\" & msg\n"
+}

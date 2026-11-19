@@ -37,7 +37,7 @@ Appels LLM : **0**.
 ## Jalons
 
 - **M0** : **requalifié en A.1** — avis favorable [WAVE_A_1_ACCEPTANCE_REVIEW.md](../qa/WAVE_A_1_ACCEPTANCE_REVIEW.md) ; reçu [WAVE_A_1.md](WAVE_A_1.md) (preuves codeur ≠ exécutions indépendantes).
-- **M1** : **non atteint** (pas d’exécuteur F5 ni CLI F16).
+- **M1** : atteint en Vague B — voir [WAVE_B_M1.md](WAVE_B_M1.md) (parcours CLI + reprise).
 
 ## Limites restantes
 

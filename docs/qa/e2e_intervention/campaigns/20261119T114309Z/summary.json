@@ -1,0 +1,46 @@
+{
+  "sha": "973b743858978a5235dc1066482caf9cc0d9a6c8",
+  "out": "docs/qa/e2e_intervention/campaigns/20261119T114309Z",
+  "case": "e2e_novel_followcall",
+  "budget_eur_cap": 3,
+  "original_oracle_exit": 1,
+  "bench_ref_fix_exit": 0,
+  "api_exit": 0,
+  "api": {
+    "ok": true,
+    "verdict": "pass",
+    "provider_calls": 1,
+    "recovery_triggered": false,
+    "recovery_reason": "",
+    "sources": [
+      "src/cart.nim",
+      "src/catalog.nim",
+      "src/money.nim",
+      "src/repro.nim"
+    ],
+    "warning": "",
+    "attempts": [
+      {
+        "index": 1,
+        "role": "initial",
+        "recovery_reason": "",
+        "target": "src/cart.nim",
+        "decision": "fix lineTotal calculation of total to prevent double counting",
+        "effective_change": true,
+        "identical_to_original": false,
+        "oracle_kind": "vkPass",
+        "oracle_ok": true,
+        "phase": "vpRun",
+        "prompt_tokens": 734,
+        "completion_tokens": 195,
+        "model": "gpt-4o-mini",
+        "provider_kind": "openai",
+        "raw_excerpt": "```json\n{\n  \"target_file\": \"src/cart.nim\",\n  \"decision\": \"fix lineTotal calculation of total to prevent double counting\",\n  \"patched_content\": \"## Shopping cart aggregation. Calls into catalog for unit prices.\\n\\nimport ./catalog\\n\\ntype\\n  Line* = object\\n    skuId*: string\\n    qty*: int\\n\\nproc lineTotal*(line: Line): int =\\n  ## Intended: unit price \u00d7 quantity.\\n  let unit = lookupUnitCents(l"
+      }
+    ],
+    "prompt_tokens_total": 734,
+    "completion_tokens_total": 195,
+    "estimated_usd": 0.0002271
+  },
+  "model_decision_tested": true
+}

@@ -1,0 +1,91 @@
+{
+  "sha": "f8a21700e3ad9d662a447370d6350f044aa2f1a9",
+  "out": "docs/qa/e2e_intervention/campaigns/20261119T110158Z",
+  "global_ok": false,
+  "trials": {
+    "api_repo_a": {
+      "exit_code": 4,
+      "ok": false,
+      "verdict": "verify_failed",
+      "provider_calls": 1,
+      "recovery_triggered": false,
+      "recovery_attempted": false,
+      "warning": "oracle reception failed"
+    },
+    "api_repo_b": {
+      "exit_code": 0,
+      "ok": true,
+      "verdict": "pass",
+      "provider_calls": 1,
+      "recovery_triggered": false,
+      "recovery_attempted": false,
+      "warning": ""
+    },
+    "cross_a_on_b": {
+      "exit_code": 0,
+      "ok": true,
+      "verdict": "pass",
+      "provider_calls": 1,
+      "note": "inject replay; exit_code derived from ok"
+    },
+    "cross_b_on_a": {
+      "exit_code": 4,
+      "ok": false,
+      "verdict": "verify_failed",
+      "provider_calls": 1,
+      "note": "inject replay; exit_code derived from ok"
+    }
+  },
+  "api_detail": {
+    "api_repo_a": {
+      "verdict": "verify_failed",
+      "ok": false,
+      "provider_calls": 1,
+      "recovery_triggered": false,
+      "recovery_attempted": false,
+      "attempts": [
+        {
+          "index": 1,
+          "role": "initial",
+          "target": "src/labels.nim",
+          "decision": "fixing logic to ensure non-blank names are trimmed correctly",
+          "effective_change": true,
+          "identical_to_original": false,
+          "oracle_ok": false,
+          "prompt_tokens": 293,
+          "completion_tokens": 92
+        }
+      ],
+      "sources": [
+        "src/labels.nim",
+        "src/logging.nim",
+        "src/textutil.nim"
+      ]
+    },
+    "api_repo_b": {
+      "verdict": "pass",
+      "ok": true,
+      "provider_calls": 1,
+      "recovery_triggered": false,
+      "recovery_attempted": false,
+      "attempts": [
+        {
+          "index": 1,
+          "role": "initial",
+          "target": "src/labels.nim",
+          "decision": "Add condition to return GuestLabel for blank names",
+          "effective_change": true,
+          "identical_to_original": false,
+          "oracle_ok": true,
+          "prompt_tokens": 276,
+          "completion_tokens": 93
+        }
+      ],
+      "sources": [
+        "src/labels.nim",
+        "src/logging.nim",
+        "src/textutil.nim"
+      ]
+    }
+  }
+}

@@ -1,0 +1,6 @@
+```json
+{
+  "target_file": "src/sample.nim",
+  "decision": "truncated",
+  "edits": [
+    {"oldText": "  alpha* = 1\n", "newText": "  alpha* = 2\n

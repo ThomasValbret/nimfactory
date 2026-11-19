@@ -1,0 +1,27 @@
+{
+  "exit_code": 4,
+  "ok": false,
+  "verdict": "verify_failed",
+  "provider_calls": 2,
+  "injected_turns": 2,
+  "network_calls": 0,
+  "verifications_run": 2,
+  "verify_phases": [
+    {
+      "role": "initial",
+      "phase": "vpRun",
+      "kind": "vkFunctionalFail",
+      "compile_exit_code": 0,
+      "run_exit_code": 1
+    },
+    {
+      "role": "recovery",
+      "phase": "vpRun",
+      "kind": "vkFunctionalFail",
+      "compile_exit_code": 0,
+      "run_exit_code": 1
+    }
+  ],
+  "recovery_triggered": true,
+  "recovery_reason": "functional_fail"
+}

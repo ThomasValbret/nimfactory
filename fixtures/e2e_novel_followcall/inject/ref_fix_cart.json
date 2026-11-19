@@ -1,0 +1,5 @@
+{
+  "target_file": "src/cart.nim",
+  "decision": "remove extra unit add after qty loop in lineTotal",
+  "patched_content": "import ./catalog\n\ntype\n  Line* = object\n    skuId*: string\n    qty*: int\n\nproc lineTotal*(line: Line): int =\n  let unit = lookupUnitCents(line.skuId)\n  var total = 0\n  var i = 0\n  while i < line.qty:\n    total += unit\n    inc i\n  result = total\n\nproc cartTotal*(lines: openArray[Line]): int =\n  var sum = 0\n  for line in lines:\n    sum += lineTotal(line)\n  result = sum\n"
+}

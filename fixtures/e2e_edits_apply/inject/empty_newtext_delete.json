@@ -1,0 +1,18 @@
+{
+  "target_file": "src/sample.nim",
+  "decision": "delete header comment; set alpha/beta",
+  "edits": [
+    {
+      "oldText": "## sample module for edits apply offline cases\n",
+      "newText": ""
+    },
+    {
+      "oldText": "  alpha* = 1\n",
+      "newText": "  alpha* = 2\n"
+    },
+    {
+      "oldText": "  beta* = 1\n",
+      "newText": "  beta* = 3\n"
+    }
+  ]
+}

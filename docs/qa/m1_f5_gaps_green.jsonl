@@ -1,0 +1,3 @@
+{"check":"G_pipe_wait_cap1_progresses_seq_conc","ok":true,"detail":{"sequential":{"status":"completed","branches":["left","right"],"waited":6},"concurrent":{"status":"completed","branches":["left","right"],"waited":6}}}
+{"check":"G_worker_context_run_epoch_seq_conc","ok":true,"detail":{"sequential":{"status":"completed","epoch":2,"o1_run":"g-wit-sequential","o1_epoch":2,"o2_run":"g-wit-sequential","o2_epoch":2,"peak":1},"concurrent":{"status":"completed","epoch":2,"o1_run":"g-wit-concurrent","o1_epoch":2,"o2_run":"g-wit-concurrent","o2_epoch":2,"peak":2}}}
+{"summary":"m1_f5_gaps_green","failures":0}

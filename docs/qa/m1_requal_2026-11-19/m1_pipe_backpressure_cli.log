@@ -1,0 +1,15 @@
+=== wait capacity 1 sequential ===
+wait_seq_exit=0
+wait_seq_ok
+=== wait capacity 1 concurrent ===
+wait_conc_exit=0
+wait_conc_ok
+=== reject capacity 1 ===
+error: pipe full: rejected_full
+reject_exit=4
+reject_ok exit=4
+=== spill capacity 1 ===
+spill_exit=0
+spill_ok
+M1_PIPE_BACKPRESSURE_CLI_OK
+m1_pipe_backpressure_cli: ok sdk=bf22665ece77d7149dbe61df959a6024bf6b26f3

@@ -1,0 +1,101 @@
+{
+  "sha": "c253ca47a3789bbd74c45cf94896bcac13f0c9da",
+  "out": "docs/qa/e2e_intervention/campaigns/20261119T112212Z",
+  "provenance": {
+    "historical_campaign": "20261119T110158Z",
+    "historical_summary_sha_field": "f8a2170",
+    "campaign_feature_commit": "d492dda",
+    "prior_receipt_sha_mentioned": "f2d5e38",
+    "this_trial_base": "c253ca47a3789bbd74c45cf94896bcac13f0c9da",
+    "historical_a_inject": "fixtures/e2e_intervention/inject/historical_a_20261119T110158Z.json"
+  },
+  "exit_codes": {
+    "api_repo_a_replay_recovery": 4,
+    "api_repo_b_success_witness": 0
+  },
+  "api_repo_a_replay_recovery": {
+    "verdict": "verify_failed",
+    "ok": false,
+    "provider_calls": 2,
+    "recovery_triggered": true,
+    "recovery_attempted": true,
+    "recovery_reason": "functional_fail",
+    "sources": [
+      "src/labels.nim",
+      "src/logging.nim",
+      "src/textutil.nim"
+    ],
+    "attempts": [
+      {
+        "index": 1,
+        "role": "initial",
+        "recovery_reason": "",
+        "target": "src/labels.nim",
+        "decision": "fixing logic to ensure non-blank names are trimmed correctly",
+        "patched_len": 160,
+        "effective_change": true,
+        "identical_to_original": false,
+        "oracle_kind": "vkFunctionalFail",
+        "oracle_ok": false,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "model": "injected",
+        "provider_kind": "inject",
+        "raw_excerpt": "{\n  \"target_file\": \"src/labels.nim\",\n  \"decision\": \"fixing logic to ensure non-blank names are trimmed correctly\",\n  \"patched_content\": \"import ./textutil\\n\\nconst GuestLabel* = \\\"guest\\\"\\n\\nproc formatUserLabel*(name: string): string =\\n  if isBlank(name):\\n    return GuestLabel\\n  return trimText(name)\\n\"\n}\n"
+      },
+      {
+        "index": 2,
+        "role": "recovery",
+        "recovery_reason": "functional_fail",
+        "target": "src/labels.nim",
+        "decision": "revise",
+        "patched_len": 170,
+        "effective_change": true,
+        "identical_to_original": false,
+        "oracle_kind": "vkFunctionalFail",
+        "oracle_ok": false,
+        "prompt_tokens": 399,
+        "completion_tokens": 76,
+        "model": "gpt-4o-mini",
+        "provider_kind": "openai",
+        "raw_excerpt": "```json\n{\"target_file\":\"src/labels.nim\",\"decision\":\"revise\",\"patched_content\":\"import ./textutil\\n\\nconst GuestLabel* = \\\"guest\\\"\\n\\nproc formatUserLabel*(name: string): string =\\n  if isBlank(name):\\n    return GuestLabel\\n  else:\\n    return trimText(name)\\n\"}\n```"
+      }
+    ],
+    "warning": "oracle functional check failed"
+  },
+  "api_repo_b_success_witness": {
+    "verdict": "pass",
+    "ok": true,
+    "provider_calls": 1,
+    "recovery_triggered": false,
+    "recovery_attempted": false,
+    "recovery_reason": "",
+    "sources": [
+      "src/labels.nim",
+      "src/logging.nim",
+      "src/textutil.nim"
+    ],
+    "attempts": [
+      {
+        "index": 1,
+        "role": "initial",
+        "recovery_reason": "",
+        "target": "src/labels.nim",
+        "decision": "Calling formatUserLabel with a blank name should yield the guest label.",
+        "patched_len": 173,
+        "effective_change": true,
+        "identical_to_original": false,
+        "oracle_kind": "vkPass",
+        "oracle_ok": true,
+        "prompt_tokens": 276,
+        "completion_tokens": 93,
+        "model": "gpt-4o-mini",
+        "provider_kind": "openai",
+        "raw_excerpt": "{\n  \"target_file\": \"src/labels.nim\",\n  \"decision\": \"Calling formatUserLabel with a blank name should yield the guest label.\",\n  \"patched_content\": \"import ./textutil\\n\\nconst GuestLabel* = \\\"guest\\\"\\n\\nproc formatUserLabel*(name: string): string =\\n  if isBlank(name):\\n    result = GuestLabel\\n  else:\\n    result = trimText(name)\"\n}"
+      }
+    ],
+    "warning": ""
+  },
+  "estimated_usd_new_calls": 0.00020265,
+  "global_ok": false
+}

@@ -1,0 +1,100 @@
+{
+  "sha": "75c4f7f576ab03973dd355131cc4e32a9a3d3990",
+  "out": "docs/qa/e2e_intervention/campaigns/20261119T173015Z",
+  "case": "e2e_ambiguous_recovery",
+  "replay_of": "20261119T151407Z",
+  "faulty_sha": "589671a897c12398113605193130d1c60ffab282",
+  "budget_eur_cap": 3,
+  "public_repro_before_exit": 0,
+  "original_oracle_exit": 1,
+  "historical_fix_oracle_exit": 0,
+  "api_exit": 4,
+  "public_repro_after": null,
+  "oracle_after": null,
+  "api": {
+    "ok": false,
+    "verdict": "apply_failed",
+    "provider_calls": 2,
+    "recovery_triggered": true,
+    "recovery_reason": "anchor_ambiguous",
+    "sources": [
+      "src/glob.nim",
+      "src/glob/regexer.nim"
+    ],
+    "warning": "recovery apply: edit 1: oldText anchor ambiguous (2 matches)",
+    "attempts": [
+      {
+        "index": 1,
+        "role": "initial",
+        "recovery_reason": "",
+        "target": "src/glob.nim",
+        "decision": "expandGlob does not handle the pattern correctly for sibling directories",
+        "mode": "edits",
+        "edits": [
+          {
+            "oldText": "return pattern",
+            "newText": "return expandGlob(pattern)",
+            "old_len": 14,
+            "new_len": 26
+          }
+        ],
+        "edits_count": 1,
+        "edits_applied": 0,
+        "refuse_code": "anchor_ambiguous",
+        "apply_message": "edit 1: oldText anchor ambiguous (2 matches)",
+        "before_hash": "8258EB81",
+        "after_hash": "8258EB81",
+        "oracle_kind": "vkNotRun",
+        "oracle_ran": false,
+        "oracle_ok": false,
+        "oracle_message": "oracle not run",
+        "phase": "vpNone",
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "model": "injected",
+        "provider_kind": "inject",
+        "provider_code": "",
+        "raw_excerpt": "{\n  \"target_file\": \"src/glob.nim\",\n  \"decision\": \"expandGlob does not handle the pattern correctly for sibling directories\",\n  \"edits\": [\n    {\n      \"oldText\": \"return pattern\",\n      \"newText\": \"return expandGlob(pattern)\"\n    }\n  ]\n}\n"
+      },
+      {
+        "index": 2,
+        "role": "recovery",
+        "recovery_reason": "anchor_ambiguous",
+        "target": "src/glob.nim",
+        "decision": "expandGlob does not handle the pattern correctly for sibling directories",
+        "mode": "edits",
+        "edits": [
+          {
+            "oldText": "return pattern",
+            "newText": "return expandGlob(pattern)",
+            "old_len": 14,
+            "new_len": 26
+          }
+        ],
+        "edits_count": 1,
+        "edits_applied": 0,
+        "refuse_code": "anchor_ambiguous",
+        "apply_message": "edit 1: oldText anchor ambiguous (2 matches)",
+        "before_hash": "8258EB81",
+        "after_hash": "8258EB81",
+        "oracle_kind": "vkNotRun",
+        "oracle_ran": false,
+        "oracle_ok": false,
+        "oracle_message": "oracle not run",
+        "phase": "vpNone",
+        "prompt_tokens": 7526,
+        "completion_tokens": 67,
+        "model": "gpt-4o-mini",
+        "provider_kind": "openai",
+        "provider_code": "",
+        "raw_excerpt": "```json\n{\n  \"target_file\": \"src/glob.nim\",\n  \"decision\": \"expandGlob does not handle the pattern correctly for sibling directories\",\n  \"edits\": [\n    {\n      \"oldText\": \"return pattern\",\n      \"newText\": \"return expandGlob(pattern)\"\n    }\n  ]\n}\n```"
+      }
+    ],
+    "prompt_tokens_total": 7526,
+    "completion_tokens_total": 67,
+    "estimated_usd": 0.0011691,
+    "paid_openai_calls": 1
+  },
+  "model_decision_tested": true,
+  "real_recovery_untested": false
+}
