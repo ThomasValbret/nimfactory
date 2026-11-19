@@ -46,4 +46,6 @@ Nim : 2.4.0
 | **M1** | Correctif livré — requalification sur SHA fonctionnel ci-dessous |
 | Fusion PR #2 | **Non** — revue humaine |
 
+Worktree de vérification : `/opt/nimFactory-m1-pending-qual` @ `2cd338b` (Nim 2.4.0, SDK pin OK) — voir `docs/qa/m1_pending_input_green/worktree_*.log`.
+
 LLM : **0**.
