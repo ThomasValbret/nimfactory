@@ -1,0 +1,17 @@
+{
+  "ok": true,
+  "list_ok": true,
+  "csv_ok": true,
+  "quote_ok": true,
+  "message": "list default intact; CSV stdout ok; comma title quoted",
+  "list_out": "1. Acheter du pain\n2. Appeler Alice, Bob\n3. Relire le rapport",
+  "csv_out": "id,title\n1,Acheter du pain\n2,\"Appeler Alice, Bob\"\n3,Relire le rapport",
+  "compile_exit": 0,
+  "details": {
+    "compile_out": "",
+    "expected_list": "1. Acheter du pain\n2. Appeler Alice, Bob\n3. Relire le rapport",
+    "list_exit": 0,
+    "expected_csv": "id,title\n1,Acheter du pain\n2,\"Appeler Alice, Bob\"\n3,Relire le rapport",
+    "csv_exit": 0
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "goal": "Permettre d'exporter les tâches",
+  "constraints": [
+    "Respecter AGENTS.md",
+    "Préférer des modifications localisées sous src/"
+  ],
+  "files_likely": [
+    "src/demo_tasks.nim",
+    "src/tasks.nim"
+  ],
+  "plan_version": 1,
+  "agents_md_excerpt": "# Agents — demo_tasks_cli\n\nPetit CLI Nim de liste de tâches.\n\n## Consignes\n- Préserver le comportement d'affichage par défaut (`list`) sauf demande explicite.\n- Les changements d'export doivent être opt-in (drapeau CLI), pas remplacer `list`.\n- Les titres peuvent contenir des virgules ; un export CSV doit les quotter correctement.\n- Préférer de petites modifications localisées sous `src/`.\n",
+  "source_ids": [
+    "src/demo_tasks.nim",
+    "src/tasks.nim"
+  ]
+}

@@ -1,0 +1,61 @@
+{
+  "sha": "d9a9b35cbc8e1b65a6cc06e2d931be2536e025c3",
+  "route": "inject",
+  "model_mode": "inject (model decisions untested)",
+  "plan_versions": 2,
+  "resume_billable_plan_calls": 0,
+  "usage_by_role": {
+    "planner": {
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "calls": 0,
+      "estimated_usd": 0.0,
+      "model": ""
+    },
+    "implementer": {
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "calls": 0,
+      "estimated_usd": 0.0,
+      "model": ""
+    },
+    "reviser": {
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "calls": 0,
+      "estimated_usd": 0.0,
+      "model": ""
+    }
+  },
+  "planner_calls": 0,
+  "reviser_calls": 0,
+  "implementer_calls": 0,
+  "step_verdict": "pass",
+  "verify": {
+    "ok": true,
+    "list_ok": true,
+    "csv_ok": true,
+    "quote_ok": true,
+    "message": "list default intact; CSV stdout ok; comma title quoted",
+    "list_out": "1. Acheter du pain\n2. Appeler Alice, Bob\n3. Relire le rapport",
+    "csv_out": "id,title\n1,Acheter du pain\n2,\"Appeler Alice, Bob\"\n3,Relire le rapport",
+    "compile_exit": 0,
+    "details": {
+      "compile_out": "",
+      "expected_list": "1. Acheter du pain\n2. Appeler Alice, Bob\n3. Relire le rapport",
+      "list_exit": 0,
+      "expected_csv": "id,title\n1,Acheter du pain\n2,\"Appeler Alice, Bob\"\n3,Relire le rapport",
+      "csv_exit": 0
+    }
+  },
+  "artifacts": {
+    "plan_v1": "docs/qa/project_cli_journey/20261121T223622Z/artifacts/plan_v1.json",
+    "plan_v2": "docs/qa/project_cli_journey/20261121T223622Z/artifacts/plan_v2.json",
+    "mandate": "docs/qa/project_cli_journey/20261121T223622Z/artifacts/mandate.json"
+  },
+  "untested": [
+    "planner",
+    "reviser",
+    "implementer"
+  ]
+}

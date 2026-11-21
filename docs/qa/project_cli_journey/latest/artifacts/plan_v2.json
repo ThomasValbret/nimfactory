@@ -1,0 +1,33 @@
+{
+  "summary": "Export CSV opt-in sur stdout ; conserver list comme comportement par défaut.",
+  "hypothesis": "",
+  "optional_question": "",
+  "change_notes": "La précision impose CSV sur stdout et interdit de remplacer l'affichage list par défaut.",
+  "steps": [
+    {
+      "id": "implement_export",
+      "title": "Ajouter export-csv (CSV stdout) sans changer list",
+      "depends_on": []
+    }
+  ],
+  "mandate_sketch": {
+    "goal": "Exporter les tâches en CSV sur la sortie standard via une commande opt-in",
+    "constraints": [
+      "CSV sur stdout",
+      "garder list inchangé par défaut",
+      "quoter correctement les titres contenant une virgule",
+      "Respecter AGENTS.md"
+    ],
+    "files_likely": [
+      "src/demo_tasks.nim"
+    ],
+    "plan_version": 2,
+    "change_notes": "La précision impose CSV sur stdout et interdit de remplacer l'affichage list par défaut.",
+    "agents_md_excerpt": "# Agents — demo_tasks_cli\n\nPetit CLI Nim de liste de tâches.\n\n## Consignes\n- Préserver le comportement d'affichage par défaut (`list`) sauf demande explicite.\n- Les changements d'export doivent être opt-in (drapeau CLI), pas remplacer `list`.\n- Les titres peuvent contenir des virgules ; un export CSV doit les quotter correctement.\n- Préférer de petites modifications localisées sous `src/`.\n",
+    "source_ids": [
+      "src/demo_tasks.nim",
+      "src/tasks.nim"
+    ],
+    "refinement": "Je veux du CSV sur la sortie standard et je veux garder l'affichage actuel par défaut."
+  }
+}

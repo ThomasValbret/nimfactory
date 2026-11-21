@@ -1,4 +1,4 @@
-## Minimal M1 CLI: validate, run, resume, inspect, events (F16) + mission-fix.
+## Minimal M1 CLI: validate, run, resume, inspect, events (F16) + mission-fix + project.
 
 import std/[os, parseopt, strutils, json, sequtils]
 import nimfactory/contracts/[errors, result]
@@ -6,6 +6,8 @@ import nimfactory/runtime/executor/types
 import nimfactory/application/compose
 import nimfactory/runtime/executor/executor
 import nimfactory/mission/pipeline
+import nimfactory/project/pipeline
+import nimfactory/project/store
 
 const
   ExitOk* = 0
@@ -19,6 +21,7 @@ const
 type
   CliOptions = object
     cmd: string
+    sub: string
     graph: string
     store: string
     runId: string
@@ -44,6 +47,12 @@ type
     diagnosis: string
     constraint: string
     recoveryApi: bool
+    cwd: string
+    projectId: string
+    objective: string
+    refinement: string
+    artifactDir: string
+    positional: seq[string]
 
 proc writeHuman(msg: string) =
   stderr.writeLine(msg)
@@ -62,6 +71,7 @@ Commands:
   inspect --store PATH --run-id ID
   events --store PATH --run-id ID
   mission-fix --repo PATH --oracle PATH --route api|local|inject [options]
+  project ask|revise|step|status|resume --store PATH [options]
 
 Options:
   --mode sequential|concurrent
@@ -83,6 +93,11 @@ Options:
   --diagnosis TEXT      local: established diagnosis
   --constraint TEXT     local: constraint to preserve
   --recovery-api        after inject first turn, recovery uses planned OpenAI API
+  --cwd PATH            project root (AGENTS.md + src/)
+  --project-id ID       project id (default demo_tasks_cli)
+  --objective TEXT      initial pilot request (project ask)
+  --refinement TEXT     pilot precision (project revise)
+  --artifact-dir PATH   write plan/mandate/verify artifacts
   --json                machine mode (stdout JSON only; default)
 """)
 
@@ -104,11 +119,17 @@ proc parseArgs(args: seq[string]): CliOptions =
   result.jsonMode = true
   result.route = "api"
   result.localModel = "qwen2.5-coder:7b"
+  result.projectId = "demo_tasks_cli"
+  result.positional = @[]
   if args.len == 0:
     result.help = true
     return
   result.cmd = args[0]
-  var p = initOptParser(args[1..^1], shortNoVal = {'h'},
+  var rest = args[1..^1]
+  if result.cmd == "project" and rest.len > 0 and not rest[0].startsWith("-"):
+    result.sub = rest[0]
+    rest = rest[1..^1]
+  var p = initOptParser(rest, shortNoVal = {'h'},
                         longNoVal = @["json", "human", "help", "recovery-api"])
   while true:
     p.next()
@@ -158,6 +179,16 @@ proc parseArgs(args: seq[string]): CliOptions =
         result.diagnosis = takeValue(p)
       of "constraint":
         result.constraint = takeValue(p)
+      of "cwd":
+        result.cwd = takeValue(p)
+      of "project-id":
+        result.projectId = takeValue(p)
+      of "objective":
+        result.objective = takeValue(p)
+      of "refinement":
+        result.refinement = takeValue(p)
+      of "artifact-dir":
+        result.artifactDir = takeValue(p)
       of "recovery-api":
         result.recoveryApi = true
       of "json":
@@ -169,7 +200,7 @@ proc parseArgs(args: seq[string]): CliOptions =
       else:
         result.err = "unknown option: " & p.key
     of cmdArgument:
-      result.err = "unexpected argument: " & p.key
+      result.positional.add(p.key)
 
 proc toConfig(o: CliOptions): ExecConfig =
   result = defaultExecConfig()
@@ -295,6 +326,54 @@ proc runCli*(args: seq[string]): int =
       if report.ok: return ExitOk
       if report.verdict == "api_unavailable": return ExitBlocked
       if report.verdict == "oracle_missing": return ExitInvalid
+      return ExitFailed
+    of "project":
+      if o.sub.len == 0:
+        writeHuman("project requires subcommand: ask|revise|step|status|resume")
+        return ExitInvalid
+      var preq = defaultProjectRequest()
+      preq.storePath = o.store
+      preq.projectId = o.projectId
+      preq.cwd = o.cwd
+      preq.objective = o.objective
+      preq.refinement = o.refinement
+      preq.route = o.route
+      preq.injectPath = o.inject
+      preq.worktree = o.worktree
+      preq.artifactDir = o.artifactDir
+      if preq.objective.len == 0 and o.positional.len > 0:
+        preq.objective = o.positional.join(" ")
+      if preq.refinement.len == 0 and o.sub == "revise" and o.positional.len > 0:
+        preq.refinement = o.positional.join(" ")
+      if o.route == "inject" and o.inject.len == 0 and o.sub in ["ask", "revise", "step"]:
+        writeHuman("project " & o.sub & " --route inject requires --inject")
+        return ExitInvalid
+      var prep: ProjectReport
+      case o.sub
+      of "ask":
+        prep = projectAsk(preq)
+      of "revise":
+        prep = projectRevise(preq)
+      of "step":
+        prep = projectStep(preq)
+      of "status":
+        prep = projectStatus(preq)
+      of "resume":
+        prep = projectResume(preq)
+      else:
+        writeHuman("unknown project subcommand: " & o.sub)
+        return ExitInvalid
+      var outNode =
+        if prep.report.isNil: %*{"command": "project", "sub": o.sub}
+        else: prep.report
+      outNode["ok"] = %prep.ok
+      outNode["verdict"] = %prep.verdict
+      outNode["message"] = %prep.message
+      outNode["run_id"] = %projectRunId(preq.projectId)
+      writeMachine(outNode)
+      if prep.ok: return ExitOk
+      if prep.verdict == "api_unavailable": return ExitBlocked
+      if prep.verdict in ["invalid", "missing"]: return ExitInvalid
       return ExitFailed
     else:
       writeHuman("unknown command: " & o.cmd)

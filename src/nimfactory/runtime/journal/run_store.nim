@@ -66,6 +66,30 @@ proc ensureRun(s: SqliteRunStore; runId: string) =
     "INSERT INTO nf_runs(run_id, epoch, owner_token, state_json, event_seq) VALUES(?, 1, '', '{}', 0)",
     [runId])
 
+proc ensureRunId*(s: SqliteRunStore; runId: string) =
+  ## Public: create an empty run row if missing (project missions, etc.).
+  ensureRun(s, runId)
+
+proc putRunState*(s: SqliteRunStore; runId: string; state: JsonNode) =
+  ## Persist opaque run/project document into nf_runs.state_json.
+  ensureRun(s, runId)
+  runPrepared(s.db, "UPDATE nf_runs SET state_json = ? WHERE run_id = ?",
+    [$state, runId])
+
+proc getRunState*(s: SqliteRunStore; runId: string): JsonNode =
+  ## Read state_json; returns empty object if missing/null.
+  if not s.hasRun(runId):
+    return newJObject()
+  let rows = queryAll(s.db, "SELECT state_json FROM nf_runs WHERE run_id = ?", [runId])
+  if rows.len == 0 or rows[0].len == 0:
+    return newJObject()
+  try:
+    result = parseJson(rows[0])
+    if result.kind != JObject:
+      result = newJObject()
+  except CatchableError:
+    result = newJObject()
+
 proc nextEventSeq(s: SqliteRunStore; runId: string): int =
   runPrepared(s.db, "UPDATE nf_runs SET event_seq = event_seq + 1 WHERE run_id = ?", [runId])
   let rows = queryAll(s.db, "SELECT event_seq FROM nf_runs WHERE run_id = ?", [runId])
