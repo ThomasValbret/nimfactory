@@ -5,21 +5,10 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 export PATH="/root/.nimble/bin:${PATH:-}"
 
-load_openai_key() {
-  local f=""
-  if [[ -f /opt/.keys/api_provider_key ]]; then f=/opt/.keys/api_provider_key
-  elif [[ -f /opt/.keys ]]; then f=/opt/.keys
-  fi
-  [[ -z "$f" ]] && return 1
-  if grep -q '^OPENAI_API_KEY=' "$f" 2>/dev/null; then
-    set -a; # shellcheck disable=SC1090
-    source "$f"; set +a
-  else
-    OPENAI_API_KEY="$(tr -d ' \t\r\n' < "$f")"; export OPENAI_API_KEY
-  fi
-  echo "OPENAI_API_KEY loaded from $f"
-}
-if [[ -z "${OPENAI_API_KEY:-}" ]]; then load_openai_key || true; fi
+# Project key first (.keys gitignored); host /opt/.keys as legacy fallback.
+# shellcheck disable=SC1091
+source "$ROOT/scripts/lib_load_openai_key.sh"
+load_openai_key || true
 
 nim c -d:release -d:ssl --hints:off --path:src --path:vendor/NimAgentLibrary/src \
   -o:build/nimfactory src/nimfactory_cli.nim

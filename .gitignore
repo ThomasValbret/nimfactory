@@ -38,6 +38,8 @@ examples/f1_minimal
 .env.*
 .envkey
 .envexemple
+.keys
+.keys/
 *.pem
 *.key
 credentials.json

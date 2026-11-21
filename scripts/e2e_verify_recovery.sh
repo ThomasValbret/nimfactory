@@ -20,19 +20,10 @@ OUT="docs/qa/e2e_intervention/campaigns/${STAMP}"
 mkdir -p "$OUT"
 echo "SHA=$SHA OUT=$OUT"
 
-if [[ -z "${OPENAI_API_KEY:-}" ]]; then
-  KEYF=""
-  if [[ -f /opt/.keys/api_provider_key ]]; then KEYF=/opt/.keys/api_provider_key
-  elif [[ -f /opt/.keys ]]; then KEYF=/opt/.keys; fi
-  if [[ -n "$KEYF" ]]; then
-    if grep -q '^OPENAI_API_KEY=' "$KEYF" 2>/dev/null; then
-      set -a; source "$KEYF"; set +a
-    else
-      OPENAI_API_KEY="$(tr -d ' \t\r\n' < "$KEYF")"; export OPENAI_API_KEY
-    fi
-    echo "OPENAI_API_KEY loaded from $KEYF"
-  fi
-fi
+# Project key first (.keys gitignored); host /opt/.keys as legacy fallback.
+# shellcheck disable=SC1091
+source "$ROOT/scripts/lib_load_openai_key.sh"
+load_openai_key || true
 
 write_meta() {
   local name="$1" ec="$2"
