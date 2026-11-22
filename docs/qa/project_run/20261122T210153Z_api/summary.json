@@ -1,0 +1,32 @@
+{
+  "stamp": "20261122T210153Z",
+  "route": "api",
+  "code_sha": "4d2c68410c92ff5fcd3a1a73ca616b03f5ebc495",
+  "exit_code": 4,
+  "ok": false,
+  "verdict": "api_key_expired",
+  "message": "API Error: HTTP 401 - {\n  \"error\": {\n    \"message\": \"Your API key has expired. Create a new API key to continue.\",\n    \"type\": \"invalid_request_error\",\n    \"code\": \"expired_secret_key\",\n    \"param\": null\n  },\n  \"status\": 401\n}",
+  "next_action": null,
+  "interventions": [
+    {
+      "kind": "ask",
+      "ok": false,
+      "verdict": "model_failed",
+      "message": "API Error: HTTP 401 - {\n  \"error\": {\n    \"message\": \"Your API key has expired. Create a new API key to continue.\",\n    \"type\": \"invalid_request_error\",\n    \"code\": \"expired_secret_key\",\n    \"param\": null\n  },\n  \"status\": 401\n}",
+      "api_calls": 0,
+      "provider_calls": 0
+    }
+  ],
+  "api_calls_this_command": 0,
+  "provider_calls_this_command": null,
+  "usage_by_role": null,
+  "delivered_tree": "",
+  "delivered_hash": null,
+  "binary_behaviour": {},
+  "blocked": null,
+  "status_verdict": "missing",
+  "user_command": "nimfactory project run --store \u2026 --cwd fixtures/demo_tasks_cli --objective 'Je veux pouvoir exporter mes t\u00e2ches.' --refinement '\u2026CSV\u2026' --route api",
+  "estimated_usd_total": 0.0,
+  "blocker": "OPENAI_API_KEY expired (HTTP 401 expired_secret_key); no billable completion",
+  "note": "Real route attempted; offline inject archive remains the qualified walk to binary."
+}
