@@ -1,0 +1,14 @@
+{
+  "target_file": "src/demo_tasks.nim",
+  "decision": "Ajout d'un cas pour l'exportation CSV sans changer le comportement par défaut.",
+  "edits": [
+    {
+      "insertAfter": "echo formatList(loadTasks())",
+      "newText": "elif cmd == \"export-csv\":\n    echo formatCsv(loadTasks())"
+    },
+    {
+      "insertAfter": "var lines: seq[string] = @[]",
+      "newText": "proc formatCsv*(tasks: openArray[Task]): string =\n  var lines: seq[string] = @[]\n  for t in tasks:\n    lines.add(\"\\\"\" & t.title.replace(\"\\\", \"\\\\\").replace(\",\", \"\\\",\") & \"\\\"\")\n  lines.join(\"\\n\")"
+    }
+  ]
+}

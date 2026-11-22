@@ -1,0 +1,84 @@
+{
+  "verdict": "verify_failed",
+  "message": "compile failed (exit 1)",
+  "blocked": {
+    "kind": "verify_failed",
+    "step_id": "1",
+    "next_action": "step",
+    "message": "compile failed (exit 1)"
+  },
+  "first_faulty_decision": "recovery_exhausted",
+  "interventions": [
+    {
+      "kind": "ask",
+      "ok": true,
+      "verdict": "plan_ready",
+      "message": "plan v1 persisted",
+      "api_calls": 1,
+      "provider_calls": 1
+    },
+    {
+      "kind": "revise",
+      "ok": true,
+      "verdict": "plan_revised",
+      "message": "plan v2 persisted",
+      "api_calls": 1,
+      "provider_calls": 1
+    },
+    {
+      "kind": "step:1",
+      "ok": false,
+      "verdict": "recovery_exhausted",
+      "message": "recovery still refused (anchor_missing); no write",
+      "api_calls": 2,
+      "provider_calls": 2
+    },
+    {
+      "kind": "revise:auto",
+      "ok": true,
+      "verdict": "plan_revised",
+      "message": "plan v3 persisted",
+      "api_calls": 1,
+      "provider_calls": 1
+    },
+    {
+      "kind": "step:1",
+      "ok": false,
+      "verdict": "verify_failed",
+      "message": "compile failed (exit 1)",
+      "api_calls": 1,
+      "provider_calls": 1
+    }
+  ],
+  "usage_by_role": {
+    "planner": {
+      "prompt_tokens": 562,
+      "completion_tokens": 344,
+      "calls": 1,
+      "estimated_usd": 0.0002907,
+      "model": "gpt-4o-mini"
+    },
+    "implementer": {
+      "prompt_tokens": 2190,
+      "completion_tokens": 389,
+      "calls": 2,
+      "estimated_usd": 0.0005618999999999999,
+      "model": "gpt-4o-mini"
+    },
+    "reviser": {
+      "prompt_tokens": 2034,
+      "completion_tokens": 989,
+      "calls": 2,
+      "estimated_usd": 0.0008984999999999999,
+      "model": "gpt-4o-mini"
+    },
+    "implementer_recovery": {
+      "prompt_tokens": 1433,
+      "completion_tokens": 191,
+      "calls": 1,
+      "estimated_usd": 0.00032954999999999996,
+      "model": "gpt-4o-mini"
+    }
+  },
+  "estimated_usd_total": 0.00208065
+}
