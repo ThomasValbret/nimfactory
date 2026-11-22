@@ -8,7 +8,7 @@ Worktree : `/opt/nimFactory-studio-merge`
 | --- | --- |
 | Studio workflow ops | `fe5b28d` |
 | Project-run auto-revise + QA | `dedbe62` |
-| **Merge testé** | *(voir tip Git après commit)* |
+| **Merge testé** | `6995e8eafc05878bd7425d8b0dd705363d4149d3` |
 
 ## Préservé
 
