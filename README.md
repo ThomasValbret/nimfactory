@@ -33,13 +33,13 @@ build/nimfactory-studio \
   --route inject \
   --inject /opt/nimFactory/fixtures/demo_tasks_cli/inject/plan_v2.json \
   --artifact-dir /opt/nimFactory-studio-demo/artifacts \
-  --port 8085
+  --port 18085
 ```
 
-Ouvrir `http://127.0.0.1:8085`. Sur un VPS, un tunnel SSH vers ce port donne accès au même écran depuis le poste client :
+Ouvrir `http://127.0.0.1:18085`. Sur ce VPS le port 8085 est déjà pris ; la démo utilise **18085**. Tunnel SSH depuis le Chromebook :
 
 ```sh
-ssh -N -L 8085:127.0.0.1:8085 user@vps
+ssh -N -L 18085:127.0.0.1:18085 user@vps
 ```
 
 Pour activer la lecture du fichier cible accepté, `--trees` pointe vers le répertoire `artifacts/trees` produit par les étapes. Dans Workflow, « Réviser le plan » apparaît quand le snapshot expose la capacité `revise_plan`. La commande POST `/api/command` exige `command_id`, `expected_plan_version` et `refinement`, reste sur loopback, et refuse une Origin étrangère.

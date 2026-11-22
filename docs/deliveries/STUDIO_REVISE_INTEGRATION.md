@@ -49,14 +49,14 @@ build/nimfactory-studio \
   --route inject \
   --inject "$FIX/inject/plan_v2.json" \
   --artifact-dir "$DEMO/artifacts" \
-  --port 8085
+  --port 18085
 ```
 
-Tunnel Chromebook :
+Tunnel Chromebook (sur ce VPS, 8085 est occupé ; la démo utilise **18085**) :
 
 ```bash
-ssh -N -L 8085:127.0.0.1:8085 <user>@<vps>
-# puis http://127.0.0.1:8085/
+ssh -N -L 18085:127.0.0.1:18085 <user>@<vps>
+# puis http://127.0.0.1:18085/
 ```
 
 Vérifier après redémarrage :
