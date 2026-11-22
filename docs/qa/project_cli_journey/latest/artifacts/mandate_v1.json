@@ -1,8 +1,8 @@
 {
-  "goal": "Permettre d'exporter les tâches",
+  "goal": "Permettre à l'utilisateur d'exporter ses tâches au format CSV en option.",
   "constraints": [
-    "Respecter AGENTS.md",
-    "Préférer des modifications localisées sous src/"
+    "Ne pas modifier le comportement actuel de la commande 'list'.",
+    "Utiliser un drapeau opt-in pour l'exportation."
   ],
   "files_likely": [
     "src/demo_tasks.nim",

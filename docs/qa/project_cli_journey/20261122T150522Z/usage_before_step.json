@@ -1,0 +1,16 @@
+{
+  "planner": {
+    "prompt_tokens": 562,
+    "completion_tokens": 322,
+    "calls": 1,
+    "estimated_usd": 0.00027749999999999997,
+    "model": "gpt-4o-mini"
+  },
+  "reviser": {
+    "prompt_tokens": 908,
+    "completion_tokens": 413,
+    "calls": 1,
+    "estimated_usd": 0.000384,
+    "model": "gpt-4o-mini"
+  }
+}

@@ -1,0 +1,66 @@
+{
+  "sha": "7fb508d23cfac28eebdf8d67a5a39a0da6e1da5a",
+  "route": "api",
+  "model_mode": "live gpt-4o-mini",
+  "network": "nsenter tailscaled netns (with_host_net.sh)",
+  "campaign": "docs/qa/project_cli_journey/20261122T150522Z",
+  "first_result": "apply_failed",
+  "overall_verdict": "e2e_failed_at_step1",
+  "note": "extractJsonObject balanced-object fix verified: first JSON fence parsed. Implementer still emitted dual fences; apply refused edit_1 with anchor_ambiguous for oldText \"else:\" (2 matches). Second object in raw_text not applied.",
+  "preflight": "HTTP 200 https://api.openai.com/v1/models",
+  "plan_versions": 2,
+  "plan_steps_v2": 4,
+  "roles": {
+    "planner": {
+      "calls": 1,
+      "prompt_tokens": 562,
+      "completion_tokens": 322,
+      "estimated_usd": 0.0002775,
+      "model": "gpt-4o-mini",
+      "result": "plan_ready"
+    },
+    "reviser": {
+      "calls": 1,
+      "prompt_tokens": 908,
+      "completion_tokens": 413,
+      "estimated_usd": 0.000384,
+      "model": "gpt-4o-mini",
+      "result": "plan_v2"
+    },
+    "implementer": {
+      "calls": 1,
+      "prompt_tokens": 919,
+      "completion_tokens": 229,
+      "estimated_usd": 0.00027525,
+      "model": "gpt-4o-mini",
+      "result": "apply_failed",
+      "refuse_code": "anchor_ambiguous"
+    }
+  },
+  "usage_by_role": {
+    "planner": {
+      "calls": 1,
+      "prompt_tokens": 562,
+      "completion_tokens": 322,
+      "estimated_usd": 0.0002775,
+      "model": "gpt-4o-mini"
+    },
+    "reviser": {
+      "calls": 1,
+      "prompt_tokens": 908,
+      "completion_tokens": 413,
+      "estimated_usd": 0.000384,
+      "model": "gpt-4o-mini"
+    },
+    "implementer": {
+      "calls": 1,
+      "prompt_tokens": 919,
+      "completion_tokens": 229,
+      "estimated_usd": 0.00027525,
+      "model": "gpt-4o-mini"
+    }
+  },
+  "estimated_usd_total": 0.00093675,
+  "kill_resume_ok": true,
+  "concurrent_refusal_ok": true
+}

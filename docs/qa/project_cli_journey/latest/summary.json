@@ -1,148 +1,66 @@
 {
-  "sha": "34719f8ae1bc937f2b900a7d6608ff1da56e44f1",
-  "route": "inject",
-  "model_mode": "inject (model decisions untested)",
+  "sha": "7fb508d23cfac28eebdf8d67a5a39a0da6e1da5a",
+  "route": "api",
+  "model_mode": "live gpt-4o-mini",
+  "network": "nsenter tailscaled netns (with_host_net.sh)",
+  "campaign": "docs/qa/project_cli_journey/20261122T150522Z",
+  "first_result": "apply_failed",
+  "overall_verdict": "e2e_failed_at_step1",
+  "note": "extractJsonObject balanced-object fix verified: first JSON fence parsed. Implementer still emitted dual fences; apply refused edit_1 with anchor_ambiguous for oldText \"else:\" (2 matches). Second object in raw_text not applied.",
+  "preflight": "HTTP 200 https://api.openai.com/v1/models",
   "plan_versions": 2,
-  "plan_steps": 2,
-  "steps_executed": 2,
-  "resume_billable_plan_calls": 0,
-  "concurrent": {
-    "resume_while_alive": {
-      "rehydrated": true,
-      "planner_calls_this_command": 0,
-      "reviser_calls_this_command": 0,
-      "billable_plan_calls": 0,
-      "active_step": "add_csv_helpers",
-      "owner_pid": 3334129,
-      "step_state": "running",
-      "provider_attempt_unknown": true,
-      "action": "wait",
-      "action_note": "Step is still active and waiting on the provider; do not start another step for it."
-    },
-    "resume_verdict": "active",
-    "second_step_verdict": "already_running",
-    "second_step_provider_calls": 0
-  },
-  "kill_resume": {
-    "rehydrated": true,
-    "planner_calls_this_command": 0,
-    "reviser_calls_this_command": 0,
-    "billable_plan_calls": 0,
-    "interrupted_step": "add_csv_helpers",
-    "step_state": "interrupted",
-    "provider_attempt_unknown": true,
-    "action": "retry_step",
-    "action_note": "Prior provider call outcome is unknown; do not assume success or silently rebill. Re-run `project step` explicitly to retry."
-  },
-  "neg_step": {
-    "verdict": "verify_failed",
-    "verify": {
-      "ok": false,
-      "kind": "csv_journey",
-      "list_ok": false,
-      "csv_ok": true,
-      "quote_ok": true,
-      "message": "list_mismatch",
-      "list_out": "id,title\n1,Acheter du pain\n2,\"Appeler Alice, Bob\"\n3,Relire le rapport",
-      "csv_out": "id,title\n1,Acheter du pain\n2,\"Appeler Alice, Bob\"\n3,Relire le rapport",
-      "compile_exit": 0,
-      "details": {
-        "require_csv": true,
-        "compile_out": "",
-        "expected_list": "1. Acheter du pain\n2. Appeler Alice, Bob\n3. Relire le rapport",
-        "list_exit": 0,
-        "no_args_exit": 0,
-        "no_args_out": "id,title\n1,Acheter du pain\n2,\"Appeler Alice, Bob\"\n3,Relire le rapport",
-        "expected_csv": "id,title\n1,Acheter du pain\n2,\"Appeler Alice, Bob\"\n3,Relire le rapport",
-        "csv_exit": 0,
-        "csv_form": "export-csv"
-      }
-    }
-  },
-  "empty_plan_verdict": "plan_failed",
-  "usage_by_role": {
-    "planner": {
-      "prompt_tokens": 0,
-      "completion_tokens": 0,
-      "calls": 0,
-      "estimated_usd": 0.0,
-      "model": ""
-    },
-    "implementer": {
-      "prompt_tokens": 0,
-      "completion_tokens": 0,
-      "calls": 0,
-      "estimated_usd": 0.0,
-      "model": ""
-    },
-    "reviser": {
-      "prompt_tokens": 0,
-      "completion_tokens": 0,
-      "calls": 0,
-      "estimated_usd": 0.0,
-      "model": ""
-    }
-  },
+  "plan_steps_v2": 4,
   "roles": {
     "planner": {
-      "calls": 0,
-      "prompt_tokens": 0,
-      "completion_tokens": 0,
-      "estimated_usd": 0.0,
-      "model": ""
+      "calls": 1,
+      "prompt_tokens": 562,
+      "completion_tokens": 322,
+      "estimated_usd": 0.0002775,
+      "model": "gpt-4o-mini",
+      "result": "plan_ready"
     },
     "reviser": {
-      "calls": 0,
-      "prompt_tokens": 0,
-      "completion_tokens": 0,
-      "estimated_usd": 0.0,
-      "model": ""
+      "calls": 1,
+      "prompt_tokens": 908,
+      "completion_tokens": 413,
+      "estimated_usd": 0.000384,
+      "model": "gpt-4o-mini",
+      "result": "plan_v2"
     },
     "implementer": {
-      "calls": 0,
-      "prompt_tokens": 0,
-      "completion_tokens": 0,
-      "estimated_usd": 0.0,
-      "model": ""
+      "calls": 1,
+      "prompt_tokens": 919,
+      "completion_tokens": 229,
+      "estimated_usd": 0.00027525,
+      "model": "gpt-4o-mini",
+      "result": "apply_failed",
+      "refuse_code": "anchor_ambiguous"
     }
   },
-  "planner_calls": 0,
-  "reviser_calls": 0,
-  "implementer_calls": 0,
-  "accepted_tree_ref": "/opt/nimFactory/docs/qa/project_cli_journey/20261122T014259Z/artifacts/trees/wire_export_csv",
-  "accepted_tree_hash": "73518A6720844BE7",
-  "last_step_verdict": "pass",
-  "verify": {
-    "ok": true,
-    "kind": "csv_journey",
-    "list_ok": true,
-    "csv_ok": true,
-    "quote_ok": true,
-    "message": "list default intact; CSV stdout ok; comma title quoted",
-    "list_out": "1. Acheter du pain\n2. Appeler Alice, Bob\n3. Relire le rapport",
-    "csv_out": "id,title\n1,Acheter du pain\n2,\"Appeler Alice, Bob\"\n3,Relire le rapport",
-    "compile_exit": 0,
-    "details": {
-      "require_csv": true,
-      "compile_out": "",
-      "expected_list": "1. Acheter du pain\n2. Appeler Alice, Bob\n3. Relire le rapport",
-      "list_exit": 0,
-      "no_args_exit": 0,
-      "no_args_out": "1. Acheter du pain\n2. Appeler Alice, Bob\n3. Relire le rapport",
-      "expected_csv": "id,title\n1,Acheter du pain\n2,\"Appeler Alice, Bob\"\n3,Relire le rapport",
-      "csv_exit": 0,
-      "csv_form": "export-csv"
+  "usage_by_role": {
+    "planner": {
+      "calls": 1,
+      "prompt_tokens": 562,
+      "completion_tokens": 322,
+      "estimated_usd": 0.0002775,
+      "model": "gpt-4o-mini"
+    },
+    "reviser": {
+      "calls": 1,
+      "prompt_tokens": 908,
+      "completion_tokens": 413,
+      "estimated_usd": 0.000384,
+      "model": "gpt-4o-mini"
+    },
+    "implementer": {
+      "calls": 1,
+      "prompt_tokens": 919,
+      "completion_tokens": 229,
+      "estimated_usd": 0.00027525,
+      "model": "gpt-4o-mini"
     }
   },
-  "source_tree_last": "/opt/nimFactory/docs/qa/project_cli_journey/20261122T014259Z/artifacts/trees/add_csv_helpers",
-  "artifacts": {
-    "plan_v1": "docs/qa/project_cli_journey/20261122T014259Z/artifacts/plan_v1.json",
-    "plan_v2": "docs/qa/project_cli_journey/20261122T014259Z/artifacts/plan_v2.json",
-    "mandate": "docs/qa/project_cli_journey/20261122T014259Z/artifacts/mandate.json"
-  },
-  "untested": [
-    "planner",
-    "reviser",
-    "implementer"
-  ]
+  "estimated_usd_total": 0.00093675,
+  "kill_resume_ok": true,
+  "concurrent_refusal_ok": true
 }

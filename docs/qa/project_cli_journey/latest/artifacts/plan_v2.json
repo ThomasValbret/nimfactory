@@ -1,34 +1,47 @@
 {
-  "summary": "Export CSV opt-in sur stdout ; conserver list comme comportement par défaut. Deux étapes : helpers puis câblage CLI.",
-  "hypothesis": "",
-  "optional_question": "",
-  "change_notes": "La précision impose CSV sur stdout et interdit de remplacer l'affichage list par défaut. Découpe en add_csv_helpers puis wire_export_csv.",
+  "summary": "Ajouter une fonction d'exportation des tâches au format CSV avec sortie standard.",
+  "hypothesis": "L'utilisateur souhaite pouvoir exporter des tâches au format CSV tout en conservant l'affichage par défaut de la commande 'list'.",
+  "optional_question": "Souhaitez-vous d'autres formats d'exportation à l'avenir?",
   "steps": [
     {
-      "id": "add_csv_helpers",
-      "title": "Ajouter csvQuote/formatCsv dans tasks.nim",
+      "id": "1",
+      "title": "Ajouter une option de commande pour l'exportation vers CSV",
       "depends_on": []
     },
     {
-      "id": "wire_export_csv",
-      "title": "Câbler export-csv dans demo_tasks.nim en réutilisant formatCsv",
+      "id": "2",
+      "title": "Développer la fonction d'exportation vers CSV sur la sortie standard",
       "depends_on": [
-        "add_csv_helpers"
+        "1"
+      ]
+    },
+    {
+      "id": "3",
+      "title": "Gérer le formatage CSV correct des titres (quotations)",
+      "depends_on": [
+        "2"
+      ]
+    },
+    {
+      "id": "4",
+      "title": "Mettre à jour la documentation des commandes CLI",
+      "depends_on": [
+        "1",
+        "2"
       ]
     }
   ],
   "mandate_sketch": {
-    "goal": "Exporter les tâches en CSV sur la sortie standard via une commande opt-in",
+    "goal": "Permettre à l'utilisateur d'exporter ses tâches au format CSV sur la sortie standard tout en préservant le comportement actuel.",
     "constraints": [
-      "CSV sur stdout",
-      "garder list inchangé par défaut",
-      "quoter correctement les titres contenant une virgule",
-      "étape 2 doit réutiliser formatCsv créé à l'étape 1",
-      "Respecter AGENTS.md"
+      "Ne pas modifier le comportement actuel de la commande 'list'.",
+      "Utiliser un drapeau opt-in pour l'exportation.",
+      "L'exportation doit se faire sans écraser l'affichage par défaut."
     ],
     "files_likely": [
-      "src/tasks.nim",
-      "src/demo_tasks.nim"
+      "src/demo_tasks.nim",
+      "src/tasks.nim"
     ]
-  }
+  },
+  "change_notes": "L'exportation CSV sera envoyée à la sortie standard au lieu d'un fichier, avec maintien de l'affichage des tâches par défaut pour la commande 'list'."
 }

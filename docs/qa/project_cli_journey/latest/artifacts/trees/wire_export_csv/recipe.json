@@ -1,5 +1,0 @@
-{
-  "id": "demo_tasks_cli",
-  "verify": "csv_journey",
-  "description": "CSV opt-in export; keep list as default display"
-}
