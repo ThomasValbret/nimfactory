@@ -1,65 +1,63 @@
-# Project step — contrat plan↔exécution + récupération bornée
+# Project step — diagnostic de récupération + revise_plan effectif
 
 Date : 2026-11-22  
 Branche : `feature/project-cli-journey` (PR #5 brouillon)  
-Base : tip `30a410f` · code `8fd6fb2` · docs (ce commit)
+**SHA du code exécuté** : `0e759098667d19c705b7c12c9e3f09ec92cfe5b0`
 
-## Périmètre
+## Objectif
 
-1. Contrat explicite : chaque étape doit laisser un arbre compilable ; tant que
-   `project step` n'applique qu'un fichier, une réponse à plusieurs
-   `target_file` est refusée **avant toute écriture**. L'agent peut reformuler
-   ou signaler `revise_plan`.
-2. Récupération bornée (1 tour) branchée sur project step : proposition exacte,
-   motif, contextes d'ancre ambiguë ; choix fichier/correctif laissé au modèle.
-3. Rejeu VPS de `20261122T150522Z` : plan v2 + raw historique, un seul nouvel
-   appel `gpt-4o-mini` (recovery), sans repayer ask/revise.
+L'implémenteur produit une étape compilable, ou transmet au réviseur le
+prérequis qui l'en empêche (`revise_plan`).
+
+## Corrections
+
+1. **Contexte de récupération** — une seule copie fidèle de la réponse brute
+   (y compris bloc malformé) ; pour chaque édition lisible, compte des
+   occurrences de `oldText` dans le fichier ciblé de l'arbre courant ; extraits
+   si ancre ambiguë ; diagnostic **sans écriture**.
+2. **`revise_plan` effectif** — motif persisté (`revise_plan_pending` / reason /
+   step / version) ; `status` et `resume` indiquent `action=revise` ; `step`
+   rend la main sans appel fournisseur ; `project revise` reçoit le motif et,
+   une fois accepté, rouvre le travail.
 
 ## Vérifications hors API
 
 ```
 nim c -r --path:src --path:vendor/NimAgentLibrary/src tests/project/test_step_contract.nim
+bash scripts/replay_archived_recovery_offline.sh
 ```
 
-Cas : multi refuse sans écriture ; plafond d'un tour de recovery ; recovery →
-`revise_plan` ; ambiguous → helpers acceptés.
+Archive offline : `docs/qa/project_cli_journey/offline_archive_replay_20261122T154518Z`
 
-## Campagne recovery
+| Cas | Archive source | Résultat |
+| --- | --- | --- |
+| A | `recovery_replay_20261122T152200Z` raw | recovery → `revise_plan_needed` ; status/resume=`revise` ; step bloqué 0 call ; revise inject → step helpers `pass` |
+| B | `recovery_replay_20261122T152308Z` raw | recovery → helpers ; compile+list `pass` (partial) |
 
-| Archive | Rôle | api_calls | Motif recovery | Décision modèle | Apply | Oracle |
-| --- | --- | --- | --- | --- | --- | --- |
-| `docs/qa/.../recovery_replay_20261122T152200Z` | 1er essai (2e JSON historique illisible → multi non compté) | 1 | `anchor_ambiguous` | reformule `else:` | refuse ambiguous | n/a |
-| `docs/qa/.../recovery_replay_20261122T152308Z` | après correctif comptage multi (cible) | 1 | `multi_proposal` | 1 fichier, ancre `else:` | refuse ambiguous | n/a |
+## Appel API réel (un seul)
 
-### Résultat retenu (152308Z)
+Archive : `docs/qa/project_cli_journey/recovery_replay_20261122T154538Z`  
+Plan v2 historique + raw `20261122T150522Z` ; ask/revise inject ($0).
 
-- Décision modèle : une proposition `src/demo_tasks.nim` avec `oldText: "else:"`
-  (pas de `revise_plan`).
-- Diff appliqué : **aucun** (refuse avant/après écriture ; hashes identiques).
-- Compilation / oracle : non exécutés (apply_failed).
-- Jetons recovery : prompt **1090**, completion **78**, modèle `gpt-4o-mini`.
-- Coût estimé recovery : **≈ $0.000210** (list gpt-4o-mini).
-- Ask/revise : inject historique, **$0** API.
+| Champ | Valeur |
+| --- | --- |
+| Décision modèle | édition unique `src/demo_tasks.nim` avec `oldText: "else:"` (pas de `revise_plan`) |
+| Action suivante | `step` (refuse residual ; pas de revise pending) |
+| Appels | `api_calls_this_command=1` (recovery only) ; historical first = 0 bill |
+| Jetons | prompt **1673**, completion **78**, `gpt-4o-mini` |
+| Coût estimé | **≈ $0.000298** |
+| Diff appliqué | **aucun** (`wrote: false`, `recovery_exhausted`) |
+| Compile / oracle | non exécutés (apply refusé après diagnostic) |
 
-Provenance conservée : `historical_provenance.json` +
-`--historical-provenance` pointant `20261122T150522Z`.
-
-## Fichiers principaux
-
-- `src/nimfactory/mission/apply.nim` — multi-proposal, `parseRevisePlan`, findings
-- `src/nimfactory/project/{pipeline,plan_context}.nim` — gates + recovery
-- `src/nimfactory/cli/cli.nim` — `--replay-first`, `--inject-recovery`
-- `tests/project/test_step_contract.nim`
-- `scripts/replay_project_step_recovery.sh`
+Premier résultat conservé tel quel.
 
 ## Limites
 
-- Le modèle a échoué deux fois sur l'ancre `else:` ; le plafond d'un tour empêche
-  une seconde recovery automatique.
-- Concurrence (`already_running` / lease pid) : commit distinct antérieur
-  `34719f8`, non mélangé ici.
+- Le modèle ignore encore les extraits d'ambiguïté et repropose `else:`.
+- Un second tour de recovery n'est pas autorisé ; `revise_plan` reste la voie
+  pour un prérequis multi-fichiers.
 
-## Coûts
+## Concurrence
 
-Appels payants de ce lot : **2** recovery (`gpt-4o-mini`), total ≈ **$0.00043**.
-Budget restant largement sous $2.
+Correctif de lease concurrent : commit distinct antérieur `34719f8` (non
+mélangé).

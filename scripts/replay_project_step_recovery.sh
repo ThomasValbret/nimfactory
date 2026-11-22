@@ -95,7 +95,7 @@ else
   SEC=$?
   echo "project_step exit=$SEC file=$OUT/step1_recovery.json (via with_host_net)"
 fi
-# Always archive summary even when step fails (set +e).
+set +e  # run_proj may re-enable set -e; keep archiving on step failure
 python3 - <<PY
 import json, pathlib, hashlib
 out = pathlib.Path("$OUT")

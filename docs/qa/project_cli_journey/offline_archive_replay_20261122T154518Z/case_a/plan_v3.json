@@ -1,0 +1,33 @@
+{
+  "summary": "Helpers CSV d'abord, puis câblage CLI — chaque étape laisse un arbre compilable.",
+  "hypothesis": "Le prérequis implémenteur exige formatCsv avant d'étendre demo_tasks.",
+  "optional_question": "",
+  "change_notes": "Réordonne: add_csv_helpers puis wire_export_csv; une étape = un fichier.",
+  "steps": [
+    {
+      "id": "add_csv_helpers",
+      "title": "Ajouter csvQuote/formatCsv dans tasks.nim",
+      "depends_on": []
+    },
+    {
+      "id": "wire_export_csv",
+      "title": "Câbler export-csv dans demo_tasks.nim en réutilisant formatCsv",
+      "depends_on": [
+        "add_csv_helpers"
+      ]
+    }
+  ],
+  "mandate_sketch": {
+    "goal": "Exporter les tâches en CSV sur stdout via commande opt-in",
+    "constraints": [
+      "CSV sur stdout",
+      "garder list inchangé par défaut",
+      "chaque étape laisse un arbre compilable",
+      "une étape = un fichier"
+    ],
+    "files_likely": [
+      "src/tasks.nim",
+      "src/demo_tasks.nim"
+    ]
+  }
+}

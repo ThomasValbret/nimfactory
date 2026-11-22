@@ -1,0 +1,40 @@
+{
+  "stamp": "20261122T154518Z",
+  "code_sha": "0e759098667d19c705b7c12c9e3f09ec92cfe5b0",
+  "case_a": {
+    "archive": "recovery_replay_20261122T152200Z",
+    "verdict": "revise_plan_needed",
+    "next_action": "revise",
+    "status_verdict": "revise_plan_needed",
+    "resume_action": "revise",
+    "blocked_provider_calls": 0,
+    "after_revise_step": "pass"
+  },
+  "case_b": {
+    "archive": "recovery_replay_20261122T152308Z",
+    "verdict": "pass",
+    "via_recovery": true,
+    "recovery_reason": "multi_proposal",
+    "verify": {
+      "ok": true,
+      "kind": "csv_journey_partial",
+      "list_ok": true,
+      "csv_ok": true,
+      "quote_ok": true,
+      "message": "intermediate: compile+list intact (CSV deferred to final step)",
+      "list_out": "1. Acheter du pain\n2. Appeler Alice, Bob\n3. Relire le rapport",
+      "csv_out": "",
+      "compile_exit": 0,
+      "details": {
+        "require_csv": false,
+        "compile_out": "",
+        "expected_list": "1. Acheter du pain\n2. Appeler Alice, Bob\n3. Relire le rapport",
+        "list_exit": 0,
+        "no_args_exit": 0,
+        "no_args_out": "1. Acheter du pain\n2. Appeler Alice, Bob\n3. Relire le rapport"
+      }
+    }
+  },
+  "api_calls": 0,
+  "note": "CLI offline replay of both archives after diagnosis+revise_plan sticky; code tip at run was rebuilt from working tree then committed as 0e75909"
+}

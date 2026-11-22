@@ -1,0 +1,29 @@
+```json
+{
+  "target_file": "src/demo_tasks.nim",
+  "decision": "Add CSV export functionality with opt-in flag.",
+  "edits": [
+    {
+      "oldText": "else:",
+      "newText": "of \"export-csv\":\n    echo formatCSV(loadTasks())\n  else:"
+    }
+  ]
+}
+```
+
+```json
+{
+  "target_file": "src/tasks.nim",
+  "decision": "Implement CSV formatting for task export.",
+  "edits": [
+    {
+      "oldText": "proc formatList*(tasks: openArray[Task]): string =",
+      "newText": "proc formatCSV*(tasks: openArray[Task]): string ="
+    },
+    {
+      "oldText": "lines.add($t.id & \". \" & t.title)"
+      "newText": "lines.add(\"\\\"\" & $t.id & \". \" & t.title.replace(\"\\\", \"\\\\\").replace(\"\\\", \"\\\"\\\") & \"\\\"\")"
+    }
+  ]
+}
+```

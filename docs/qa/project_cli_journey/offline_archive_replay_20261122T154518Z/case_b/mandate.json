@@ -1,0 +1,23 @@
+{
+  "goal": "Permettre à l'utilisateur d'exporter ses tâches au format CSV sur la sortie standard tout en préservant le comportement actuel.",
+  "constraints": [
+    "Ne pas modifier le comportement actuel de la commande 'list'.",
+    "Utiliser un drapeau opt-in pour l'exportation.",
+    "L'exportation doit se faire sans écraser l'affichage par défaut."
+  ],
+  "files_likely": [
+    "src/demo_tasks.nim",
+    "src/tasks.nim"
+  ],
+  "plan_version": 2,
+  "change_notes": "L'exportation CSV sera envoyée à la sortie standard au lieu d'un fichier, avec maintien de l'affichage des tâches par défaut pour la commande 'list'.",
+  "agents_md_excerpt": "# Agents — demo_tasks_cli\n\nPetit CLI Nim de liste de tâches.\n\n## Consignes\n- Préserver le comportement d'affichage par défaut (`list`) sauf demande explicite.\n- Les changements d'export doivent être opt-in (drapeau CLI), pas remplacer `list`.\n- Les titres peuvent contenir des virgules ; un export CSV doit les quotter correctement.\n- Préférer de petites modifications localisées sous `src/`.\n",
+  "source_ids": [
+    "src/demo_tasks.nim",
+    "src/tasks.nim"
+  ],
+  "refinement": "Je veux du CSV sur la sortie standard et je veux garder l'affichage actuel par défaut.",
+  "step_id": "1",
+  "step_title": "Ajouter une option de commande pour l'exportation vers CSV",
+  "source_tree": "/opt/nimFactory/fixtures/demo_tasks_cli"
+}

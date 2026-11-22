@@ -1,0 +1,47 @@
+{
+  "summary": "Ajouter une fonction d'exportation des tâches au format CSV avec sortie standard.",
+  "hypothesis": "L'utilisateur souhaite pouvoir exporter des tâches au format CSV tout en conservant l'affichage par défaut de la commande 'list'.",
+  "optional_question": "Souhaitez-vous d'autres formats d'exportation à l'avenir?",
+  "steps": [
+    {
+      "id": "1",
+      "title": "Ajouter une option de commande pour l'exportation vers CSV",
+      "depends_on": []
+    },
+    {
+      "id": "2",
+      "title": "Développer la fonction d'exportation vers CSV sur la sortie standard",
+      "depends_on": [
+        "1"
+      ]
+    },
+    {
+      "id": "3",
+      "title": "Gérer le formatage CSV correct des titres (quotations)",
+      "depends_on": [
+        "2"
+      ]
+    },
+    {
+      "id": "4",
+      "title": "Mettre à jour la documentation des commandes CLI",
+      "depends_on": [
+        "1",
+        "2"
+      ]
+    }
+  ],
+  "mandate_sketch": {
+    "goal": "Permettre à l'utilisateur d'exporter ses tâches au format CSV sur la sortie standard tout en préservant le comportement actuel.",
+    "constraints": [
+      "Ne pas modifier le comportement actuel de la commande 'list'.",
+      "Utiliser un drapeau opt-in pour l'exportation.",
+      "L'exportation doit se faire sans écraser l'affichage par défaut."
+    ],
+    "files_likely": [
+      "src/demo_tasks.nim",
+      "src/tasks.nim"
+    ]
+  },
+  "change_notes": "L'exportation CSV sera envoyée à la sortie standard au lieu d'un fichier, avec maintien de l'affichage des tâches par défaut pour la commande 'list'."
+}

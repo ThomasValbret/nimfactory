@@ -1,0 +1,25 @@
+{
+  "goal": "Exporter les tâches en CSV sur stdout via commande opt-in",
+  "constraints": [
+    "CSV sur stdout",
+    "garder list inchangé par défaut",
+    "chaque étape laisse un arbre compilable",
+    "une étape = un fichier"
+  ],
+  "files_likely": [
+    "src/tasks.nim",
+    "src/demo_tasks.nim"
+  ],
+  "plan_version": 3,
+  "change_notes": "Réordonne: add_csv_helpers puis wire_export_csv; une étape = un fichier.",
+  "agents_md_excerpt": "# Agents — demo_tasks_cli\n\nPetit CLI Nim de liste de tâches.\n\n## Consignes\n- Préserver le comportement d'affichage par défaut (`list`) sauf demande explicite.\n- Les changements d'export doivent être opt-in (drapeau CLI), pas remplacer `list`.\n- Les titres peuvent contenir des virgules ; un export CSV doit les quotter correctement.\n- Préférer de petites modifications localisées sous `src/`.\n",
+  "source_ids": [
+    "src/demo_tasks.nim",
+    "src/tasks.nim"
+  ],
+  "refinement": "Prérequis implémenteur: step 1 cannot leave a compilable tree without helpers already present; revise plan to add helpers first",
+  "implementer_revise_reason": "step 1 cannot leave a compilable tree without helpers already present; revise plan to add helpers first",
+  "step_id": "add_csv_helpers",
+  "step_title": "Ajouter csvQuote/formatCsv dans tasks.nim",
+  "source_tree": "/opt/nimFactory/fixtures/demo_tasks_cli"
+}

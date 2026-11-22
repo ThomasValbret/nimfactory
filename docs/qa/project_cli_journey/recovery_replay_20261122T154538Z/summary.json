@@ -1,0 +1,65 @@
+{
+  "stamp": "20261122T154538Z",
+  "code_sha_executed": "0e759098667d19c705b7c12c9e3f09ec92cfe5b0",
+  "historical_campaign": "docs/qa/project_cli_journey/20261122T150522Z",
+  "ok": false,
+  "verdict": "apply_failed",
+  "message": "recovery still refused (anchor_ambiguous); no write",
+  "model_decision": "single-file edit on src/demo_tasks.nim with oldText 'else:' (ignored ambiguous excerpts; no revise_plan)",
+  "next_action": "step",
+  "revise_plan_pending": false,
+  "revise_plan_reason": "",
+  "refuse_code": "anchor_ambiguous",
+  "recovery_triggered": true,
+  "recovery_attempted": true,
+  "recovery_reason": "multi_proposal",
+  "api_calls_this_command": 1,
+  "provider_calls_this_command": 1,
+  "apply": {
+    "ok": false,
+    "refuse_code": "anchor_ambiguous",
+    "wrote": false,
+    "targets": [
+      "src/demo_tasks.nim"
+    ],
+    "recovery_exhausted": true,
+    "prior_refuse": "multi_proposal"
+  },
+  "verify": null,
+  "readable_diff": null,
+  "usage_by_role": {
+    "planner": {
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "calls": 0,
+      "estimated_usd": 0.0,
+      "model": ""
+    },
+    "reviser": {
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "calls": 0,
+      "estimated_usd": 0.0,
+      "model": ""
+    },
+    "implementer_recovery": {
+      "prompt_tokens": 1673,
+      "completion_tokens": 78,
+      "calls": 1,
+      "estimated_usd": 0.00029775,
+      "model": "gpt-4o-mini"
+    }
+  },
+  "recovery_tokens": {
+    "prompt": 1673,
+    "completion": 78,
+    "model": "gpt-4o-mini",
+    "estimated_usd": 0.00029775
+  },
+  "recovery_raw": "```json\n{\n  \"target_file\": \"src/demo_tasks.nim\",\n  \"decision\": \"Add CSV export functionality with opt-in flag.\",\n  \"edits\": [\n    {\n      \"oldText\": \"else:\",\n      \"newText\": \"of \\\"export-csv\\\":\\n    echo formatCSV(loadTasks())\\n  else:\"\n    }\n  ]\n}\n```",
+  "historical_provenance": "docs/qa/project_cli_journey/20261122T150522Z/step1.json#provider.raw_text + docs/qa/project_cli_journey/20261122T150522Z/artifacts/plan_v2.json",
+  "compile_verdict": "not_run",
+  "oracle_verdict": "not_run",
+  "diff_applied": "none",
+  "estimated_usd_recovery": 0.00029775
+}
