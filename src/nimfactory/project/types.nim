@@ -56,6 +56,9 @@ type
     revisePlanStepId*: string
     revisePlanAtVersion*: int    ## plan version that blocked
 
+proc projectRunId*(projectId: string): string =
+  "project:" & projectId
+
 proc emptyUsage*(): UsageRollup =
   UsageRollup(promptTokens: 0, completionTokens: 0, calls: 0, estimatedUsd: 0.0, model: "")
 

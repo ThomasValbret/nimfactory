@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>NimFactory Studio</title>
+  <link rel="stylesheet" href="/studio.css">
+  <script src="/studio.js" defer></script>
+</head>
+<body>
+  <header class="global">
+    <div class="brand"><span class="stamp" aria-hidden="true"><i></i><i></i><i></i></span>NimFactory</div>
+    <nav class="modes" aria-label="Espace de travail" id="modes"></nav>
+    <div class="global-right"><span class="signal"></span><span id="connection" role="status">Connexion…</span></div>
+  </header>
+  <div class="layout">
+    <aside class="rail"><div class="project"><span class="kicker">PROJET</span><strong id="project-name">…</strong></div>
+      <nav id="sidebar" aria-label="Projet"></nav>
+      <div class="rail-foot"><span class="kicker">SESSION LOCALE</span><span id="session-foot">Consultation en direct</span></div>
+    </aside>
+    <main id="app"><p>Lecture du projet…</p></main>
+  </div>
+</body>
+</html>

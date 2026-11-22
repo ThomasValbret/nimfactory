@@ -8,6 +8,8 @@ import nimfactory/runtime/executor/executor
 import nimfactory/mission/pipeline
 import nimfactory/project/pipeline
 import nimfactory/project/store
+import nimfactory/application/project_view
+import nimfactory/application/project_command
 
 const
   ExitOk* = 0
@@ -54,6 +56,9 @@ type
     artifactDir: string
     replayFirst: string
     historicalProvenance: string
+    commandId: string
+    expectedPlanVersion: int
+    hasExpectedPlanVersion: bool
     positional: seq[string]
 
 proc writeHuman(msg: string) =
@@ -73,7 +78,7 @@ Commands:
   inspect --store PATH --run-id ID
   events --store PATH --run-id ID
   mission-fix --repo PATH --oracle PATH --route api|local|inject [options]
-  project ask|revise|step|status|resume --store PATH [options]
+  project ask|revise|step|status|resume|snapshot --store PATH [options]
 
 Options:
   --mode sequential|concurrent
@@ -102,6 +107,8 @@ Options:
   --objective TEXT      initial pilot request (project ask)
   --refinement TEXT     pilot precision (project revise)
   --artifact-dir PATH   write plan/mandate/verify artifacts
+  --command-id ID       idempotent project write command key
+  --expected-plan-version N  refuse revise if plan moved
   --json                machine mode (stdout JSON only; default)
 """)
 
@@ -124,6 +131,8 @@ proc parseArgs(args: seq[string]): CliOptions =
   result.route = "api"
   result.localModel = "qwen2.5-coder:7b"
   result.projectId = "demo_tasks_cli"
+  result.expectedPlanVersion = -1
+  result.hasExpectedPlanVersion = false
   result.positional = @[]
   if args.len == 0:
     result.help = true
@@ -197,6 +206,11 @@ proc parseArgs(args: seq[string]): CliOptions =
         result.refinement = takeValue(p)
       of "artifact-dir":
         result.artifactDir = takeValue(p)
+      of "command-id":
+        result.commandId = takeValue(p)
+      of "expected-plan-version":
+        result.expectedPlanVersion = parseInt(takeValue(p))
+        result.hasExpectedPlanVersion = true
       of "recovery-api":
         result.recoveryApi = true
       of "json":
@@ -337,8 +351,11 @@ proc runCli*(args: seq[string]): int =
       return ExitFailed
     of "project":
       if o.sub.len == 0:
-        writeHuman("project requires subcommand: ask|revise|step|status|resume")
+        writeHuman("project requires subcommand: ask|revise|step|status|resume|snapshot")
         return ExitInvalid
+      if o.sub == "snapshot":
+        writeMachine(readProjectView(o.store, o.projectId))
+        return ExitOk
       var preq = defaultProjectRequest()
       preq.storePath = o.store
       preq.projectId = o.projectId
@@ -352,6 +369,10 @@ proc runCli*(args: seq[string]): int =
       preq.historicalProvenance = o.historicalProvenance
       preq.worktree = o.worktree
       preq.artifactDir = o.artifactDir
+      preq.commandId = o.commandId
+      if o.hasExpectedPlanVersion:
+        preq.expectedPlanVersion = o.expectedPlanVersion
+        preq.expectPlanVersion = true
       if preq.objective.len == 0 and o.positional.len > 0:
         preq.objective = o.positional.join(" ")
       if preq.refinement.len == 0 and o.sub == "revise" and o.positional.len > 0:
@@ -365,7 +386,7 @@ proc runCli*(args: seq[string]): int =
       of "ask":
         prep = projectAsk(preq)
       of "revise":
-        prep = projectRevise(preq)
+        prep = executeRevisePlan(preq)
       of "step":
         prep = projectStep(preq)
       of "status":

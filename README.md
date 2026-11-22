@@ -13,6 +13,39 @@ cd /opt/nimFactory
 nim c -r --path:src --path:/opt/NimAgentLibrary/src tests/f0/test_contracts.nim
 ```
 
+## Studio graphique
+
+Le Studio ouvre un projet créé par la CLI. Le serveur natif et le client navigateur sont écrits en Nim. Le binaire embarque ses ressources. La compilation du Studio utilise Nim 2.4 et un compilateur C. L’exécution requiert la bibliothèque SQLite du système. La lecture reste non intrusive ; la révision de plan passe par la même logique métier que `nimfactory project revise`.
+
+```sh
+export PATH="/root/.nimble/bin:$PATH"
+cd /opt/nimFactory
+nim e scripts/build_studio.nims
+nim c -d:release -d:ssl --hints:off --nimcache:build/nimcache_cli \
+  --path:src --path:/opt/NimAgentLibrary/src \
+  -o:build/nimfactory src/nimfactory_cli.nim
+
+build/nimfactory-studio \
+  --store /opt/nimFactory-studio-demo/project.sqlite \
+  --project-id studio_revise_demo \
+  --trees /opt/nimFactory-studio-demo/artifacts/trees \
+  --cwd /opt/nimFactory/fixtures/demo_tasks_cli \
+  --route inject \
+  --inject /opt/nimFactory/fixtures/demo_tasks_cli/inject/plan_v2.json \
+  --artifact-dir /opt/nimFactory-studio-demo/artifacts \
+  --port 8085
+```
+
+Ouvrir `http://127.0.0.1:8085`. Sur un VPS, un tunnel SSH vers ce port donne accès au même écran depuis le poste client :
+
+```sh
+ssh -N -L 8085:127.0.0.1:8085 user@vps
+```
+
+Pour activer la lecture du fichier cible accepté, `--trees` pointe vers le répertoire `artifacts/trees` produit par les étapes. Dans Workflow, « Réviser le plan » apparaît quand le snapshot expose la capacité `revise_plan`. La commande POST `/api/command` exige `command_id`, `expected_plan_version` et `refinement`, reste sur loopback, et refuse une Origin étrangère.
+
+`nimfactory project snapshot --store PATH --project-id ID` émet la même projection JSON que `GET /api/snapshot`. CLI et Studio partagent `executeRevisePlan` pour les reçus idempotents.
+
 ## Documents
 
 - [AGENTS.md](AGENTS.md) — cadre agents

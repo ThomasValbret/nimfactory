@@ -33,6 +33,9 @@ type
     historicalProvenance*: string ## note / path preserved in report
     worktree*: string
     artifactDir*: string        ## optional: write plan/mandate/diff here
+    commandId*: string          ## idempotency key for write commands
+    expectedPlanVersion*: int   ## optimistic concurrency (with expectPlanVersion)
+    expectPlanVersion*: bool    ## when true, refuse if current != expected
 
   ProjectReport* = object
     ok*: bool
@@ -57,6 +60,8 @@ type
 proc defaultProjectRequest*(): ProjectRequest =
   result.route = "api"
   result.projectId = "demo_tasks_cli"
+  result.expectedPlanVersion = -1
+  result.expectPlanVersion = false
 
 proc ensureUsage(doc: var ProjectDoc; role: string) =
   if role notin doc.usageByRole:
@@ -578,6 +583,9 @@ proc projectRevise*(req: ProjectRequest): ProjectReport =
   let ctx = buildReviseContext(
     doc.cwd, doc.objective, doc.refinements, priorJson, implementerReason)
   result.provider = invokeProjectModel(req, ctx.systemPrompt, ctx.userPrompt)
+  result.providerCallsThisCommand = 1
+  if result.provider.route == "api":
+    result.apiCallsThisCommand = 1
   if req.route == "inject":
     result.untested.add("reviser model decision (inject)")
   if not result.provider.ok:

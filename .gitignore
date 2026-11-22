@@ -72,3 +72,5 @@ tests/f17/test_m1_resume_recipe
 fixtures/e2e_bugfix/.wt*
 tests/mission/test_context_and_inject
 tests/mission/test_intervention_bench
+tests/studio/test_project_command
+tests/studio/test_project_view

@@ -30,3 +30,6 @@ task testf0, "Run F0 contract tests":
 
 task testwavea, "Alias of test (Wave A + A.1)":
   testTask()
+
+task studio, "Build the local Studio server with its embedded Nim browser client":
+  exec "nim e scripts/build_studio.nims"
