@@ -44,17 +44,50 @@ type
     occurrenceContexts*: seq[string] ## lines around each match (ambiguous only)
 
 proc extractJsonObject*(raw: string): string =
-  ## Tolerate fenced markdown around a JSON object.
+  ## Tolerate fenced markdown; return the first balanced `{...}` object.
+  ## Important: do not use rfind('}') — dual ```json fences would span both
+  ## objects and fail parse with "EOF expected".
   var t = raw.strip()
   if t.startsWith("```"):
     let firstNl = t.find('\n')
     if firstNl >= 0:
       t = t[firstNl+1 .. ^1]
-    if t.endsWith("```"):
+    # Close of the first fence only (not a later second fence).
+    let fenceEnd = t.find("```")
+    if fenceEnd >= 0:
+      t = t[0 ..< fenceEnd].strip()
+    elif t.endsWith("```"):
       t = t[0 ..< t.len-3].strip()
   let start = t.find('{')
+  if start < 0:
+    return t
+  var depth = 0
+  var inStr = false
+  var escape = false
+  for i in start ..< t.len:
+    let c = t[i]
+    if inStr:
+      if escape:
+        escape = false
+      elif c == '\\':
+        escape = true
+      elif c == '"':
+        inStr = false
+      continue
+    case c
+    of '"':
+      inStr = true
+    of '{':
+      inc depth
+    of '}':
+      dec depth
+      if depth == 0:
+        return t[start .. i]
+    else:
+      discard
+  # Unbalanced — fall back to legacy span for error messages upstream.
   let stop = t.rfind('}')
-  if start >= 0 and stop > start:
+  if stop > start:
     return t[start .. stop]
   t
 

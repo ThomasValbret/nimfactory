@@ -1,0 +1,37 @@
+{
+  "sha": "3fbd08ee358d2b61375ae386dcc213c742473776",
+  "route": "api",
+  "model_mode": "live gpt-4o-mini",
+  "network": "nsenter tailscaled netns (eth0+tailscale0)",
+  "campaign": "docs/qa/project_cli_journey/20261122T142352Z",
+  "first_result": "apply_failed",
+  "note": "First live API campaign kept as-is. Implementer returned two markdown JSON fences; extractJsonObject spanned both until balanced-object fix.",
+  "plan_versions": 2,
+  "plan_steps_v2": 5,
+  "roles": {
+    "planner": {
+      "calls": 1,
+      "prompt_tokens": 562,
+      "completion_tokens": 363,
+      "estimated_usd": 0.0003021,
+      "model": "gpt-4o-mini",
+      "result": "plan_ready"
+    },
+    "reviser": {
+      "calls": 1,
+      "prompt_tokens": 949,
+      "completion_tokens": 489,
+      "estimated_usd": 0.00043575,
+      "model": "gpt-4o-mini",
+      "result": "plan_revised"
+    },
+    "implementer": {
+      "calls": 1,
+      "prompt_tokens": 899,
+      "completion_tokens": 258,
+      "estimated_usd": 0.00028965,
+      "model": "gpt-4o-mini",
+      "result": "apply_failed"
+    }
+  }
+}

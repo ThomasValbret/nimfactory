@@ -1,0 +1,53 @@
+{
+  "summary": "Implémentation d'une fonctionnalité d'exportation des tâches en format CSV sur la sortie standard tout en conservant l'affichage actuel par défaut.",
+  "hypothesis": "L'exportation au format CSV nécessitera la création d'une nouvelle procédure dans le fichier `src/tasks.nim`, une modification du `main` pour accepter un nouveau drapeau, et des ajustements dans le formatage des titres pour l'export.",
+  "optional_question": "Souhaitez-vous ajouter des options supplémentaires pour l'exportation au format CSV dans le futur ?",
+  "steps": [
+    {
+      "id": "1",
+      "title": "Ajouter une procédure d'exportation CSV",
+      "depends_on": []
+    },
+    {
+      "id": "2",
+      "title": "Modifier le main pour accepter le drapeau d'exportation",
+      "depends_on": [
+        "1"
+      ]
+    },
+    {
+      "id": "3",
+      "title": "Mettre en œuvre le formatage des titres avec des virgules pour l'export CSV",
+      "depends_on": [
+        "1"
+      ]
+    },
+    {
+      "id": "4",
+      "title": "Tester l'exportation CSV avec différentes tâches",
+      "depends_on": [
+        "2",
+        "3"
+      ]
+    },
+    {
+      "id": "5",
+      "title": "Préserver le comportement d'affichage par défaut dans la fonction main",
+      "depends_on": [
+        "2"
+      ]
+    }
+  ],
+  "mandate_sketch": {
+    "goal": "Permettre l'exportation des tâches en format CSV sur la sortie standard tout en gardant l'affichage des tâches par défaut.",
+    "constraints": [
+      "Ne pas changer le comportement par défaut de l'affichage des tâches",
+      "Les titres contenant des virgules doivent être correctement quotés dans le CSV"
+    ],
+    "files_likely": [
+      "src/demo_tasks.nim",
+      "src/tasks.nim"
+    ]
+  },
+  "change_notes": "Le plan a été modifié pour préciser que l'exportation des tâches au format CSV se fera sur la sortie standard, sans affecter l'affichage par défaut des tâches existantes."
+}

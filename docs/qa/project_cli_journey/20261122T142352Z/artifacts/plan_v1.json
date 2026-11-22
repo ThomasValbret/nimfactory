@@ -1,0 +1,45 @@
+{
+  "summary": "Implémentation d'une fonctionnalité d'exportation des tâches en format CSV avec option opt-in dans le CLI.",
+  "hypothesis": "L'exportation au format CSV nécessitera la création d'une nouvelle procédure dans le fichier `src/tasks.nim` et une modification du `main` pour accepter un nouveau drapeau.",
+  "optional_question": "Doit-on conserver l'option d'exportation CSV dans un fichier séparé ou l'imprimer directement dans la console ?",
+  "steps": [
+    {
+      "id": "1",
+      "title": "Ajouter une procédure d'exportation CSV",
+      "depends_on": []
+    },
+    {
+      "id": "2",
+      "title": "Modifier le main pour accepter le drapeau d'exportation",
+      "depends_on": [
+        "1"
+      ]
+    },
+    {
+      "id": "3",
+      "title": "Mettre en œuvre le formatage des titres avec des virgules",
+      "depends_on": [
+        "1"
+      ]
+    },
+    {
+      "id": "4",
+      "title": "Tester l'exportation CSV avec différentes tâches",
+      "depends_on": [
+        "2",
+        "3"
+      ]
+    }
+  ],
+  "mandate_sketch": {
+    "goal": "Permettre l'exportation des tâches en format CSV en ajoutant une option dans le CLI.",
+    "constraints": [
+      "Ne pas changer le comportement par défaut de l'affichage des tâches",
+      "Les titres contenant des virgules doivent être correctement quotés dans le CSV"
+    ],
+    "files_likely": [
+      "src/demo_tasks.nim",
+      "src/tasks.nim"
+    ]
+  }
+}
