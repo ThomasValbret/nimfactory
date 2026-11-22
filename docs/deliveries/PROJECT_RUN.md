@@ -1,8 +1,8 @@
-# Project run — commande unique vers l’export
+# Project run — line insert, compile repair, final vs postconditions
 
 Date : 2026-11-22  
-Branche : `feature/project-run`  
-**SHA exécuté** : `1076ccd4d0b8e247b7e6c7b273c6dd346d809893`
+**SHA exécuté** : `8f91314de9a40fe6c339dc9e46ecd527ac3fc7e8`  
+Branche : `feature/project-run` (depuis `dedbe62`)
 
 ## Commande unique
 
@@ -15,52 +15,30 @@ nimfactory project run \
   --route api
 ```
 
-(Inject de qualification : ajouter `--route inject --inject-dir fixtures/demo_tasks_cli/inject`.)
+## Hors API
 
-## Changements livrés (depuis `affe5d4`)
-
-- Rejeu des 3 sorties archivées (`archive_api_raw_parse_error`, `archive_api_raw_empty_oldtext`, sticky engine)
-- JSON illisible → récupération bornée ; `insertBefore` / `insertAfter` sur ancre unique vérifiée
-- Après épuisement, `run` demande une révision motivée (`revise:auto`) ; révision équivalente → motif conservé
-- Critères rattachés à la recette + objectif d’étape ; commentaire seul échoue si export promis ; preuve compile+list ne couvre pas un export ajouté
-- Comptage `ask` corrigé (`provider_calls` / `api_calls`)
-- Mutex run↔step (lease + owner vivant) ; issue fournisseur `unknown` visible après interruption
-
-## Qualification inject (binaire livré)
-
-`docs/qa/project_run/20261122T211836Z_inject` — verdict **done**
-
-| Usage | Résultat |
-| --- | --- |
-| (sans argument) | liste intacte |
-| `list` | liste intacte |
-| `export-csv` | `id,title` + `"Appeler Alice, Bob"` |
-
-Appels API : 0 · USD : 0
-
-## Campagne route réelle (API)
-
-`docs/qa/project_run/20261122T211734Z_api` — **blocage** `verify_failed` (compile) après auto-revise
-
-### Appels par rôle
-
-| Rôle | Appels | USD est. |
-| --- | --- | --- |
-| planner | 1 | 0.000291 |
-| reviser | 2 | 0.000898 |
-| implementer | 2 | 0.000562 |
-| implementer_recovery | 1 | 0.000330 |
-| **total** | **6** | **~$0.0021** |
-
-### Première sortie fautive / décision moteur
-
-- Première faute : `recovery_exhausted` (`anchor_missing` après recovery) — raw conservé dans `first_faulty.txt`
-- Décision moteur : `revise:auto` → plan v3 → step 1 appliqué → `verify_failed` (compile `undeclared identifier: 'cmd'`)
-- Ask compté : **api_calls=1**
-
-## Tests
+- Reproduction : `insertAfter` textuel colle `"list"if` (`archive_api_glue_list_if_first.json`)
+- Contrat : `insertBefore`/`insertAfter` (textuel, legacy) vs `insertLineBefore`/`insertLineAfter` (nouvelle ligne)
+- Réparation post-compile : candidat rejeté + diff + diagnostic localisé (Nim / gcc-like)
+- Plan : `final_criteria` vs `postconditions` par étape
+- Révision motivée : fingerprint/postconditions changent le traitement du blocage
 
 ```bash
 nim c -r --path:src --path:vendor/NimAgentLibrary/src \
   tests/project/test_project_run_regressions.nim
 ```
+
+## Campagne API (`docs/qa/project_run/20261122T230713Z_api`)
+
+**Pas de binaire livré.** Première décision bloquante : `revise_plan_needed`.
+
+| Rôle | Appels | USD |
+| --- | --- | --- |
+| planner | 1 | 0.000422 |
+| reviser | 2 | 0.001206 |
+| implementer | 2 | 0.000610 |
+| implementer_recovery | 2 | 0.000538 |
+| **total** | **7** | **~$0.0028** |
+
+Parcours : ask → revise → step(`revise_plan`, recovery) → `revise:auto` → step(`revise_plan` encore).  
+`maxAutoRevises=1` → arrêt. Première sortie fautive : `first_faulty.txt` (déjà `insertLine*`).
