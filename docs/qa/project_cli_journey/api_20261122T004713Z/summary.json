@@ -1,5 +1,5 @@
 {
-  "sha": "bf7f542e517536b469646bd1628cd0cd57a1b726",
+  "sha": "08a77759d88bad7d180369b31bbb0be81d159655",
   "route": "api",
   "exit": 4,
   "ok": false,
@@ -11,5 +11,6 @@
     "reviser",
     "implementer"
   ],
-  "note": "First API result archived (success or failure). Keep as-is."
+  "note": "First API result archived (DNS failure). Code SHA updated to tip after offline fixes.",
+  "code_sha_at_attempt": "08a77759d88bad7d180369b31bbb0be81d159655"
 }
