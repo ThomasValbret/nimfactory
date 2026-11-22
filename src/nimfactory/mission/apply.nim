@@ -558,3 +558,153 @@ proc exactProposalPayload*(raw: string): string =
   if dec.exactProposalJson.len > 0:
     return dec.exactProposalJson
   extractJsonObject(raw)
+
+type
+  EditDiagnosis* = object
+    targetFile*: string
+    editIndex*: int
+    oldText*: string
+    matchCount*: int
+    contexts*: seq[string]
+    parseOk*: bool
+    note*: string
+
+  ProposalDiagnosis* = object
+    rawFaithful*: string          ## single unmodified copy of model reply
+    proposalCount*: int
+    targets*: seq[string]
+    edits*: seq[EditDiagnosis]
+    malformedBlocks*: int
+    needsRefuse*: bool            ## multi, missing, or ambiguous — no write
+    refuseCode*: string
+    finding*: string
+
+proc editFieldFromNode(item: JsonNode; names: openArray[string]): string =
+  for n in names:
+    if item.hasKey(n) and item[n].kind == JString:
+      return item[n].getStr.replace("\r\n", "\n")
+  ""
+
+proc diagnoseRawAgainstTree*(sourceRoot, raw: string): ProposalDiagnosis =
+  ## Read-only: one faithful raw copy + per-edit oldText counts in current tree.
+  ## Never writes. Malformed blocks are kept in rawFaithful and counted.
+  result.rawFaithful = raw
+  result.edits = @[]
+  result.targets = @[]
+  for body in extractAllBalancedObjects(raw):
+    try:
+      let node = parseJson(body)
+      if node.kind != JObject: continue
+      let tf = node{"target_file"}.getStr
+      if tf.len == 0: continue
+      inc result.proposalCount
+      result.targets.add(tf)
+      let absPath = sourceRoot / tf
+      let fileExists = fileExists(absPath)
+      let content =
+        if fileExists: readFile(absPath).replace("\r\n", "\n")
+        else: ""
+      let editsNode = node{"edits"}
+      if editsNode != nil and editsNode.kind == JArray and editsNode.len > 0:
+        var ei = 0
+        for item in editsNode:
+          inc ei
+          var ed = EditDiagnosis(
+            targetFile: tf, editIndex: ei, parseOk: item.kind == JObject)
+          if item.kind != JObject:
+            ed.note = "malformed_edit_element"
+            result.edits.add(ed)
+            continue
+          ed.oldText = editFieldFromNode(item, ["oldText", "old_text", "search"])
+          if ed.oldText.len == 0:
+            ed.note = "empty_or_missing_oldText"
+            result.edits.add(ed)
+            continue
+          if not fileExists:
+            ed.note = "target_missing"
+            ed.matchCount = 0
+          else:
+            let positions = findNonOverlapPositions(content, ed.oldText)
+            ed.matchCount = positions.len
+            if positions.len > 1:
+              var oi = 0
+              for pos in positions:
+                inc oi
+                ed.contexts.add(
+                  "occurrence " & $oi & " of " & $positions.len & ":\n" &
+                  contextAroundMatch(content, pos, ed.oldText.len))
+              ed.note = "anchor_ambiguous"
+            elif positions.len == 0:
+              ed.note = "anchor_missing"
+            else:
+              ed.note = "anchor_unique"
+          result.edits.add(ed)
+      elif node.hasKey("patched_content"):
+        var ed = EditDiagnosis(
+          targetFile: tf, editIndex: 1, parseOk: true,
+          note: if fileExists: "patched_content_mode" else: "target_missing",
+          matchCount: if fileExists: 1 else: 0)
+        result.edits.add(ed)
+      else:
+        var ed = EditDiagnosis(
+          targetFile: tf, editIndex: 0, parseOk: true, note: "missing_edits")
+        result.edits.add(ed)
+    except CatchableError:
+      if "\"target_file\"" in body:
+        inc result.proposalCount
+        inc result.malformedBlocks
+        let key = "\"target_file\""
+        let k = body.find(key)
+        var tf = "(unparseable)"
+        if k >= 0:
+          let colon = body.find(':', k + key.len)
+          let q1 = if colon >= 0: body.find('"', colon + 1) else: -1
+          let q2 = if q1 >= 0: body.find('"', q1 + 1) else: -1
+          if q1 >= 0 and q2 > q1:
+            tf = body[q1+1 ..< q2]
+        result.targets.add(tf)
+        result.edits.add(EditDiagnosis(
+          targetFile: tf, editIndex: 0, parseOk: false,
+          note: "malformed_json_block", matchCount: -1))
+
+  # Classify refuse without writing.
+  if result.proposalCount > 1:
+    result.needsRefuse = true
+    result.refuseCode = "multi_proposal"
+  else:
+    for ed in result.edits:
+      if ed.note in ["anchor_ambiguous", "anchor_missing", "target_missing",
+                     "empty_or_missing_oldText", "malformed_edit_element",
+                     "missing_edits", "malformed_json_block"]:
+        result.needsRefuse = true
+        if ed.note == "anchor_ambiguous":
+          result.refuseCode = "anchor_ambiguous"
+        elif result.refuseCode.len == 0:
+          result.refuseCode = ed.note
+  if result.refuseCode.len == 0 and result.needsRefuse:
+    result.refuseCode = "apply_refused"
+
+  var parts: seq[string] = @[]
+  parts.add("Read-only diagnosis (no file was written).")
+  parts.add("Proposal count: " & $result.proposalCount &
+            " (malformed blocks: " & $result.malformedBlocks & ").")
+  if result.targets.len > 0:
+    parts.add("Targets: " & result.targets.join(", "))
+  if result.proposalCount > 1:
+    parts.add("While project step applies a single file, reformulate as one " &
+              "proposal or signal revise_plan if a prerequisite requires it.")
+  for ed in result.edits:
+    parts.add("Edit " & $ed.editIndex & " on " & ed.targetFile &
+              ": note=" & ed.note & " match_count=" & $ed.matchCount)
+    if ed.oldText.len > 0:
+      parts.add("oldText:")
+      parts.add("```")
+      parts.add(ed.oldText)
+      parts.add("```")
+    for c in ed.contexts:
+      parts.add(c)
+  parts.add("Faithful raw response (single copy, including any malformed block):")
+  parts.add("```")
+  parts.add(raw)
+  parts.add("```")
+  result.finding = parts.join("\n")

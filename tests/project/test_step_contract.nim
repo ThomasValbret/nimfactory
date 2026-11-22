@@ -40,8 +40,23 @@ block countProposals:
   let hist = root / "docs" / "qa" / "project_cli_journey" /
              "recovery_replay_20261122T152200Z" / "historical_first_raw.txt"
   if fileExists(hist):
-    let h = countFixProposals(readFile(hist))
+    let hraw = readFile(hist)
+    let h = countFixProposals(hraw)
     doAssert h.count == 2, "historical multi count=" & $h.count & " targets=" & $h.targets
+    let d = diagnoseRawAgainstTree(fix, hraw)
+    doAssert d.rawFaithful == hraw
+    doAssert d.proposalCount == 2
+    doAssert d.malformedBlocks == 1
+    doAssert d.needsRefuse
+    doAssert d.refuseCode == "multi_proposal"
+    # Readable first edit: else: is ambiguous in demo_tasks.nim
+    var sawAmbig = false
+    for ed in d.edits:
+      if ed.targetFile == "src/demo_tasks.nim" and ed.note == "anchor_ambiguous":
+        doAssert ed.matchCount == 2
+        doAssert ed.contexts.len == 2
+        sawAmbig = true
+    doAssert sawAmbig
   echo "count_fix_proposals: ok"
 
 block multiRefuseNoWrite:
@@ -119,6 +134,51 @@ block recoveryMayRevisePlan:
   doAssert r.recoveryAttempted
   doAssert r.recoveryReason == "multi_proposal"
   doAssert r.report{"apply"}{"wrote"}.getBool == false
+  doAssert r.doc.revisePlanPending
+  doAssert r.doc.nextAction == "revise"
+  doAssert r.doc.revisePlanReason.len > 0
+
+  # status / resume surface the revision to perform
+  var st = defaultProjectRequest()
+  st.storePath = store
+  st.projectId = "rev_plan"
+  let status = projectStatus(st)
+  doAssert status.verdict == "revise_plan_needed", status.verdict
+  doAssert status.report{"revise_plan_pending"}.getBool
+  let resume = projectResume(st)
+  doAssert resume.verdict == "revise_plan_needed"
+  doAssert resume.report{"resume"}{"action"}.getStr == "revise"
+
+  # step on blocked plan: no provider call
+  var step2 = req
+  step2.injectPath = inj / "step_helpers.json"
+  step2.injectRecoveryPath = ""
+  let blocked = projectStep(step2)
+  doAssert not blocked.ok
+  doAssert blocked.verdict == "revise_plan_needed"
+  doAssert blocked.providerCallsThisCommand == 0
+  doAssert blocked.apiCallsThisCommand == 0
+
+  # revise with motif (no --refinement needed) then resume step work
+  var rev = defaultProjectRequest()
+  rev.storePath = store
+  rev.projectId = "rev_plan"
+  rev.cwd = fix
+  rev.route = "inject"
+  rev.injectPath = inj / "plan_v3_after_revise.json"
+  rev.artifactDir = art
+  let revised = projectRevise(rev)
+  doAssert revised.ok, revised.message
+  doAssert not revised.doc.revisePlanPending
+  doAssert revised.doc.nextAction == "step"
+
+  var step3 = req
+  step3.injectPath = inj / "step_helpers.json"
+  step3.injectRecoveryPath = ""
+  step3.worktree = tmpPath("rev_wt2")
+  let after = projectStep(step3)
+  doAssert after.ok, after.verdict & " / " & after.message
+  doAssert after.verdict == "pass"
   echo "recovery_may_revise_plan: ok"
 
 block ambiguousThenHelpers:

@@ -195,6 +195,11 @@ proc reportBase(cmd: string; doc: ProjectDoc): JsonNode =
     "accepted_step_id": doc.acceptedStepId,
     "last_verdict": doc.lastVerdict,
     "last_diff": doc.lastDiff,
+    "blocked_reason": doc.blockedReason,
+    "revise_plan_pending": doc.revisePlanPending,
+    "revise_plan_reason": doc.revisePlanReason,
+    "revise_plan_step_id": doc.revisePlanStepId,
+    "revise_plan_at_version": doc.revisePlanAtVersion,
     "usage_by_role": usageTableJson(doc),
     "steps": doc.steps.mapIt(stepToJson(it)),
     "plan_versions": doc.planVersions.mapIt(planToJson(it))
@@ -226,13 +231,21 @@ proc finishStepRefuse*(
       }
   doc.blockedReason = messageText
   doc.lastVerdict = verdictText
-  doc.nextAction = "step"
+  if refuseCode == "revise_plan":
+    doc.revisePlanPending = true
+    doc.revisePlanReason = messageText
+    doc.revisePlanStepId = stepId
+    doc.revisePlanAtVersion = doc.currentPlanVersion
+    doc.nextAction = "revise"
+  else:
+    doc.nextAction = "step"
   saveProject(store, doc)
   emitProjectEvent(store, doc.projectId, "project.step_refused", %*{
     "step_id": stepId,
     "refuse_code": refuseCode,
     "verdict": verdictText,
-    "recovery_attempted": report.recoveryAttempted
+    "recovery_attempted": report.recoveryAttempted,
+    "revise_plan_pending": doc.revisePlanPending
   })
   report.doc = doc
   report.report = reportBase("step", doc)
@@ -254,7 +267,7 @@ proc finishStepRefuse*(
 proc runOneRecoveryTurn*(
     report: var ProjectReport; doc: var ProjectDoc; req: ProjectRequest;
     sourceRoot: string; mandate: JsonNode; stepTitle: string;
-    reason, finding, priorTarget, priorDecision, priorProposal: string;
+    reason, finding, priorTarget, priorDecision, rawFaithful: string;
     recoveryRound: var int; rawText: var string; usedRecovery: var bool): bool =
   ## At most one recovery turn. Fills report.recovery* and refreshes rawText.
   if recoveryRound >= 1:
@@ -266,7 +279,7 @@ proc runOneRecoveryTurn*(
   inc recoveryRound
   let rctx = buildProjectRecoveryContext(
     sourceRoot, mandate, stepTitle,
-    priorTarget, priorDecision, priorProposal, finding)
+    priorTarget, priorDecision, finding, rawFaithful)
   report.recoveryProvider = invokeProjectRecovery(
     req, rctx.systemPrompt, rctx.userPrompt)
   report.recoveryAttempted = true
@@ -537,11 +550,6 @@ proc projectRevise*(req: ProjectRequest): ProjectReport =
     result.verdict = "invalid"
     result.message = "revise requires --store"
     return
-  if req.refinement.len == 0:
-    result.ok = false
-    result.verdict = "invalid"
-    result.message = "revise requires --refinement"
-    return
 
   let store = openProjectStore(req.storePath)
   defer: closeProjectStore(store)
@@ -552,11 +560,23 @@ proc projectRevise*(req: ProjectRequest): ProjectReport =
     result.message = loaded.err
     return
   var doc = loaded.doc
-  doc.refinements.add(req.refinement)
+  let implementerReason = doc.revisePlanReason
+  var refinement = req.refinement
+  if refinement.len == 0 and doc.revisePlanPending and implementerReason.len > 0:
+    ## Motif implémenteur suffit pour enclencher la révision demandée.
+    refinement = "Prérequis implémenteur: " & implementerReason
+  if refinement.len == 0:
+    result.ok = false
+    result.verdict = "invalid"
+    result.message = "revise requires --refinement (or a pending revise_plan motif)"
+    result.doc = doc
+    return
+  doc.refinements.add(refinement)
 
   let prior = currentPlan(doc)
   let priorJson = pretty(if prior.raw.isNil: newJObject() else: prior.raw)
-  let ctx = buildReviseContext(doc.cwd, doc.objective, doc.refinements, priorJson)
+  let ctx = buildReviseContext(
+    doc.cwd, doc.objective, doc.refinements, priorJson, implementerReason)
   result.provider = invokeProjectModel(req, ctx.systemPrompt, ctx.userPrompt)
   if req.route == "inject":
     result.untested.add("reviser model decision (inject)")
@@ -623,10 +643,18 @@ proc projectRevise*(req: ProjectRequest): ProjectReport =
   mandate["change_notes"] = %parsed.node{"change_notes"}.getStr
   mandate["agents_md_excerpt"] = %ctx.agentsMd
   mandate["source_ids"] = %ctx.sourceIds
-  mandate["refinement"] = %req.refinement
+  mandate["refinement"] = %refinement
+  if implementerReason.len > 0:
+    mandate["implementer_revise_reason"] = %implementerReason
   if doc.mandates.isNil: doc.mandates = newJObject()
   doc.mandates[mandateKey] = mandate
   recordUsage(doc, "reviser", result.provider)
+  # Accepted revision clears the implementer block and re-opens step work.
+  doc.revisePlanPending = false
+  doc.revisePlanReason = ""
+  doc.revisePlanStepId = ""
+  doc.revisePlanAtVersion = 0
+  doc.blockedReason = ""
   doc.nextAction = "step"
   doc.lastVerdict = "plan_v" & $newVersion
 
@@ -634,7 +662,8 @@ proc projectRevise*(req: ProjectRequest): ProjectReport =
   emitProjectEvent(store, doc.projectId, "project.revise", %*{
     "plan_version": newVersion,
     "summary": plan.summary,
-    "refinement": req.refinement,
+    "refinement": refinement,
+    "implementer_revise_reason": implementerReason,
     "route": result.provider.route
   })
 
@@ -670,6 +699,27 @@ proc projectStep*(req: ProjectRequest): ProjectReport =
     result.message = loaded.err
     return
   var doc = loaded.doc
+
+  # Implementer prerequisite: hand back to reviser without a provider call.
+  if doc.revisePlanPending:
+    result.ok = false
+    result.verdict = "revise_plan_needed"
+    result.message = doc.revisePlanReason
+    result.providerCallsThisCommand = 0
+    result.apiCallsThisCommand = 0
+    result.doc = doc
+    result.report = reportBase("step", doc)
+    result.report["provider_calls_this_command"] = %0
+    result.report["api_calls_this_command"] = %0
+    result.report["revise_plan"] = %*{
+      "pending": true,
+      "reason": doc.revisePlanReason,
+      "step_id": doc.revisePlanStepId,
+      "at_version": doc.revisePlanAtVersion,
+      "action": "revise",
+      "action_note": "No provider call; run project revise with the persisted motif."
+    }
+    return
 
   let actionable = nextActionableStep(doc)
   if not actionable.found:
@@ -859,116 +909,81 @@ proc projectStep*(req: ProjectRequest): ProjectReport =
                      refuseCode, verdictText, messageText, applyNode)
 
   template tryRecovery(reason, finding, priorTarget, priorDecision,
-                       priorProposal: string): bool =
+                       rawFaithful: string): bool =
     runOneRecoveryTurn(result, doc, req, sourceRoot, mandate, step.title,
-                       reason, finding, priorTarget, priorDecision, priorProposal,
+                       reason, finding, priorTarget, priorDecision, rawFaithful,
                        recoveryRound, rawText, usedRecovery)
 
+  proc gateSignals(raw: string): tuple[reviseHit: bool; reviseDecision: string;
+                                       cannotHit: bool; cannotDecision: string] =
+    let r = parseRevisePlan(raw)
+    let c = parseCannotFix(raw)
+    (r.hit, r.decision, c.hit, c.decision)
+
   block applyGate:
-    # 1) Explicit plan revision signal (no write).
-    let revise = parseRevisePlan(rawText)
-    if revise.hit:
-      refuseNow("revise_plan", "revise_plan_needed", revise.decision,
-        %*{"ok": false, "refuse_code": "revise_plan", "message": revise.decision,
+    # 1) Explicit plan revision / cannot_fix (no write).
+    let sig0 = gateSignals(rawText)
+    if sig0.reviseHit:
+      refuseNow("revise_plan", "revise_plan_needed", sig0.reviseDecision,
+        %*{"ok": false, "refuse_code": "revise_plan", "message": sig0.reviseDecision,
+           "wrote": false})
+      return
+    if sig0.cannotHit:
+      refuseNow("cannot_fix", "model_cannot_fix", sig0.cannotDecision,
+        %*{"ok": false, "refuse_code": "cannot_fix", "message": sig0.cannotDecision,
            "wrote": false})
       return
 
-    let cannot = parseCannotFix(rawText)
-    if cannot.hit:
-      refuseNow("cannot_fix", "model_cannot_fix", cannot.decision,
-        %*{"ok": false, "refuse_code": "cannot_fix", "message": cannot.decision,
-           "wrote": false})
-      return
-
-    # 2) Multi-proposal → refuse before any worktree write.
-    let multi = countFixProposals(rawText)
-    if multi.count > 1:
-      let exact = exactProposalPayload(rawText)
-      let finding = buildMultiProposalFinding(multi.targets, exact)
+    # 2) Read-only diagnosis against current tree (faithful raw, no write).
+    var diag = diagnoseRawAgainstTree(sourceRoot, rawText)
+    if diag.needsRefuse:
+      let reason =
+        if diag.refuseCode.len > 0: diag.refuseCode else: "apply_refused"
+      let priorTarget = if diag.targets.len > 0: diag.targets[0] else: ""
       result.apply.ok = false
-      result.apply.refuseCode = "multi_proposal"
-      result.apply.message =
-        "multi_proposal: " & $multi.count & " target_file(s); no write"
-      result.apply.editDetails = multi.targets
-      if tryRecovery("multi_proposal", finding, multi.targets[0],
-                     "multi_proposal", exact):
-        # Re-enter gates with recovery raw (no second recovery if still multi).
-        let revise2 = parseRevisePlan(rawText)
-        if revise2.hit:
-          refuseNow("revise_plan", "revise_plan_needed", revise2.decision,
-            %*{"ok": false, "refuse_code": "revise_plan", "message": revise2.decision,
-               "wrote": false, "prior_refuse": "multi_proposal"})
+      result.apply.refuseCode = reason
+      result.apply.message = reason & "; diagnosed without write"
+      result.apply.editDetails = diag.targets
+      if tryRecovery(reason, diag.finding, priorTarget, reason, diag.rawFaithful):
+        let sig1 = gateSignals(rawText)
+        if sig1.reviseHit:
+          refuseNow("revise_plan", "revise_plan_needed", sig1.reviseDecision,
+            %*{"ok": false, "refuse_code": "revise_plan", "message": sig1.reviseDecision,
+               "wrote": false, "prior_refuse": reason})
           return
-        let cannot2 = parseCannotFix(rawText)
-        if cannot2.hit:
-          refuseNow("cannot_fix", "model_cannot_fix", cannot2.decision,
-            %*{"ok": false, "refuse_code": "cannot_fix", "message": cannot2.decision,
-               "wrote": false, "prior_refuse": "multi_proposal"})
+        if sig1.cannotHit:
+          refuseNow("cannot_fix", "model_cannot_fix", sig1.cannotDecision,
+            %*{"ok": false, "refuse_code": "cannot_fix", "message": sig1.cannotDecision,
+               "wrote": false, "prior_refuse": reason})
           return
-        let multi2 = countFixProposals(rawText)
-        if multi2.count > 1:
-          refuseNow("multi_proposal", "multi_proposal_refused",
-            "recovery still returned " & $multi2.count & " proposals; no write",
-            %*{"ok": false, "refuse_code": "multi_proposal", "wrote": false,
-               "targets": multi2.targets, "recovery_exhausted": true})
+        let diag2 = diagnoseRawAgainstTree(sourceRoot, rawText)
+        if diag2.needsRefuse:
+          refuseNow(diag2.refuseCode,
+            if diag2.refuseCode == "multi_proposal": "multi_proposal_refused"
+            else: "apply_failed",
+            "recovery still refused (" & diag2.refuseCode & "); no write",
+            %*{"ok": false, "refuse_code": diag2.refuseCode, "wrote": false,
+               "targets": diag2.targets, "recovery_exhausted": true,
+               "prior_refuse": reason})
           return
-        # fall through to single-proposal apply below with recovery rawText
+        # Unique anchors after recovery — fall through to apply.
       else:
-        refuseNow("multi_proposal", "multi_proposal_refused",
-          result.apply.message,
-          %*{"ok": false, "refuse_code": "multi_proposal", "wrote": false,
-             "targets": multi.targets, "message": result.apply.message})
+        let verdict =
+          if reason == "multi_proposal": "multi_proposal_refused"
+          elif reason == "revise_plan": "revise_plan_needed"
+          else: "apply_failed"
+        refuseNow(reason, verdict, result.apply.message,
+          %*{"ok": false, "refuse_code": reason, "wrote": false,
+             "targets": diag.targets, "message": result.apply.message})
         return
 
     decision = parseFixDecision(rawText)
     result.apply = applyDecision(sourceRoot, req.worktree, decision)
     if not result.apply.ok:
-      if result.apply.refuseCode == "anchor_ambiguous" and recoveryRound < 1 and
-         canProjectRecovery(req):
-        let exact =
-          if decision.exactProposalJson.len > 0: decision.exactProposalJson
-          else: exactProposalPayload(rawText)
-        let finding = buildAmbiguousFinding(result.apply, exact)
-        if tryRecovery("anchor_ambiguous", finding, decision.targetFile,
-                       decision.decision, exact):
-          let revise3 = parseRevisePlan(rawText)
-          if revise3.hit:
-            refuseNow("revise_plan", "revise_plan_needed", revise3.decision,
-              %*{"ok": false, "refuse_code": "revise_plan",
-                 "prior_refuse": "anchor_ambiguous", "wrote": false,
-                 "message": revise3.decision})
-            return
-          let cannot3 = parseCannotFix(rawText)
-          if cannot3.hit:
-            refuseNow("cannot_fix", "model_cannot_fix", cannot3.decision,
-              %*{"ok": false, "refuse_code": "cannot_fix",
-                 "prior_refuse": "anchor_ambiguous", "wrote": false,
-                 "message": cannot3.decision})
-            return
-          let multi3 = countFixProposals(rawText)
-          if multi3.count > 1:
-            refuseNow("multi_proposal", "multi_proposal_refused",
-              "recovery returned multiple proposals; no write",
-              %*{"ok": false, "refuse_code": "multi_proposal", "wrote": false,
-                 "prior_refuse": "anchor_ambiguous", "targets": multi3.targets})
-            return
-          decision = parseFixDecision(rawText)
-          # Fresh worktree path for recovery apply.
-          let wt2 = if req.worktree.len > 0: req.worktree & "_recovery" else: ""
-          result.apply = applyDecision(sourceRoot, wt2, decision)
-          if not result.apply.ok:
-            refuseNow(result.apply.refuseCode, "apply_failed",
-              "recovery apply: " & result.apply.message, applyToJson(result.apply))
-            return
-          # success — fall through to verify
-        else:
-          refuseNow(result.apply.refuseCode, "apply_failed",
-            result.apply.message, applyToJson(result.apply))
-          return
-      else:
-        refuseNow(result.apply.refuseCode, "apply_failed",
-          result.apply.message, applyToJson(result.apply))
-        return
+      # Diagnosis should have caught anchors; residual refuse after write attempt.
+      refuseNow(result.apply.refuseCode, "apply_failed",
+        result.apply.message, applyToJson(result.apply))
+      return
 
   # Applied successfully (first or recovery).
   doc.worktree = result.apply.worktree
@@ -1099,21 +1114,54 @@ proc projectStatus*(req: ProjectRequest): ProjectReport =
     return
   result.doc = loaded.doc
   result.ok = true
-  result.verdict = loaded.doc.lastVerdict
-  result.message = "status ok"
+  if loaded.doc.revisePlanPending:
+    result.verdict = "revise_plan_needed"
+    result.message = "revise pending: " & loaded.doc.revisePlanReason
+  else:
+    result.verdict = loaded.doc.lastVerdict
+    result.message = "status ok"
   result.report = reportBase("status", loaded.doc)
   result.report["mandates"] = loaded.doc.mandates
+  if loaded.doc.revisePlanPending:
+    result.report["revise_plan"] = %*{
+      "pending": true,
+      "reason": loaded.doc.revisePlanReason,
+      "step_id": loaded.doc.revisePlanStepId,
+      "at_version": loaded.doc.revisePlanAtVersion,
+      "action": "revise"
+    }
 
 proc projectResume*(req: ProjectRequest): ProjectReport =
   ## Rehydrate after process death: no planner/reviser calls.
   ## Live owner waiting on provider → active (do not flip to interrupted).
   ## Dead owner / interrupted → explicit retry_step; keep provider unknown.
+  ## Pending revise_plan → action=revise (no step/provider).
   result = projectStatus(req)
   result.command = "resume"
   if not result.ok:
     return
 
   var doc = result.doc
+  if doc.revisePlanPending:
+    result.verdict = "revise_plan_needed"
+    result.message = "resumed; revise pending: " & doc.revisePlanReason
+    result.report = reportBase("resume", doc)
+    result.report["sub"] = %"resume"
+    result.report["resume"] = %*{
+      "rehydrated": true,
+      "planner_calls_this_command": 0,
+      "reviser_calls_this_command": 0,
+      "billable_plan_calls": 0,
+      "revise_plan_pending": true,
+      "revise_plan_reason": doc.revisePlanReason,
+      "revise_plan_step_id": doc.revisePlanStepId,
+      "action": "revise",
+      "action_note":
+        "Implementer prerequisite blocks step; run project revise (motif persisted)."
+    }
+    result.doc = doc
+    return
+
   var activeId = ""
   var activePid = 0
   var interruptedId = ""

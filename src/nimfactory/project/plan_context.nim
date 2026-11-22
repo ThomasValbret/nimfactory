@@ -59,12 +59,13 @@ Retourne UNIQUEMENT JSON:
 
   ProjectRecoverySystemPrompt* = """
 Tu récupères une proposition d'édition refusée par project step.
-On t'a donné: la proposition exacte, le motif observé, et pour une ancre
-ambiguë les contextes des occurrences.
+On t'a donné: une seule copie fidèle de ta réponse brute (y compris un
+bloc malformé), un diagnostic sans écriture (compte d'occurrences oldText
+par édition lisible, extraits si ancre ambiguë).
 Tu choisis le fichier et le correctif. Une seule proposition JSON
-(un target_file). Si le prérequis exige de réviser le plan:
+(un target_file). Si un prérequis impose de réviser le plan:
   {"revise_plan": true, "decision": "<motif>"}.
-Sinon: target_file, decision, edits: [{oldText, newText}].
+Sinon: target_file, decision, edits: [{oldText, newText}] avec oldText unique.
 """.strip()
 
 proc collectProjectSources*(cwd: string; maxFiles = 12; maxBytes = 80_000): seq[ProjectSource] =
@@ -113,15 +114,23 @@ proc buildAskContext*(cwd, objective: string): PlanContext =
 
 proc buildReviseContext*(
     cwd, objective: string; refinements: seq[string];
-    priorPlanJson: string): PlanContext =
+    priorPlanJson: string; implementerReason = ""): PlanContext =
   result.agentsMd = loadAgentsMd(cwd)
   result.sources = collectProjectSources(cwd)
   result.sourceIds = result.sources.mapIt(it.relPath)
   result.ok = true
   result.systemPrompt = ReviseSystemPrompt
+  let implBlock =
+    if implementerReason.len > 0:
+      "Motif transmis par l'implémenteur (prérequis bloquant l'étape):\n" &
+      implementerReason.strip() & "\n\n"
+    else:
+      ""
   result.userPrompt =
     "Demande initiale:\n" & objective.strip() & "\n\n" &
-    "Précisions du pilote:\n- " & refinements.join("\n- ") & "\n\n" &
+    implBlock &
+    "Précisions du pilote:\n- " &
+    (if refinements.len > 0: refinements.join("\n- ") else: "(aucune)") & "\n\n" &
     "Plan précédent (JSON):\n```json\n" & priorPlanJson & "\n```\n\n" &
     "AGENTS.md:\n" & (if result.agentsMd.len > 0: result.agentsMd else: "(absent)") &
     "\n\nSources:\n\n" & renderSources(result.sources) &
@@ -144,8 +153,8 @@ proc buildImplementContext*(
 
 proc buildProjectRecoveryContext*(
     cwd: string; mandate: JsonNode; stepTitle: string;
-    priorTarget, priorDecision, priorProposal, finding: string): PlanContext =
-  ## Bounded recovery: exact prior proposal + observed refuse motif (+ contexts).
+    priorTarget, priorDecision, finding, rawFaithful: string): PlanContext =
+  ## Bounded recovery: faithful raw (one copy) + read-only diagnosis finding.
   result.agentsMd = loadAgentsMd(cwd)
   result.sources = collectProjectSources(cwd)
   result.sourceIds = result.sources.mapIt(it.relPath)
@@ -154,10 +163,10 @@ proc buildProjectRecoveryContext*(
   result.userPrompt =
     "Tour de récupération (un seul autorisé).\n" &
     "Étape: " & stepTitle & "\n" &
-    "Cible précédente: " & priorTarget & "\n" &
+    "Cible précédente (si unique): " & priorTarget & "\n" &
     "Décision précédente: " & priorDecision & "\n\n" &
-    "Motif observé:\n" & finding & "\n\n" &
-    "Proposition exacte:\n```json\n" & priorProposal & "\n```\n\n" &
+    "Diagnostic produit (sans écriture):\n" & finding & "\n\n" &
+    "Réponse brute fidèle (une seule copie):\n```\n" & rawFaithful & "\n```\n\n" &
     "Mandat borné (JSON):\n```json\n" & pretty(mandate) & "\n```\n\n" &
     "Sources autorisées (arbre courant):\n\n" & renderSources(result.sources) &
     "\n\nProduis UNE proposition JSON (ou revise_plan) maintenant."

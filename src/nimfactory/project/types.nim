@@ -51,6 +51,10 @@ type
     lastDiff*: string
     blockedReason*: string
     nextAction*: string
+    revisePlanPending*: bool     ## implementer signaled a plan prerequisite
+    revisePlanReason*: string
+    revisePlanStepId*: string
+    revisePlanAtVersion*: int    ## plan version that blocked
 
 proc emptyUsage*(): UsageRollup =
   UsageRollup(promptTokens: 0, completionTokens: 0, calls: 0, estimatedUsd: 0.0, model: "")
@@ -174,7 +178,11 @@ proc docToJson*(d: ProjectDoc): JsonNode =
     "last_verdict": d.lastVerdict,
     "last_diff": d.lastDiff,
     "blocked_reason": d.blockedReason,
-    "next_action": d.nextAction
+    "next_action": d.nextAction,
+    "revise_plan_pending": d.revisePlanPending,
+    "revise_plan_reason": d.revisePlanReason,
+    "revise_plan_step_id": d.revisePlanStepId,
+    "revise_plan_at_version": d.revisePlanAtVersion
   }
 
 proc docFromJson*(j: JsonNode): ProjectDoc =
@@ -191,6 +199,10 @@ proc docFromJson*(j: JsonNode): ProjectDoc =
   result.lastDiff = j{"last_diff"}.getStr
   result.blockedReason = j{"blocked_reason"}.getStr
   result.nextAction = j{"next_action"}.getStr
+  result.revisePlanPending = j{"revise_plan_pending"}.getBool(false)
+  result.revisePlanReason = j{"revise_plan_reason"}.getStr
+  result.revisePlanStepId = j{"revise_plan_step_id"}.getStr
+  result.revisePlanAtVersion = j{"revise_plan_at_version"}.getInt
   result.mandates = j{"mandates"}
   if result.mandates.isNil: result.mandates = newJObject()
   result.refinements = @[]
