@@ -2,6 +2,7 @@
 
 Date : 2026-11-22  
 Branche : `feature/studio-workflow-ops`  
+SHA testé : `18038fdd5bccbcfaf431f4fadbd2b8ba3bbf14f9`  
 Worktree : `/opt/nimFactory-studio-ops`  
 Base fast-forward : `origin/feature/project-run` @ `affe5d4`
 
