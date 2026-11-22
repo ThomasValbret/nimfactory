@@ -10,8 +10,9 @@ import std/[os, json, strutils, times]
 
 type
   TextEdit* = object
-    oldText*: string
-    newText*: string
+    oldText*: string             ## replace search text, or unique insert anchor
+    newText*: string             ## replacement body, or text to insert
+    op*: string                  ## "replace" | "insert_before" | "insert_after"
 
   FixDecision* = object
     targetFile*: string
@@ -216,6 +217,60 @@ proc requireEditStringField(
       return (true, n.getStr, "", "")
   (false, "", "missing required string field among " & names.join("/"), missingCode)
 
+proc parseOneTextEdit(item: JsonNode): tuple[ok: bool; edit: TextEdit; err: string; code: string] =
+  ## replace {oldText,newText} or insertBefore/insertAfter + newText on a unique anchor.
+  if item.kind != JObject:
+    return (false, TextEdit(), "malformed edits element (not a JSON object)", "malformed_edit")
+  let newF = requireEditStringField(
+    item, ["newText", "new_text", "replace", "text"], "newText_missing", "newText_type")
+  if not newF.ok:
+    return (false, TextEdit(), "edit newText: " & newF.err, newF.code)
+  let hasBefore = item.hasKey("insertBefore") or item.hasKey("insert_before")
+  let hasAfter = item.hasKey("insertAfter") or item.hasKey("insert_after")
+  if hasBefore:
+    let before = requireEditStringField(
+      item, ["insertBefore", "insert_before"], "insert_missing", "insert_type")
+    if not before.ok:
+      return (false, TextEdit(), "edit insertBefore: " & before.err, before.code)
+    if before.value.len == 0:
+      return (false, TextEdit(), "insertBefore anchor is empty", "empty_or_missing_oldText")
+    return (true, TextEdit(
+      oldText: before.value.replace("\r\n", "\n"),
+      newText: newF.value.replace("\r\n", "\n"),
+      op: "insert_before"), "", "")
+  if hasAfter:
+    let after = requireEditStringField(
+      item, ["insertAfter", "insert_after"], "insert_missing", "insert_type")
+    if not after.ok:
+      return (false, TextEdit(), "edit insertAfter: " & after.err, after.code)
+    if after.value.len == 0:
+      return (false, TextEdit(), "insertAfter anchor is empty", "empty_or_missing_oldText")
+    return (true, TextEdit(
+      oldText: after.value.replace("\r\n", "\n"),
+      newText: newF.value.replace("\r\n", "\n"),
+      op: "insert_after"), "", "")
+  let oldF = requireEditStringField(
+    item, ["oldText", "old_text", "search"], "oldText_missing", "oldText_type")
+  if not oldF.ok:
+    return (false, TextEdit(), "edit oldText: " & oldF.err, oldF.code)
+  var op = item{"op"}.getStr
+  if op.len == 0: op = "replace"
+  if op notin ["replace", "insert_before", "insert_after"]:
+    return (false, TextEdit(), "unsupported edit op: " & op, "malformed_edit")
+  (true, TextEdit(
+    oldText: oldF.value.replace("\r\n", "\n"),
+    newText: newF.value.replace("\r\n", "\n"),
+    op: op), "", "")
+
+proc editToProposalJson(e: TextEdit): JsonNode =
+  case e.op
+  of "insert_before":
+    %*{"insertBefore": e.oldText, "newText": e.newText}
+  of "insert_after":
+    %*{"insertAfter": e.oldText, "newText": e.newText}
+  else:
+    %*{"oldText": e.oldText, "newText": e.newText}
+
 proc parseFixDecision*(raw: string): FixDecision =
   result.rawExcerpt = if raw.len > 400: raw[0 .. 399] else: raw
   try:
@@ -228,28 +283,13 @@ proc parseFixDecision*(raw: string): FixDecision =
     let editsNode = node{"edits"}
     if editsNode != nil and editsNode.kind == JArray:
       for item in editsNode:
-        if item.kind != JObject:
+        let one = parseOneTextEdit(item)
+        if not one.ok:
           result.parseOk = false
-          result.refuseCode = "malformed_edit"
-          result.parseError = "malformed edits element (not a JSON object)"
+          result.refuseCode = one.code
+          result.parseError = one.err
           return
-        let oldF = requireEditStringField(
-          item, ["oldText", "old_text", "search"], "oldText_missing", "oldText_type")
-        if not oldF.ok:
-          result.parseOk = false
-          result.refuseCode = oldF.code
-          result.parseError = "edit oldText: " & oldF.err
-          return
-        let newF = requireEditStringField(
-          item, ["newText", "new_text", "replace"], "newText_missing", "newText_type")
-        if not newF.ok:
-          result.parseOk = false
-          result.refuseCode = newF.code
-          result.parseError = "edit newText: " & newF.err
-          return
-        result.edits.add(TextEdit(
-          oldText: oldF.value.replace("\r\n", "\n"),
-          newText: newF.value.replace("\r\n", "\n")))
+        result.edits.add(one.edit)
     if result.targetFile.len == 0:
       result.parseOk = false
       result.parseError = "missing target_file"
@@ -260,7 +300,7 @@ proc parseFixDecision*(raw: string): FixDecision =
       # Exact proposal for recovery echo (model-owned fields only).
       var editsArr = newJArray()
       for e in result.edits:
-        editsArr.add(%*{"oldText": e.oldText, "newText": e.newText})
+        editsArr.add(editToProposalJson(e))
       result.exactProposalJson = $(%*{
         "target_file": result.targetFile,
         "decision": result.decision,
@@ -336,14 +376,16 @@ proc applyEditsToContent*(
     contexts: seq[string]] =
   ## Validate every anchor against the evolving buffer, then apply. On any
   ## missing/ambiguous/empty oldText, refuse with zero mutations to `original`.
+  ## insert_before / insert_after require a unique anchor on the current buffer.
   var updated = original.replace("\r\n", "\n")
   let baseline = updated
   var details: seq[string] = @[]
   var i = 0
   for ed in edits:
     inc i
+    let op = if ed.op.len > 0: ed.op else: "replace"
     if ed.oldText.len == 0:
-      return (false, original, "edit " & $i & ": empty oldText",
+      return (false, original, "edit " & $i & ": empty oldText/anchor",
               @["edit_" & $i & ":empty_oldText"], 0,
               "empty_oldText", i, 0, "", @[])
     let positions = findNonOverlapPositions(updated, ed.oldText)
@@ -364,8 +406,17 @@ proc applyEditsToContent*(
               @["edit_" & $i & ":anchor_ambiguous:" & $n], 0,
               "anchor_ambiguous", i, n, ed.oldText, contexts)
     let pos = positions[0]
-    updated = updated[0 ..< pos] & ed.newText & updated[pos + ed.oldText.len .. ^1]
-    details.add("edit_" & $i & ":applied")
+    case op
+    of "insert_before":
+      updated = updated[0 ..< pos] & ed.newText & updated[pos .. ^1]
+      details.add("edit_" & $i & ":insert_before")
+    of "insert_after":
+      let at = pos + ed.oldText.len
+      updated = updated[0 ..< at] & ed.newText & updated[at .. ^1]
+      details.add("edit_" & $i & ":insert_after")
+    else:
+      updated = updated[0 ..< pos] & ed.newText & updated[pos + ed.oldText.len .. ^1]
+      details.add("edit_" & $i & ":applied")
   if updated == baseline:
     return (false, original, "edits identical to original (no effective change)", details, 0,
             "identical", 0, 0, "", @[])
@@ -450,12 +501,11 @@ proc applyDecision*(repoRoot, worktreeRoot: string; dec: FixDecision): ApplyResu
 proc decisionToJson*(d: FixDecision): JsonNode =
   var edits = newJArray()
   for e in d.edits:
-    edits.add(%*{
-      "oldText": e.oldText,
-      "newText": e.newText,
-      "old_len": e.oldText.len,
-      "new_len": e.newText.len
-    })
+    var node = editToProposalJson(e)
+    node["old_len"] = %e.oldText.len
+    node["new_len"] = %e.newText.len
+    node["op"] = %(if e.op.len > 0: e.op else: "replace")
+    edits.add(node)
   %*{
     "parse_ok": d.parseOk,
     "parse_error": d.parseError,
@@ -585,9 +635,50 @@ proc editFieldFromNode(item: JsonNode; names: openArray[string]): string =
       return item[n].getStr.replace("\r\n", "\n")
   ""
 
+proc diagnoseEditItem(
+    item: JsonNode; tf, content: string; fileExists: bool; ei: int): EditDiagnosis =
+  result = EditDiagnosis(targetFile: tf, editIndex: ei, parseOk: item.kind == JObject)
+  if item.kind != JObject:
+    result.note = "malformed_edit_element"
+    return
+  let one = parseOneTextEdit(item)
+  if not one.ok:
+    result.note =
+      if one.code in ["empty_or_missing_oldText", "oldText_missing"]:
+        "empty_or_missing_oldText"
+      else: one.code
+    return
+  result.oldText = one.edit.oldText
+  if result.oldText.len == 0:
+    result.note = "empty_or_missing_oldText"
+    return
+  if not fileExists:
+    result.note = "target_missing"
+    result.matchCount = 0
+    return
+  let positions = findNonOverlapPositions(content, result.oldText)
+  result.matchCount = positions.len
+  if positions.len > 1:
+    var oi = 0
+    for pos in positions:
+      inc oi
+      result.contexts.add(
+        "occurrence " & $oi & " of " & $positions.len & ":\n" &
+        contextAroundMatch(content, pos, result.oldText.len))
+    result.note = "anchor_ambiguous"
+  elif positions.len == 0:
+    result.note = "anchor_missing"
+  else:
+    let op = if one.edit.op.len > 0: one.edit.op else: "replace"
+    result.note =
+      if op == "insert_before": "insert_before_unique"
+      elif op == "insert_after": "insert_after_unique"
+      else: "anchor_unique"
+
 proc diagnoseRawAgainstTree*(sourceRoot, raw: string): ProposalDiagnosis =
   ## Read-only: one faithful raw copy + per-edit oldText counts in current tree.
-  ## Never writes. Malformed blocks are kept in rawFaithful and counted.
+  ## Never writes. Malformed / unreadable JSON is kept in rawFaithful and refused
+  ## so a bounded recovery turn can reformulate (e.g. insertBefore/After).
   result.rawFaithful = raw
   result.edits = @[]
   result.targets = @[]
@@ -609,36 +700,7 @@ proc diagnoseRawAgainstTree*(sourceRoot, raw: string): ProposalDiagnosis =
         var ei = 0
         for item in editsNode:
           inc ei
-          var ed = EditDiagnosis(
-            targetFile: tf, editIndex: ei, parseOk: item.kind == JObject)
-          if item.kind != JObject:
-            ed.note = "malformed_edit_element"
-            result.edits.add(ed)
-            continue
-          ed.oldText = editFieldFromNode(item, ["oldText", "old_text", "search"])
-          if ed.oldText.len == 0:
-            ed.note = "empty_or_missing_oldText"
-            result.edits.add(ed)
-            continue
-          if not fileExists:
-            ed.note = "target_missing"
-            ed.matchCount = 0
-          else:
-            let positions = findNonOverlapPositions(content, ed.oldText)
-            ed.matchCount = positions.len
-            if positions.len > 1:
-              var oi = 0
-              for pos in positions:
-                inc oi
-                ed.contexts.add(
-                  "occurrence " & $oi & " of " & $positions.len & ":\n" &
-                  contextAroundMatch(content, pos, ed.oldText.len))
-              ed.note = "anchor_ambiguous"
-            elif positions.len == 0:
-              ed.note = "anchor_missing"
-            else:
-              ed.note = "anchor_unique"
-          result.edits.add(ed)
+          result.edits.add(diagnoseEditItem(item, tf, content, fileExists, ei))
       elif node.hasKey("patched_content"):
         var ed = EditDiagnosis(
           targetFile: tf, editIndex: 1, parseOk: true,
@@ -667,6 +729,18 @@ proc diagnoseRawAgainstTree*(sourceRoot, raw: string): ProposalDiagnosis =
           targetFile: tf, editIndex: 0, parseOk: false,
           note: "malformed_json_block", matchCount: -1))
 
+  # Unreadable reply (e.g. Nim """ inside JSON): no balanced object extracted.
+  if result.proposalCount == 0:
+    let stripped = raw.strip()
+    if stripped.len > 0 and ("target_file" in stripped or '{' in stripped or
+                             stripped.startsWith("```")):
+      result.needsRefuse = true
+      result.refuseCode = "parse_error"
+      result.malformedBlocks = 1
+      result.edits.add(EditDiagnosis(
+        targetFile: "(unparseable)", editIndex: 0, parseOk: false,
+        note: "malformed_json_block", matchCount: -1))
+
   # Classify refuse without writing.
   if result.proposalCount > 1:
     result.needsRefuse = true
@@ -679,6 +753,8 @@ proc diagnoseRawAgainstTree*(sourceRoot, raw: string): ProposalDiagnosis =
         result.needsRefuse = true
         if ed.note == "anchor_ambiguous":
           result.refuseCode = "anchor_ambiguous"
+        elif ed.note == "malformed_json_block":
+          if result.refuseCode.len == 0: result.refuseCode = "parse_error"
         elif result.refuseCode.len == 0:
           result.refuseCode = ed.note
   if result.refuseCode.len == 0 and result.needsRefuse:
@@ -688,6 +764,10 @@ proc diagnoseRawAgainstTree*(sourceRoot, raw: string): ProposalDiagnosis =
   parts.add("Read-only diagnosis (no file was written).")
   parts.add("Proposal count: " & $result.proposalCount &
             " (malformed blocks: " & $result.malformedBlocks & ").")
+  if result.refuseCode == "parse_error":
+    parts.add("JSON illisible ou non extractible. Reformule en JSON strict, " &
+              "ou utilise insertBefore/insertAfter sur une ancre unique " &
+              "vérifiée dans l'arbre courant (pas de \"\"\" hors chaîne JSON).")
   if result.targets.len > 0:
     parts.add("Targets: " & result.targets.join(", "))
   if result.proposalCount > 1:
@@ -697,7 +777,7 @@ proc diagnoseRawAgainstTree*(sourceRoot, raw: string): ProposalDiagnosis =
     parts.add("Edit " & $ed.editIndex & " on " & ed.targetFile &
               ": note=" & ed.note & " match_count=" & $ed.matchCount)
     if ed.oldText.len > 0:
-      parts.add("oldText:")
+      parts.add("oldText/anchor:")
       parts.add("```")
       parts.add(ed.oldText)
       parts.add("```")

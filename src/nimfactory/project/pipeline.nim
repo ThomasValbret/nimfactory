@@ -38,6 +38,7 @@ type
     expectedPlanVersion*: int   ## optimistic concurrency (with expectPlanVersion)
     expectPlanVersion*: bool    ## when true, refuse if current != expected
     maxSteps*: int              ## project run safety ceiling (0 → 8)
+    maxAutoRevises*: int        ## run may request motivated revise after exhaustion (0 → 1)
 
   ProjectReport* = object
     ok*: bool
@@ -155,18 +156,48 @@ proc validatePlanNode(node: JsonNode): tuple[ok: bool; err: string] =
     return (false, "empty_plan: mandate_sketch.goal required")
   (true, "")
 
-proc inferStepCriteria(st: ProjectStep; index, total: int): seq[string] =
-  ## Attach default criteria when the plan omits them.
-  if st.criteria.len > 0:
-    return st.criteria
-  result = @["compile", "list_intact"]
+proc recipeDefaultCriteria(cwd: string): seq[string] =
+  ## Criteria attached to the project recipe (fallback for every step).
+  let recipe = loadProjectRecipe(cwd)
+  result = @[]
+  if not recipe.raw.isNil and recipe.raw.hasKey("criteria"):
+    let arr = recipe.raw{"criteria"}
+    if arr.kind == JArray:
+      for c in arr: result.add(c.getStr)
+  if result.len == 0:
+    result = @["compile", "list_intact"]
+
+proc recipeExportCriteria(cwd: string): seq[string] =
+  let recipe = loadProjectRecipe(cwd)
+  result = @[]
+  if not recipe.raw.isNil and recipe.raw.hasKey("export_criteria"):
+    let arr = recipe.raw{"export_criteria"}
+    if arr.kind == JArray:
+      for c in arr: result.add(c.getStr)
+  if result.len == 0:
+    result = recipeDefaultCriteria(cwd)
+    if "export_command" notin result:
+      result.add("export_command")
+
+proc stepObjectiveImpliesExport(st: ProjectStep; index, total: int;
+                                objective = ""): bool =
   let t = st.title.toLowerAscii
   let id = st.id.toLowerAscii
-  if "export" in t or "csv" in t or "export" in id or "csv" in id or
-     index == total:
-    result.add("export_command")
+  let obj = objective.toLowerAscii
+  "export" in t or "csv" in t or "export" in id or "csv" in id or
+    index == total or "export" in obj or "csv" in obj
 
-proc stepsFromPlanNode(node: JsonNode; mandateKey: string): seq[ProjectStep] =
+proc inferStepCriteria*(st: ProjectStep; index, total: int;
+                        cwd = ""; objective = ""): seq[string] =
+  ## Attach criteria from the step, else recipe + step objective.
+  if st.criteria.len > 0:
+    return st.criteria
+  if stepObjectiveImpliesExport(st, index, total, objective):
+    return recipeExportCriteria(cwd)
+  recipeDefaultCriteria(cwd)
+
+proc stepsFromPlanNode(node: JsonNode; mandateKey: string;
+                       cwd = ""; objective = ""): seq[ProjectStep] =
   result = @[]
   let arr = node{"steps"}
   if arr.isNil or arr.kind != JArray:
@@ -182,9 +213,20 @@ proc stepsFromPlanNode(node: JsonNode; mandateKey: string): seq[ProjectStep] =
       st.title = st.id
     st.status = ssPending
     st.mandateKey = mandateKey
-    st.criteria = inferStepCriteria(st, i, total)
+    st.criteria = inferStepCriteria(st, i, total, cwd, objective)
     if st.result.isNil: st.result = newJObject()
     result.add(st)
+
+proc planStepsFingerprint(steps: seq[ProjectStep]): string =
+  ## Structural identity for "equivalent revision" (id, deps, criteria).
+  var parts: seq[string] = @[]
+  for s in steps:
+    var deps = s.dependsOn
+    deps.sort()
+    var crit = s.criteria
+    crit.sort()
+    parts.add(s.id & "|" & deps.join(",") & "|" & crit.join(","))
+  parts.join(";")
 
 proc writeArtifact(dir, name, body: string): string =
   if dir.len == 0:
@@ -502,6 +544,9 @@ proc projectAsk*(req: ProjectRequest): ProjectReport =
     return
 
   result.provider = invokeProjectModel(req, ctx.systemPrompt, ctx.userPrompt)
+  result.providerCallsThisCommand = 1
+  if req.route == "api" or result.provider.route == "api":
+    result.apiCallsThisCommand = 1
   if req.route == "inject":
     result.untested.add("planner model decision (inject)")
   if not result.provider.ok:
@@ -509,6 +554,10 @@ proc projectAsk*(req: ProjectRequest): ProjectReport =
     result.verdict = if not result.provider.available: "api_unavailable" else: "model_failed"
     result.message = result.provider.message
     result.doc = doc
+    result.report = reportBase("ask", doc)
+    result.report["provider"] = providerToJson(result.provider)
+    result.report["provider_calls_this_command"] = %result.providerCallsThisCommand
+    result.report["api_calls_this_command"] = %result.apiCallsThisCommand
     return
 
   let parsed = parsePlanPayload(result.provider.rawText)
@@ -517,6 +566,10 @@ proc projectAsk*(req: ProjectRequest): ProjectReport =
     result.verdict = "parse_failed"
     result.message = parsed.err
     result.doc = doc
+    result.report = reportBase("ask", doc)
+    result.report["provider"] = providerToJson(result.provider)
+    result.report["provider_calls_this_command"] = %result.providerCallsThisCommand
+    result.report["api_calls_this_command"] = %result.apiCallsThisCommand
     return
 
   let validated = validatePlanNode(parsed.node)
@@ -528,6 +581,8 @@ proc projectAsk*(req: ProjectRequest): ProjectReport =
     result.report = reportBase("ask", doc)
     result.report["provider"] = providerToJson(result.provider)
     result.report["plan_payload"] = parsed.node
+    result.report["provider_calls_this_command"] = %result.providerCallsThisCommand
+    result.report["api_calls_this_command"] = %result.apiCallsThisCommand
     return
 
   let mandateKey = "mandate_v1"
@@ -536,7 +591,7 @@ proc projectAsk*(req: ProjectRequest): ProjectReport =
     summary: parsed.node{"summary"}.getStr,
     hypothesis: parsed.node{"hypothesis"}.getStr,
     raw: parsed.node,
-    steps: stepsFromPlanNode(parsed.node, mandateKey)
+    steps: stepsFromPlanNode(parsed.node, mandateKey, cwd, req.objective)
   )
   if plan.steps.len == 0:
     result.ok = false
@@ -579,6 +634,8 @@ proc projectAsk*(req: ProjectRequest): ProjectReport =
   result.report = reportBase("ask", doc)
   result.report["provider"] = providerToJson(result.provider)
   result.report["artifacts"] = %*{"plan": planPath, "mandate": manPath}
+  result.report["provider_calls_this_command"] = %result.providerCallsThisCommand
+  result.report["api_calls_this_command"] = %result.apiCallsThisCommand
   if result.untested.len > 0:
     result.report["untested"] = %result.untested
 
@@ -660,7 +717,7 @@ proc projectRevise*(req: ProjectRequest): ProjectReport =
     summary: parsed.node{"summary"}.getStr,
     hypothesis: parsed.node{"hypothesis"}.getStr,
     raw: parsed.node,
-    steps: stepsFromPlanNode(parsed.node, mandateKey)
+    steps: stepsFromPlanNode(parsed.node, mandateKey, doc.cwd, doc.objective)
   )
   if plan.steps.len == 0:
     result.ok = false
@@ -668,6 +725,35 @@ proc projectRevise*(req: ProjectRequest): ProjectReport =
     result.message = "empty_plan: no steps after parse"
     result.doc = doc
     saveProject(store, doc)
+    return
+
+  # Equivalent revision: same structure → hand back with motif preserved.
+  let priorFp = planStepsFingerprint(doc.steps)
+  let newFp = planStepsFingerprint(plan.steps)
+  if priorFp.len > 0 and priorFp == newFp and doc.revisePlanPending:
+    recordUsage(doc, "reviser", result.provider)
+    # Motif conserved; do not clear revisePlanPending / recoveryExhausted.
+    if doc.revisePlanReason.len == 0 and implementerReason.len > 0:
+      doc.revisePlanReason = implementerReason
+    doc.nextAction = "revise"
+    doc.lastVerdict = "revise_equivalent"
+    saveProject(store, doc)
+    emitProjectEvent(store, doc.projectId, "project.revise_equivalent", %*{
+      "plan_version": doc.currentPlanVersion,
+      "motif": doc.revisePlanReason,
+      "fingerprint": priorFp
+    })
+    result.doc = doc
+    result.ok = false
+    result.verdict = "revise_equivalent"
+    result.message =
+      "revision equivalent; motif preserved: " & doc.revisePlanReason
+    result.report = reportBase("revise", doc)
+    result.report["provider"] = providerToJson(result.provider)
+    result.report["motif_preserved"] = %doc.revisePlanReason
+    result.report["equivalent_fingerprint"] = %priorFp
+    result.report["provider_calls_this_command"] = %result.providerCallsThisCommand
+    result.report["api_calls_this_command"] = %result.apiCallsThisCommand
     return
 
   var doneIds = initTable[string, ProjectStep]()
@@ -771,6 +857,8 @@ proc projectRevise*(req: ProjectRequest): ProjectReport =
   result.report["artifacts"] = %*{"plan": planPath, "mandate": manPath}
   result.report["proof_kept"] = keptProof
   result.report["proof_dropped"] = droppedProof
+  result.report["provider_calls_this_command"] = %result.providerCallsThisCommand
+  result.report["api_calls_this_command"] = %result.apiCallsThisCommand
   if result.untested.len > 0:
     result.report["untested"] = %result.untested
 
@@ -812,6 +900,25 @@ proc projectStep*(req: ProjectRequest): ProjectReport =
       "at_version": doc.revisePlanAtVersion,
       "action": "revise",
       "action_note": "No provider call; run project revise with the persisted motif."
+    }
+    return
+
+  # Concurrent run held by another live process must not double-spend.
+  let runLease = peekProjectRunLease(store, req.projectId)
+  if runLease.active and runLease.holderPid != getCurrentProcessId():
+    result.ok = false
+    result.verdict = "already_running"
+    result.message =
+      "project run lease held by pid=" & $runLease.holderPid &
+      "; no provider call from concurrent step"
+    result.doc = doc
+    result.report = reportBase("step", doc)
+    result.report["provider_calls_this_command"] = %0
+    result.report["api_calls_this_command"] = %0
+    result.report["already_running"] = %*{
+      "kind": "run_lease",
+      "holder_pid": runLease.holderPid,
+      "action": "wait_or_status"
     }
     return
 
@@ -1029,7 +1136,18 @@ proc projectStep*(req: ProjectRequest): ProjectReport =
       return
 
     # 2) Read-only diagnosis against current tree (faithful raw, no write).
+    #    Unreadable JSON (parse_error) must enter bounded recovery — not skip it.
     var diag = diagnoseRawAgainstTree(sourceRoot, rawText)
+    if not diag.needsRefuse:
+      let probe = parseFixDecision(rawText)
+      if not probe.parseOk:
+        diag.needsRefuse = true
+        diag.refuseCode =
+          if probe.refuseCode.len > 0: probe.refuseCode else: "parse_error"
+        diag.finding =
+          "Parse refused before write: " & probe.parseError & "\n" &
+          "Prefer insertBefore/insertAfter on a unique anchor, or strict JSON.\n" &
+          diag.finding
     if diag.needsRefuse:
       let reason =
         if diag.refuseCode.len > 0: diag.refuseCode else: "apply_refused"
@@ -1428,8 +1546,12 @@ proc projectRun*(req: ProjectRequest): ProjectReport =
   var interventions = newJArray()
   var reqMut = req
   let maxSteps = if req.maxSteps > 0: req.maxSteps else: 8
+  let maxAutoRevises = if req.maxAutoRevises > 0: req.maxAutoRevises else: 1
+  var autoRevises = 0
   var totalProvider = 0
   var totalApi = 0
+  var firstFaultyRaw = ""
+  var firstFaultyDecision = ""
 
   template recordIntervention(kind: string; prep: ProjectReport) =
     interventions.add(%*{
@@ -1443,6 +1565,31 @@ proc projectRun*(req: ProjectRequest): ProjectReport =
     totalProvider += prep.providerCallsThisCommand
     totalApi += prep.apiCallsThisCommand
     for u in prep.untested: result.untested.add(u)
+    if firstFaultyRaw.len == 0 and not prep.ok and prep.provider.rawText.len > 0:
+      firstFaultyRaw = prep.provider.rawText
+      firstFaultyDecision = prep.verdict
+
+  # Refuse if a live step owner already spends the attempt (run↔step mutex).
+  block checkLiveStep:
+    let existingLive = loadProject(store, req.projectId)
+    if existingLive.ok:
+      for s in existingLive.doc.steps:
+        if s.status == ssRunning and stepOwnerAlive(s) and
+           providerOwnerPid(s) != getCurrentProcessId():
+          result.ok = false
+          result.verdict = "already_running"
+          result.message =
+            "step " & s.id & " already running owner_pid=" &
+            $providerOwnerPid(s) & "; run will not double-spend"
+          result.providerCallsThisCommand = 0
+          result.apiCallsThisCommand = 0
+          result.report = %*{
+            "command": "project", "sub": "run", "ok": false,
+            "verdict": "already_running", "message": result.message,
+            "provider_calls_this_command": 0,
+            "api_calls_this_command": 0
+          }
+          return
 
   let existing = loadProject(store, req.projectId)
   if not existing.ok:
@@ -1504,6 +1651,61 @@ proc projectRun*(req: ProjectRequest): ProjectReport =
     result.doc = loaded.doc
 
     if result.doc.revisePlanPending or result.doc.recoveryExhausted:
+      if autoRevises < maxAutoRevises:
+        inc autoRevises
+        var revReq = reqMut
+        revReq.refinement = ""  # motif implémenteur suffit
+        let autoInj = resolveInject(reqMut, "plan_v3_after_revise.json")
+        if autoInj.len > 0: revReq.injectPath = autoInj
+        elif reqMut.injectPath.len > 0: revReq.injectPath = reqMut.injectPath
+        let revised = projectRevise(revReq)
+        recordIntervention("revise:auto", revised)
+        if revised.verdict == "revise_equivalent":
+          result.ok = false
+          result.verdict = "revise_equivalent"
+          result.message = revised.message
+          result.doc = revised.doc
+          result.providerCallsThisCommand = totalProvider
+          result.apiCallsThisCommand = totalApi
+          result.report = reportBase("run", revised.doc)
+          result.report["sub"] = %"run"
+          result.report["interventions"] = interventions
+          result.report["provider_calls_this_command"] = %totalProvider
+          result.report["api_calls_this_command"] = %totalApi
+          result.report["blocked"] = %*{
+            "kind": "revise_equivalent",
+            "next_action": "revise",
+            "motif": revised.doc.revisePlanReason,
+            "message": revised.message
+          }
+          if firstFaultyRaw.len > 0:
+            result.report["first_faulty_raw"] = %firstFaultyRaw
+            result.report["first_faulty_decision"] = %firstFaultyDecision
+          return
+        if revised.ok:
+          result.doc = revised.doc
+          continue
+        # Auto-revise failed → surface that block.
+        result.ok = false
+        result.verdict = revised.verdict
+        result.message = revised.message
+        result.doc = revised.doc
+        result.providerCallsThisCommand = totalProvider
+        result.apiCallsThisCommand = totalApi
+        result.report = reportBase("run", revised.doc)
+        result.report["sub"] = %"run"
+        result.report["interventions"] = interventions
+        result.report["provider_calls_this_command"] = %totalProvider
+        result.report["api_calls_this_command"] = %totalApi
+        result.report["blocked"] = %*{
+          "kind": revised.verdict,
+          "next_action": "revise",
+          "reason": revised.message
+        }
+        if firstFaultyRaw.len > 0:
+          result.report["first_faulty_raw"] = %firstFaultyRaw
+          result.report["first_faulty_decision"] = %firstFaultyDecision
+        return
       result.ok = false
       result.verdict =
         if result.doc.recoveryExhausted: "recovery_exhausted"
@@ -1523,6 +1725,9 @@ proc projectRun*(req: ProjectRequest): ProjectReport =
         "next_action": "revise",
         "reason": result.message
       }
+      if firstFaultyRaw.len > 0:
+        result.report["first_faulty_raw"] = %firstFaultyRaw
+        result.report["first_faulty_decision"] = %firstFaultyDecision
       return
 
     let actionable = nextActionableStep(result.doc)
@@ -1559,6 +1764,12 @@ proc projectRun*(req: ProjectRequest): ProjectReport =
     result.recoveryReason = stepped.recoveryReason
     result.doc = stepped.doc
     if not stepped.ok:
+      # Exhaustion during a step: try motivated auto-revise once, then resume.
+      if (stepped.doc.revisePlanPending or stepped.doc.recoveryExhausted) and
+         autoRevises < maxAutoRevises:
+        result.doc = stepped.doc
+        # Loop head will pick up revisePlanPending / recoveryExhausted.
+        continue
       result.ok = false
       result.verdict = stepped.verdict
       result.message = stepped.message
@@ -1576,6 +1787,12 @@ proc projectRun*(req: ProjectRequest): ProjectReport =
         "next_action": stepped.doc.nextAction,
         "message": stepped.message
       }
+      if firstFaultyRaw.len > 0:
+        result.report["first_faulty_raw"] = %firstFaultyRaw
+        result.report["first_faulty_decision"] = %firstFaultyDecision
+      elif stepped.provider.rawText.len > 0:
+        result.report["first_faulty_raw"] = %stepped.provider.rawText
+        result.report["first_faulty_decision"] = %stepped.verdict
       return
 
   loaded = loadProject(store, req.projectId)

@@ -120,8 +120,10 @@ proc verifyCsvJourney*(worktree, repoRoot: string; requireCsv = true): ProjectVe
   result.details["no_args_out"] = %noArgsOut
 
   if not requireCsv:
-    result.csvOk = true
-    result.quoteOk = true
+    # Not verified — must stay false so an old compile+list proof cannot
+    # cover an export_command criterion added by a later revise.
+    result.csvOk = false
+    result.quoteOk = false
     result.ok = result.listOk
     result.message =
       if result.ok: "intermediate: compile+list intact (CSV deferred to final step)"
