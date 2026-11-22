@@ -1,0 +1,68 @@
+{
+  "stamp": "20261122T152200Z",
+  "note": "first archived recovery result (multi collapsed because 2nd JSON unparseable; recovery repeated ambiguous else:)",
+  "ok": false,
+  "verdict": "apply_failed",
+  "message": "recovery apply: edit 1: oldText anchor ambiguous (2 matches)",
+  "refuse_code": "anchor_ambiguous",
+  "recovery_triggered": true,
+  "recovery_attempted": true,
+  "recovery_reason": "anchor_ambiguous",
+  "api_calls_this_command": 1,
+  "provider_calls_this_command": 1,
+  "apply": {
+    "ok": false,
+    "identical_to_original": false,
+    "worktree": "docs/qa/project_cli_journey/recovery_replay_20261122T152200Z/worktree_step1_recovery",
+    "target_file": "src/demo_tasks.nim",
+    "decision": "Add CSV export functionality with opt-in flag.",
+    "message": "edit 1: oldText anchor ambiguous (2 matches)",
+    "before_hash": "1AFA914E",
+    "after_hash": "1AFA914E",
+    "mode": "edits",
+    "edits_applied": 0,
+    "edit_details": [
+      "edit_1:anchor_ambiguous:2"
+    ],
+    "refuse_code": "anchor_ambiguous",
+    "ambiguous_edit_index": 1,
+    "ambiguous_match_count": 2,
+    "ambiguous_old_text": "else:",
+    "occurrence_contexts": [
+      "occurrence 1 of 2:\nline 7 (bytes 172..176)\n   4| \n   5| proc main() =\n   6|   let args = commandLineParams()\n>> 7|   let cmd = if args.len > 0: args[0] else: \"list\"\n   8|   case cmd\n   9|   of \"list\", \"\":\n   10|     echo formatList(loadTasks())",
+      "occurrence 2 of 2:\nline 11 (bytes 248..252)\n   8|   case cmd\n   9|   of \"list\", \"\":\n   10|     echo formatList(loadTasks())\n>> 11|   else:\n   12|     stderr.writeLine(\"unknown command: \" & cmd)\n   13|     stderr.writeLine(\"usage: demo_tasks [list]\")\n   14|     quit(2)"
+    ]
+  },
+  "verify": null,
+  "readable_diff": null,
+  "usage_by_role": {
+    "planner": {
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "calls": 0,
+      "estimated_usd": 0.0,
+      "model": ""
+    },
+    "reviser": {
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "calls": 0,
+      "estimated_usd": 0.0,
+      "model": ""
+    },
+    "implementer_recovery": {
+      "prompt_tokens": 1225,
+      "completion_tokens": 60,
+      "calls": 1,
+      "estimated_usd": 0.00021975,
+      "model": "gpt-4o-mini"
+    }
+  },
+  "recovery_raw": "```json\n{\"target_file\":\"src/demo_tasks.nim\",\"decision\":\"Add CSV export functionality with opt-in flag.\",\"edits\":[{\"oldText\":\"else:\",\"newText\":\"of \\\"export-csv\\\":\\n    echo formatCSV(loadTasks())\\n  else:\"}]}\n```",
+  "recovery_tokens": {
+    "prompt": 1225,
+    "completion": 60
+  },
+  "historical_provenance": "docs/qa/project_cli_journey/20261122T150522Z/step1.json#provider.raw_text + docs/qa/project_cli_journey/20261122T150522Z/artifacts/plan_v2.json",
+  "model_decision": "reformulate edit (same ambiguous else:) \u2014 failed apply"
+}

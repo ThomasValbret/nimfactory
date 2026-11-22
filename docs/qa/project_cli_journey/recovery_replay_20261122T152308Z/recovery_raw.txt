@@ -1,0 +1,12 @@
+```json
+{
+  "target_file": "src/demo_tasks.nim",
+  "decision": "Add CSV export functionality with opt-in flag.",
+  "edits": [
+    {
+      "oldText": "else:",
+      "newText": "of \"export-csv\":\n    echo formatCSV(loadTasks())\n  else:"
+    }
+  ]
+}
+```
