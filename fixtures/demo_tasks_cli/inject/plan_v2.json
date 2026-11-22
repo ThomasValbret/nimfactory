@@ -3,17 +3,20 @@
   "hypothesis": "",
   "optional_question": "",
   "change_notes": "La précision impose CSV sur stdout et interdit de remplacer l'affichage list par défaut. Découpe en add_csv_helpers puis wire_export_csv.",
+  "final_criteria": ["compile", "list_intact", "export_command"],
   "steps": [
     {
       "id": "add_csv_helpers",
       "title": "Ajouter csvQuote/formatCsv dans tasks.nim",
       "depends_on": [],
+      "postconditions": ["compile", "list_intact"],
       "criteria": ["compile", "list_intact"]
     },
     {
       "id": "wire_export_csv",
       "title": "Câbler export-csv dans demo_tasks.nim en réutilisant formatCsv",
       "depends_on": ["add_csv_helpers"],
+      "postconditions": ["compile", "list_intact", "export_command"],
       "criteria": ["compile", "list_intact", "export_command"]
     }
   ],
@@ -24,6 +27,7 @@
       "garder list inchangé par défaut",
       "quoter correctement les titres contenant une virgule",
       "étape 2 doit réutiliser formatCsv créé à l'étape 1",
+      "Preferer insertLineAfter pour le câblage CLI",
       "Respecter AGENTS.md"
     ],
     "files_likely": ["src/tasks.nim", "src/demo_tasks.nim"]

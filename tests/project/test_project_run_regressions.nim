@@ -454,4 +454,137 @@ block projectRunInject:
   doAssert v.ok, v.message
   echo "project_run_inject: ok"
 
+# --- Reproduce archived textual insertAfter that glues if to "list" ---
+block glueListIfTextualInsert:
+  let content = readFile(fix / "src" / "demo_tasks.nim")
+  let dec = parseFixDecision(readFile(inj / "archive_api_glue_list_if_first.json"))
+  doAssert dec.parseOk
+  doAssert dec.edits[0].op == "insert_after"
+  let applied = applyEditsToContent(content, dec.edits)
+  doAssert applied.ok, applied.message
+  doAssert "\"list\"if cmd" in applied.content,
+    "textual insertAfter must reproduce glued list+if: " &
+    applied.content[applied.content.find("list") .. applied.content.find("list")+40]
+  # Line insertion of the same intent stays on a new line.
+  let lineEdits = @[TextEdit(
+    oldText: "let cmd = if args.len > 0: args[0] else: \"list\"",
+    newText: "if cmd == \"export-csv\":\n      echo formatCSV(loadTasks())\n      quit()",
+    op: "insert_line_after")]
+  let lined = applyEditsToContent(content, lineEdits)
+  doAssert lined.ok, lined.message
+  doAssert "\"list\"if cmd" notin lined.content
+  doAssert "else: \"list\"\nif cmd ==" in lined.content or
+           "else: \"list\"\n  if cmd ==" in lined.content or
+           lined.content.contains("\"list\"\nif cmd"),
+           "line insert must break before if: " &
+           lined.content[lined.content.find("list")-10 .. lined.content.find("list")+50]
+  let parsedLine = parseFixDecision("""{"target_file":"src/demo_tasks.nim","edits":[{"insertLineAfter":"case cmd\n","newText":"  # line\n"}]}""")
+  doAssert parsedLine.parseOk and parsedLine.edits[0].op == "insert_line_after"
+  echo "glue_list_if_textual_vs_line: ok"
+
+# --- Post-compile repair on rejected glued candidate ---
+block compileRepairFromRejected:
+  let store = tmpPath("repair") & ".sqlite"
+  let art = tmpPath("repair_art")
+  createDir(art)
+  seedPlan(store, art, "repair_demo")
+  # Force wire step id criteria: mark helpers done via inject first.
+  var h = defaultProjectRequest()
+  h.storePath = store
+  h.projectId = "repair_demo"
+  h.cwd = fix
+  h.route = "inject"
+  h.injectPath = inj / "step_helpers.json"
+  h.worktree = tmpPath("repair_h")
+  h.artifactDir = art
+  doAssert projectStep(h).ok
+  var req = h
+  req.injectPath = inj / "archive_api_glue_list_if_first.json"
+  req.injectCompileRepairPath = inj / "step_repair_unglue_list_if.json"
+  req.worktree = tmpPath("repair_w")
+  let r = projectStep(req)
+  doAssert r.repairTriggered, "compile repair must trigger"
+  doAssert r.repairAttempted
+  doAssert r.ok, r.verdict & " " & r.message & " " & $r.report{"compile_diagnosis"}
+  doAssert "\"list\"if" notin r.report{"readable_diff"}.getStr
+  echo "compile_repair_from_rejected: ok"
+
+# --- Motivated revise changes how blockage is treated ---
+block motivatedReviseChangesTreatment:
+  let store = tmpPath("motif") & ".sqlite"
+  let art = tmpPath("motif_art")
+  createDir(art)
+  seedPlan(store, art, "motif_demo")
+  let s0 = openProjectStore(store)
+  let beforeDoc = loadProject(s0, "motif_demo").doc
+  let beforeFp = planStepsFingerprint(beforeDoc.steps)
+  closeProjectStore(s0)
+  var req = defaultProjectRequest()
+  req.storePath = store
+  req.projectId = "motif_demo"
+  req.cwd = fix
+  req.route = "inject"
+  req.injectPath = inj / "step_helpers.json"
+  req.worktree = tmpPath("motif_h")
+  req.artifactDir = art
+  doAssert projectStep(req).ok
+  var bad = req
+  bad.injectPath = inj / "archive_api_glue_list_if_first.json"
+  bad.injectCompileRepairPath = ""  # no repair → motivated revise
+  bad.injectRecoveryPath = ""
+  bad.worktree = tmpPath("motif_bad")
+  let failed = projectStep(bad)
+  doAssert not failed.ok
+  doAssert failed.doc.revisePlanPending, "compile fail must request motivated revise"
+  doAssert "compile failed" in failed.doc.revisePlanReason
+  let motif = failed.doc.revisePlanReason
+  var rev = defaultProjectRequest()
+  rev.storePath = store
+  rev.projectId = "motif_demo"
+  rev.cwd = fix
+  rev.route = "inject"
+  rev.injectPath = inj / "plan_revise_postconditions.json"
+  let revised = projectRevise(rev)
+  doAssert revised.ok, revised.verdict & " " & revised.message
+  doAssert revised.verdict == "plan_revised"
+  doAssert not revised.doc.revisePlanPending
+  let afterFp = planStepsFingerprint(revised.doc.steps)
+  doAssert afterFp != beforeFp, "motivated revise must change step treatment fingerprint"
+  var helpersCrit: seq[string] = @[]
+  for s in revised.doc.steps:
+    if s.id == "add_csv_helpers":
+      helpersCrit = s.criteria
+  doAssert helpersCrit == @["compile"], $helpersCrit
+  let man = revised.doc.mandates{"mandate_v" & $revised.doc.currentPlanVersion}
+  doAssert man{"final_criteria"}.len > 0
+  doAssert "insertLine" in man{"change_notes"}.getStr or
+           "insertLine" in revised.doc.steps[1].title
+  doAssert man{"implementer_revise_reason"}.getStr.len > 0
+  doAssert "compile failed" in motif
+  # Wire title now demands line insert — different treatment of the blockage.
+  doAssert "insertLine" in revised.doc.steps[1].title
+  echo "motivated_revise_changes_treatment: ok"
+
+# --- final_criteria vs postconditions on plan parse ---
+block finalVsPostconditions:
+  let node = parseJson(readFile(inj / "plan_revise_postconditions.json"))
+  let steps = stepsFromPlanNode(node, "m", fix, "export csv")
+  doAssert steps[0].criteria == @["compile"], $steps[0].criteria
+  doAssert "export_command" in steps[1].criteria
+  doAssert planFinalCriteria(node) == @["compile", "list_intact", "export_command"]
+  # Intermediate postconditions must not inherit final export blindly.
+  doAssert "export_command" notin steps[0].criteria
+  let loc = localizeCompileDiagnosis(
+    """/tmp/x/src/demo_tasks.nim(7, 53) Error: undeclared identifier: 'cmd'""",
+    fix, "src/demo_tasks.nim")
+  doAssert loc.hit
+  doAssert loc.line == 7
+  doAssert loc.col == 53
+  doAssert "undeclared" in loc.message
+  let loc2 = localizeCompileDiagnosis(
+    """src/main.rs:10:5: error: cannot find value `cmd` in this scope""",
+    "", "src/main.rs")
+  doAssert loc2.hit and loc2.line == 10
+  echo "final_vs_postconditions_and_localize: ok"
+
 echo "ALL project run regression tests passed"
