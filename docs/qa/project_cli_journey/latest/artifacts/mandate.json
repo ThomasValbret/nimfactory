@@ -21,6 +21,6 @@
   "refinement": "Je veux du CSV sur la sortie standard et je veux garder l'affichage actuel par défaut.",
   "step_id": "wire_export_csv",
   "step_title": "Câbler export-csv dans demo_tasks.nim en réutilisant formatCsv",
-  "source_tree": "/opt/nimFactory/docs/qa/project_cli_journey/20261122T004817Z/artifacts/trees/add_csv_helpers",
+  "source_tree": "/opt/nimFactory/docs/qa/project_cli_journey/20261122T014259Z/artifacts/trees/add_csv_helpers",
   "prior_accepted_step": "add_csv_helpers"
 }

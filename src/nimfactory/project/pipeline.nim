@@ -1,6 +1,6 @@
 ## Project CLI journey: ask → revise → step → status/resume.
 
-import std/[os, json, tables, sequtils, strutils, times, algorithm]
+import std/[os, json, tables, sequtils, strutils, times, algorithm, posix]
 import nimfactory/mission/[provider, apply, context]
 import ./types
 import ./store
@@ -286,6 +286,24 @@ proc providerAttemptUnknown(step: ProjectStep): bool =
   if pa.isNil or pa.kind != JObject: return false
   pa{"status"}.getStr == "unknown"
 
+proc providerOwnerPid(step: ProjectStep): int =
+  let pa = step.result{"provider_attempt"}
+  if pa.isNil or pa.kind != JObject: return 0
+  pa{"owner_pid"}.getInt
+
+proc processAlive*(pid: int): bool =
+  ## True if `pid` still exists (including if we lack permission to signal it).
+  if pid <= 0:
+    return false
+  let rc = posix.kill(Pid(pid), cint(0))
+  if rc == 0:
+    return true
+  # ESRCH = no such process; EPERM = exists but not signalable → still alive.
+  errno == EPERM
+
+proc stepOwnerAlive(step: ProjectStep): bool =
+  processAlive(providerOwnerPid(step))
+
 proc projectAsk*(req: ProjectRequest): ProjectReport =
   result.command = "ask"
   result.projectId = req.projectId
@@ -550,6 +568,34 @@ proc projectStep*(req: ProjectRequest): ProjectReport =
     return
 
   var step = actionable.step
+
+  # Concurrent guard: a live owner waiting on the provider must not be
+  # double-entered by a second `project step` (no silent rebill / no call).
+  if step.status == ssRunning and stepOwnerAlive(step):
+    result.ok = false
+    result.verdict = "already_running"
+    result.message =
+      "step " & step.id & " is already running (owner_pid=" &
+      $providerOwnerPid(step) & "); no provider call"
+    result.doc = doc
+    result.report = reportBase("step", doc)
+    result.report["provider_calls_this_command"] = %0
+    result.report["already_running"] = %*{
+      "step_id": step.id,
+      "owner_pid": providerOwnerPid(step),
+      "provider_attempt_unknown": providerAttemptUnknown(step),
+      "action": "wait_or_status"
+    }
+    return
+
+  # Stale running (owner dead) → treat as interrupted before explicit retry.
+  if step.status == ssRunning and not stepOwnerAlive(step):
+    for i, s in doc.steps.mpairs:
+      if s.id == step.id:
+        doc.steps[i].status = ssInterrupted
+        step.status = ssInterrupted
+    saveProject(store, doc)
+
   if actionable.kind == "retry" and providerAttemptUnknown(step):
     ## Explicit retry after interrupt: prior provider outcome stayed unknown —
     ## do not treat it as a completed billable success; proceed only because
@@ -572,9 +618,11 @@ proc projectStep*(req: ProjectRequest): ProjectReport =
 
   let sourceRoot = sourceRootForStep(doc)
   let attemptStarted = now().utc.format("yyyy-MM-dd'T'HH:mm:ss'Z'")
+  let ownerPid = getCurrentProcessId()
 
   # Mark running + provider_attempt unknown BEFORE the provider call so a
   # killed process leaves a recoverable interrupted state (not a silent miss).
+  # owner_pid lets resume/step distinguish a live waiter from a dead process.
   for i, s in doc.steps.mpairs:
     if s.id == step.id:
       doc.steps[i].status = ssRunning
@@ -583,7 +631,8 @@ proc projectStep*(req: ProjectRequest): ProjectReport =
           "status": "unknown",
           "started_at": attemptStarted,
           "route": req.route,
-          "source_tree": sourceRoot
+          "source_tree": sourceRoot,
+          "owner_pid": ownerPid
         }
       }
   doc.nextAction = "step"
@@ -591,6 +640,7 @@ proc projectStep*(req: ProjectRequest): ProjectReport =
   emitProjectEvent(store, doc.projectId, "project.step_running", %*{
     "step_id": step.id,
     "provider_attempt": "unknown",
+    "owner_pid": ownerPid,
     "source_tree": sourceRoot
   })
 
@@ -821,31 +871,63 @@ proc projectStatus*(req: ProjectRequest): ProjectReport =
 
 proc projectResume*(req: ProjectRequest): ProjectReport =
   ## Rehydrate after process death: no planner/reviser calls.
-  ## Distinguishes a finished step from an interrupted attempt and names the action.
+  ## Live owner waiting on provider → active (do not flip to interrupted).
+  ## Dead owner / interrupted → explicit retry_step; keep provider unknown.
   result = projectStatus(req)
   result.command = "resume"
   if not result.ok:
     return
 
   var doc = result.doc
+  var activeId = ""
+  var activePid = 0
   var interruptedId = ""
   var interruptedUnknown = false
   for i, s in doc.steps.mpairs:
     if s.status == ssRunning:
-      doc.steps[i].status = ssInterrupted
-      interruptedId = s.id
-      interruptedUnknown = providerAttemptUnknown(s) or
-        (s.result{"provider_attempt"}{"status"}.getStr == "unknown")
-      # Ensure provider_attempt remains unknown if still marked that way
-      if doc.steps[i].result.isNil: doc.steps[i].result = newJObject()
-      if not doc.steps[i].result.hasKey("provider_attempt"):
-        doc.steps[i].result["provider_attempt"] = %*{
-          "status": "unknown",
-          "note": "process died while step was running"
-        }
+      if stepOwnerAlive(s):
+        activeId = s.id
+        activePid = providerOwnerPid(s)
+      else:
+        doc.steps[i].status = ssInterrupted
+        interruptedId = s.id
+        interruptedUnknown = providerAttemptUnknown(s) or
+          (s.result{"provider_attempt"}{"status"}.getStr == "unknown")
+        if doc.steps[i].result.isNil: doc.steps[i].result = newJObject()
+        var pa = doc.steps[i].result{"provider_attempt"}
+        if pa.isNil or pa.kind != JObject:
+          pa = newJObject()
+          doc.steps[i].result["provider_attempt"] = pa
+        pa["status"] = %"unknown"
+        pa["note"] = %"owner process dead while step was running; outcome unknown"
     elif s.status == ssInterrupted:
       interruptedId = s.id
       interruptedUnknown = providerAttemptUnknown(s)
+
+  if activeId.len > 0:
+    # Do not mutate a live running step; report active and refuse duplicate work.
+    result.doc = doc
+    result.report = reportBase("resume", doc)
+    result.report["sub"] = %"resume"
+    result.report["resume"] = %*{
+      "rehydrated": true,
+      "planner_calls_this_command": 0,
+      "reviser_calls_this_command": 0,
+      "billable_plan_calls": 0,
+      "active_step": activeId,
+      "owner_pid": activePid,
+      "step_state": "running",
+      "provider_attempt_unknown": true,
+      "action": "wait",
+      "action_note":
+        "Step is still active and waiting on the provider; do not start another step for it."
+    }
+    result.verdict = "active"
+    result.message = "resumed; active step=" & activeId & " owner_pid=" & $activePid
+    let store = openProjectStore(req.storePath)
+    defer: closeProjectStore(store)
+    emitProjectEvent(store, doc.projectId, "project.resume", result.report["resume"])
+    return
 
   if interruptedId.len > 0:
     let store = openProjectStore(req.storePath)

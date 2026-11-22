@@ -120,15 +120,16 @@ PY
 # Persist plan step count for later multi-step loop
 PLAN_STEPS=$(python3 -c "import json; print(len(json.load(open('$OUT/revise.json')).get('steps') or []))")
 
-# --- kill mid-step then resume ---
+# --- concurrent step: live owner → resume=active; second step=already_running ---
 cp "$STORE" "$OUT/store_before_kill.sqlite"
 KILL_STORE="$OUT/kill.sqlite"
 cp "$STORE" "$KILL_STORE"
 KILL_ART="$OUT/kill_artifacts"
 KILL_WT="$OUT/kill_worktree"
+KILL_WT2="$OUT/kill_worktree2"
 mkdir -p "$KILL_ART"
-rm -rf "$KILL_WT"
-mkdir -p "$KILL_WT" && rmdir "$KILL_WT"
+rm -rf "$KILL_WT" "$KILL_WT2"
+mkdir -p "$KILL_WT" "$KILL_WT2" && rmdir "$KILL_WT" "$KILL_WT2"
 
 if [[ "$ROUTE" == "inject" ]]; then
   KILL_INJECT=(--inject "$FIX/inject/step_helpers.json")
@@ -136,20 +137,19 @@ else
   KILL_INJECT=()
 fi
 
-export NF_PROJECT_STEP_PAUSE_MS=8000
+export NF_PROJECT_STEP_PAUSE_MS=12000
 set +e
 "$BIN" project step --store "$KILL_STORE" --project-id "$PID" \
   --cwd "$FIX" --artifact-dir "$KILL_ART" --route "$ROUTE" \
-  --worktree "$KILL_WT" "${KILL_INJECT[@]}" > "$OUT/step_killed.json" &
+  --worktree "$KILL_WT" "${KILL_INJECT[@]}" > "$OUT/step_alive.json" &
 KILL_PID=$!
 set -e
 
-# Wait until SQLite shows running (or timeout)
 python3 - "$KILL_STORE" "$PID" <<'PY'
 import json, sqlite3, sys, time
 store, pid = sys.argv[1], sys.argv[2]
 rid = "project:" + pid
-deadline = time.time() + 12
+deadline = time.time() + 15
 while time.time() < deadline:
     try:
         con = sqlite3.connect(store)
@@ -159,20 +159,62 @@ while time.time() < deadline:
             doc = json.loads(row[0])
             for s in doc.get("steps") or []:
                 if s.get("status") == "running":
-                    print("observed_running", s.get("id"))
+                    pa = (s.get("result") or {}).get("provider_attempt") or {}
+                    print("observed_running", s.get("id"), "owner_pid=", pa.get("owner_pid"))
                     raise SystemExit(0)
-    except Exception as e:
+    except SystemExit:
+        raise
+    except Exception:
         pass
     time.sleep(0.15)
 print("timeout_waiting_running")
 raise SystemExit(1)
 PY
 
+# While first process is alive: resume must say active
+set +e
+"$BIN" project resume --store "$KILL_STORE" --project-id "$PID" \
+  --cwd "$FIX" --route "$ROUTE" > "$OUT/resume_while_alive.json"
+set -e
+python3 - "$OUT/resume_while_alive.json" "$KILL_PID" <<'PY'
+import json,sys
+d=json.load(open(sys.argv[1]))
+alive_pid=int(sys.argv[2])
+assert d.get("ok") is True, d
+assert d.get("verdict")=="active", d
+r=d.get("resume") or {}
+assert r.get("action")=="wait", r
+assert r.get("step_state")=="running", r
+assert (r.get("active_step") or "") != "", r
+assert int(r.get("owner_pid") or 0) == alive_pid, (r, alive_pid)
+assert r.get("billable_plan_calls")==0
+print("concurrent_resume_active ok owner_pid=", r.get("owner_pid"))
+PY
+
+# Second step on same store must not call the provider
+set +e
+"$BIN" project step --store "$KILL_STORE" --project-id "$PID" \
+  --cwd "$FIX" --artifact-dir "$KILL_ART" --route "$ROUTE" \
+  --worktree "$KILL_WT2" "${KILL_INJECT[@]}" > "$OUT/step_concurrent.json"
+CONC_EC=$?
+set -e
+python3 - "$OUT/step_concurrent.json" "$CONC_EC" <<'PY'
+import json,sys
+d=json.load(open(sys.argv[1]))
+ec=int(sys.argv[2])
+assert d.get("ok") is False, d
+assert d.get("verdict")=="already_running", d
+assert d.get("provider_calls_this_command")==0, d
+assert "provider" not in d or d.get("provider") is None or d.get("provider",{}).get("raw_text") in (None,""), d
+assert ec != 0
+print("concurrent_step_refused ok (no provider call)")
+PY
+
 kill -9 "$KILL_PID" 2>/dev/null || true
 wait "$KILL_PID" 2>/dev/null || true
 unset NF_PROJECT_STEP_PAUSE_MS
 
-# Resume on the killed store — must report interrupted + action
+# After kill: resume → interrupted + unknown + retry_step
 set +e
 "$BIN" project resume --store "$KILL_STORE" --project-id "$PID" \
   --cwd "$FIX" --route "$ROUTE" > "$OUT/resume_after_kill.json"
@@ -267,18 +309,14 @@ if idx >= 2:
     # Step 2+ must chain from prior accepted tree, not pristine cwd alone.
     assert "trees/" in src.replace("\\","/") or src.endswith("add_csv_helpers") or "add_csv_helpers" in src, (src, d)
 v=d.get("verify") or {}
-# Full CSV verify only required when recipe says so AND last step that wires export.
-if pending in ("wire_export_csv", "implement_export"):
+# Behavioural oracle only — API solutions may invent their own function names.
+if v.get("kind") == "csv_journey":
     assert v.get("list_ok") and v.get("csv_ok") and v.get("quote_ok"), v
-    # Must use formatCsv from tasks (helpers from step 1)
-    import pathlib
-    tree=pathlib.Path(d["accepted_tree_ref"])
-    demo=(tree/"src"/"demo_tasks.nim").read_text()
-    tasks=(tree/"src"/"tasks.nim").read_text()
-    assert "formatCsv" in tasks, "helpers missing in accepted tree"
-    assert "formatCsv(loadTasks())" in demo, demo
-    assert "proc formatCsv" not in demo, "step2 must reuse tasks.formatCsv, not redefine"
-print("verify=", v.get("message"))
+elif idx >= 2 or pending in ("wire_export_csv", "implement_export"):
+    # Final wiring step under inject plan_v2
+    if v.get("require_csv") is True or (v.get("details") or {}).get("require_csv") is True:
+        assert v.get("list_ok") and v.get("csv_ok") and v.get("quote_ok"), v
+print("verify=", v.get("message"), "kind=", v.get("kind"))
 PY
   ACCEPTED_HASH=$(python3 -c "import json; print(json.load(open('$OUT/step${STEP_IDX}.json')).get('accepted_tree_hash') or '')")
   # Safety: don't loop forever
@@ -321,44 +359,45 @@ def run(args):
 ec0, out0 = run([])
 ec1, out1 = run(["list"])
 ec2, out2 = run(["export-csv"])
+ec3, out3 = run(["list", "--format=csv"])
 assert ec0==0 and out0==expect_list, (ec0, out0, expect_list)
 assert ec1==0 and out1==expect_list, (ec1, out1)
-assert ec2==0 and out2.startswith("id,title"), out2
-assert '"Appeler Alice, Bob"' in out2, out2
-print("binary_checks_ok no-args/list/export-csv")
+# Recipe admits export-csv and/or list --format=csv
+csv_ok = (ec2==0 and out2.startswith("id,title") and '"Appeler Alice, Bob"' in out2) or \
+         (ec3==0 and out3.startswith("id,title") and '"Appeler Alice, Bob"' in out3)
+assert csv_ok, (ec2, out2, ec3, out3)
+print("binary_checks_ok no-args/list/export-forms")
 PY
 
-# --- bad patch: replace default display with CSV → verify must fail ---
-rm -rf "$WT_BAD"
-cp -a "$LAST_TREE" "$WT_BAD"
-python3 - "$(cd "$WT_BAD" && pwd)" "$(cd "$FIX" && pwd)" <<'PY'
-import pathlib, sys, subprocess, json
-tree = pathlib.Path(sys.argv[1]).resolve()
-fix = pathlib.Path(sys.argv[2]).resolve()
-demo = tree / "src" / "demo_tasks.nim"
-text = demo.read_text()
-bad = text.replace(
-    'of "list", "":\n    echo formatList(loadTasks())',
-    'of "list", "":\n    echo formatCsv(loadTasks())',
-)
-assert bad != text, "failed to apply bad patch"
-demo.write_text(bad)
-bin_path = tree / "build" / "demo_tasks_bad"
-subprocess.check_call([
-  "nim","c","-d:release","--hints:off","--warnings:off",
-  f"--nimcache:{tree/'nimcache_bad'}",
-  f"--path:{tree/'src'}",
-  f"-o:{bin_path}",
-  str(demo),
-], cwd=str(tree))
-r=subprocess.run([str(bin_path)], cwd=str(tree), capture_output=True, text=True)
-out=r.stdout.strip()
-assert out.startswith("id,title"), out
-data=json.loads((fix/"data"/"tasks.json").read_text())
-expect_list="\n".join(f'{t["id"]}. {t["title"]}' for t in data)
-assert out != expect_list, "bad patch should break list default"
-# Recipe oracle: list_ok would be false (default display replaced by CSV).
-print("bad_default_csv_patch_fails_list_oracle ok (list_mismatch)")
+# --- negative control via project step (mastered fixture, alternate names) ---
+NEG=fixtures/demo_tasks_cli_neg
+NEG_STORE="$OUT/neg.sqlite"
+NEG_ART="$OUT/neg_artifacts"
+NEG_WT="$OUT/neg_worktree"
+mkdir -p "$NEG_ART"
+rm -rf "$NEG_WT"
+mkdir -p "$NEG_WT" && rmdir "$NEG_WT"
+set +e
+"$BIN" project ask --store "$NEG_STORE" --project-id neg_list \
+  --cwd "$NEG" --artifact-dir "$NEG_ART" --route inject \
+  --inject "$NEG/inject/plan_neg.json" \
+  --objective "contrôle négatif list_mismatch" > "$OUT/neg_ask.json"
+"$BIN" project step --store "$NEG_STORE" --project-id neg_list \
+  --cwd "$NEG" --artifact-dir "$NEG_ART" --route inject \
+  --inject "$NEG/inject/bad_list.json" --worktree "$NEG_WT" > "$OUT/neg_step.json"
+NEG_EC=$?
+set -e
+python3 - "$OUT/neg_step.json" "$NEG_EC" <<'PY'
+import json,sys
+d=json.load(open(sys.argv[1]))
+ec=int(sys.argv[2])
+assert d.get("ok") is False, d
+assert d.get("verdict")=="verify_failed", d
+v=d.get("verify") or {}
+assert v.get("list_ok") is False, v
+assert "list_mismatch" in (v.get("message") or d.get("message") or ""), (v, d)
+assert ec != 0
+print("neg_project_step_ok verdict=verify_failed list_mismatch")
 PY
 
 # --- status ---
@@ -387,11 +426,23 @@ resume=json.loads((out/"resume.json").read_text())
 ask=json.loads((out/"ask.json").read_text())
 revise=json.loads((out/"revise.json").read_text())
 kill_resume=json.loads((out/"resume_after_kill.json").read_text())
+alive_resume=json.loads((out/"resume_while_alive.json").read_text())
+conc=json.loads((out/"step_concurrent.json").read_text())
+neg=json.loads((out/"neg_step.json").read_text())
 empty=json.loads((out/"empty_plan.json").read_text())
 last=json.loads((out/f"step{nsteps}.json").read_text())
 usage=status.get("usage_by_role") or {}
 def calls(role):
     return int((usage.get(role) or {}).get("calls") or 0)
+def role_row(name):
+    u=usage.get(name) or {}
+    return {
+      "calls": int(u.get("calls") or 0),
+      "prompt_tokens": int(u.get("prompt_tokens") or 0),
+      "completion_tokens": int(u.get("completion_tokens") or 0),
+      "estimated_usd": float(u.get("estimated_usd") or 0),
+      "model": u.get("model") or "",
+    }
 summary={
   "sha": sha,
   "route": route,
@@ -400,9 +451,21 @@ summary={
   "plan_steps": len(status.get("steps") or []),
   "steps_executed": nsteps,
   "resume_billable_plan_calls": (resume.get("resume") or {}).get("billable_plan_calls"),
+  "concurrent": {
+    "resume_while_alive": alive_resume.get("resume"),
+    "resume_verdict": alive_resume.get("verdict"),
+    "second_step_verdict": conc.get("verdict"),
+    "second_step_provider_calls": conc.get("provider_calls_this_command"),
+  },
   "kill_resume": kill_resume.get("resume"),
+  "neg_step": {"verdict": neg.get("verdict"), "verify": neg.get("verify")},
   "empty_plan_verdict": empty.get("verdict"),
   "usage_by_role": usage,
+  "roles": {
+    "planner": role_row("planner"),
+    "reviser": role_row("reviser"),
+    "implementer": role_row("implementer"),
+  },
   "planner_calls": calls("planner"),
   "reviser_calls": calls("reviser"),
   "implementer_calls": calls("implementer"),
@@ -430,7 +493,9 @@ LATEST=docs/qa/project_cli_journey/latest
 rm -rf "$LATEST"
 mkdir -p "$LATEST"
 cp "$OUT/summary.json" "$OUT/ask.json" "$OUT/revise.json" "$OUT/resume.json" \
-   "$OUT/resume_after_kill.json" "$OUT/empty_plan.json" "$OUT/status.json" "$LATEST/" 2>/dev/null || true
+   "$OUT/resume_while_alive.json" "$OUT/step_concurrent.json" \
+   "$OUT/resume_after_kill.json" "$OUT/empty_plan.json" "$OUT/status.json" \
+   "$OUT/neg_ask.json" "$OUT/neg_step.json" "$LATEST/" 2>/dev/null || true
 for i in $(seq 1 "$STEP_IDX"); do
   cp "$OUT/step${i}.json" "$LATEST/" 2>/dev/null || true
 done

@@ -128,14 +128,18 @@ proc verifyCsvJourney*(worktree, repoRoot: string; requireCsv = true): ProjectVe
       else: "list_mismatch"
     return
 
+  # Forms admitted by the recipe oracle: `export-csv` or `list --format=csv`.
   var csvR = runCmd(worktree, comp.bin, @["export-csv"])
-  if csvR.exit != 0:
+  var csvForm = "export-csv"
+  if csvR.exit != 0 or not csvR.outp.strip().startsWith("id,title"):
     csvR = runCmd(worktree, comp.bin, @["list", "--format=csv"])
+    csvForm = "list --format=csv"
   result.csvOut = csvR.outp.strip()
   let expectCsv = expectedCsvOutput(repoRoot).strip()
   result.csvOk = csvR.exit == 0 and result.csvOut == expectCsv
   result.details["expected_csv"] = %expectCsv
   result.details["csv_exit"] = %csvR.exit
+  result.details["csv_form"] = %csvForm
 
   result.quoteOk = result.csvOut.contains("\"Appeler Alice, Bob\"")
   if not result.quoteOk and result.csvOut.contains("Alice, Bob"):

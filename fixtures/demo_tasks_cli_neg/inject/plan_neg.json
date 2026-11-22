@@ -1,0 +1,20 @@
+{
+  "summary": "Contrôle négatif : une édition qui remplace list par du CSV doit échouer l'oracle.",
+  "hypothesis": "",
+  "optional_question": "",
+  "steps": [
+    {
+      "id": "break_default_list",
+      "title": "Remplacer l'affichage list par défaut par du CSV (doit échouer verify)",
+      "depends_on": []
+    }
+  ],
+  "mandate_sketch": {
+    "goal": "Casser volontairement le comportement list par défaut",
+    "constraints": [
+      "fixture de contrôle négatif",
+      "l'oracle csv_journey doit échouer avec list_mismatch"
+    ],
+    "files_likely": ["src/demo_tasks.nim"]
+  }
+}

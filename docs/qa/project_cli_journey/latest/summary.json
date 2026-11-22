@@ -1,11 +1,28 @@
 {
-  "sha": "08a77759d88bad7d180369b31bbb0be81d159655",
+  "sha": "239fb34ae1315dcb752b71188e7d231f00cd81cd",
   "route": "inject",
   "model_mode": "inject (model decisions untested)",
   "plan_versions": 2,
   "plan_steps": 2,
   "steps_executed": 2,
   "resume_billable_plan_calls": 0,
+  "concurrent": {
+    "resume_while_alive": {
+      "rehydrated": true,
+      "planner_calls_this_command": 0,
+      "reviser_calls_this_command": 0,
+      "billable_plan_calls": 0,
+      "active_step": "add_csv_helpers",
+      "owner_pid": 3334129,
+      "step_state": "running",
+      "provider_attempt_unknown": true,
+      "action": "wait",
+      "action_note": "Step is still active and waiting on the provider; do not start another step for it."
+    },
+    "resume_verdict": "active",
+    "second_step_verdict": "already_running",
+    "second_step_provider_calls": 0
+  },
   "kill_resume": {
     "rehydrated": true,
     "planner_calls_this_command": 0,
@@ -16,6 +33,31 @@
     "provider_attempt_unknown": true,
     "action": "retry_step",
     "action_note": "Prior provider call outcome is unknown; do not assume success or silently rebill. Re-run `project step` explicitly to retry."
+  },
+  "neg_step": {
+    "verdict": "verify_failed",
+    "verify": {
+      "ok": false,
+      "kind": "csv_journey",
+      "list_ok": false,
+      "csv_ok": true,
+      "quote_ok": true,
+      "message": "list_mismatch",
+      "list_out": "id,title\n1,Acheter du pain\n2,\"Appeler Alice, Bob\"\n3,Relire le rapport",
+      "csv_out": "id,title\n1,Acheter du pain\n2,\"Appeler Alice, Bob\"\n3,Relire le rapport",
+      "compile_exit": 0,
+      "details": {
+        "require_csv": true,
+        "compile_out": "",
+        "expected_list": "1. Acheter du pain\n2. Appeler Alice, Bob\n3. Relire le rapport",
+        "list_exit": 0,
+        "no_args_exit": 0,
+        "no_args_out": "id,title\n1,Acheter du pain\n2,\"Appeler Alice, Bob\"\n3,Relire le rapport",
+        "expected_csv": "id,title\n1,Acheter du pain\n2,\"Appeler Alice, Bob\"\n3,Relire le rapport",
+        "csv_exit": 0,
+        "csv_form": "export-csv"
+      }
+    }
   },
   "empty_plan_verdict": "plan_failed",
   "usage_by_role": {
@@ -41,10 +83,33 @@
       "model": ""
     }
   },
+  "roles": {
+    "planner": {
+      "calls": 0,
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "estimated_usd": 0.0,
+      "model": ""
+    },
+    "reviser": {
+      "calls": 0,
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "estimated_usd": 0.0,
+      "model": ""
+    },
+    "implementer": {
+      "calls": 0,
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "estimated_usd": 0.0,
+      "model": ""
+    }
+  },
   "planner_calls": 0,
   "reviser_calls": 0,
   "implementer_calls": 0,
-  "accepted_tree_ref": "/opt/nimFactory/docs/qa/project_cli_journey/20261122T004817Z/artifacts/trees/wire_export_csv",
+  "accepted_tree_ref": "/opt/nimFactory/docs/qa/project_cli_journey/20261122T014259Z/artifacts/trees/wire_export_csv",
   "accepted_tree_hash": "73518A6720844BE7",
   "last_step_verdict": "pass",
   "verify": {
@@ -65,14 +130,15 @@
       "no_args_exit": 0,
       "no_args_out": "1. Acheter du pain\n2. Appeler Alice, Bob\n3. Relire le rapport",
       "expected_csv": "id,title\n1,Acheter du pain\n2,\"Appeler Alice, Bob\"\n3,Relire le rapport",
-      "csv_exit": 0
+      "csv_exit": 0,
+      "csv_form": "export-csv"
     }
   },
-  "source_tree_last": "/opt/nimFactory/docs/qa/project_cli_journey/20261122T004817Z/artifacts/trees/add_csv_helpers",
+  "source_tree_last": "/opt/nimFactory/docs/qa/project_cli_journey/20261122T014259Z/artifacts/trees/add_csv_helpers",
   "artifacts": {
-    "plan_v1": "docs/qa/project_cli_journey/20261122T004817Z/artifacts/plan_v1.json",
-    "plan_v2": "docs/qa/project_cli_journey/20261122T004817Z/artifacts/plan_v2.json",
-    "mandate": "docs/qa/project_cli_journey/20261122T004817Z/artifacts/mandate.json"
+    "plan_v1": "docs/qa/project_cli_journey/20261122T014259Z/artifacts/plan_v1.json",
+    "plan_v2": "docs/qa/project_cli_journey/20261122T014259Z/artifacts/plan_v2.json",
+    "mandate": "docs/qa/project_cli_journey/20261122T014259Z/artifacts/mandate.json"
   },
   "untested": [
     "planner",

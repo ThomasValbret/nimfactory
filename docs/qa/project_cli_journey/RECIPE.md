@@ -1,4 +1,4 @@
-# Recette VPS — parcours projet CLI (arbres chaînés + reprise)
+# Recette VPS — parcours projet CLI (concurrence + oracle CSV)
 
 ## Base
 
@@ -6,63 +6,52 @@
 | --- | --- |
 | Branche | `feature/project-cli-journey` |
 | Fixture | `fixtures/demo_tasks_cli/` (+ `recipe.json` → `verify=csv_journey`) |
-| Store | SQLite `nf_runs.state_json` + `nf_events` (`run_id=project:<id>`) |
-| Modèle | `gpt-4o-mini` (roles `planner` / `reviser` / `implementer`) |
+| Négatif | `fixtures/demo_tasks_cli_neg/` (noms de fonctions alternatifs) |
+| Modèle | `gpt-4o-mini` (`planner` / `reviser` / `implementer`) |
 
 ## Prérequis
 
 ```bash
 cd /opt/nimFactory
 export PATH="/root/.nimble/bin:${PATH:-}"
-# Clé: env → .keys (gitignoré) → /opt/.keys
-# Hors API (déterministe):
 NF_PROJECT_ROUTE=inject bash scripts/e2e_project_cli_journey.sh
-# Mission réelle:
+# Mission réelle (une campagne) :
 NF_PROJECT_ROUTE=api bash scripts/e2e_project_cli_journey.sh
 ```
 
-## Ce que le script vérifie (inject)
+## Contrôles hors API
 
-1. `{}` inject → `verdict=plan_failed` (pas de plan/mandat fabriqué)
-2. `ask` → plan v1 ; `revise` → plan v2 à **2 étapes** (`add_csv_helpers` → `wire_export_csv`)
-3. **Kill réel** pendant `step` (`NF_PROJECT_STEP_PAUSE_MS` + `kill -9`) ; `resume` → `interrupted` + `action=retry_step` + `provider_attempt_unknown`
-4. `resume` sur store sain → `action=run_step`
-5. Step 1 : helpers dans `tasks.nim` ; snapshot `accepted_tree_ref` + diff lisible
-6. Step 2 : édite sur l’arbre accepté (réutilise `formatCsv`) ; vérif CSV complète
-7. Binaire : sans argument / `list` / `export-csv` séparément
-8. Patch qui remplace le défaut par du CSV → oracle `list_mismatch`
+1. `{}` → `plan_failed`
+2. **Concurrence** : step vivant (pause) + second processus sur le même store
+   - `resume` → `verdict=active`, `action=wait`
+   - second `step` → `already_running`, `provider_calls_this_command=0`
+3. Kill du premier → `resume` → `interrupted` + `provider_attempt_unknown` + `retry_step`
+4. Étapes chaînées sur `accepted_tree_ref` ; oracle comportemental (pas de noms de fonctions imposés)
+5. Binaire : sans argument / `list` / `export-csv` (ou `list --format=csv`)
+6. Négatif via `project step` sur `demo_tasks_cli_neg` → `verify_failed` / `list_mismatch`
 
-## Transcription courte (inject, vérifié)
+## Transcription inject (vérifié)
 
-Campagne : `docs/qa/project_cli_journey/20261122T004817Z`
+Campagne : `docs/qa/project_cli_journey/20261122T014259Z`
 
-| Étape | Verdict | Notes |
-| --- | --- | --- |
-| empty `{}` | `plan_failed` | `empty_plan` |
-| ask | `plan_ready` | plan v1 |
-| revise | `plan_revised` | 2 steps + mandat CSV |
-| kill+resume | `interrupted` | `retry_step`, provider unknown |
-| resume | `resumed` | `run_step`, `billable_plan_calls=0` |
-| step1 | `pass` | tree hash persisté ; verify partielle |
-| step2 | `pass` | source=tree step1 ; CSV ok |
-| status | all `done` | |
+| Étape | Verdict |
+| --- | --- |
+| empty `{}` | `plan_failed` |
+| resume while alive | `active` |
+| concurrent step | `already_running` (0 appel) |
+| resume after kill | `interrupted` / `retry_step` |
+| step1+step2 | `pass` (arbre chaîné + CSV) |
+| neg step | `verify_failed` / `list_mismatch` |
 
-## API (premier résultat conservé)
+## API (premier résultat)
 
-Campagne : `docs/qa/project_cli_journey/api_20261122T004713Z`
+Campagne : `docs/qa/project_cli_journey/api_20261122T014323Z`
 
-- `verdict=model_failed` — DNS / `Name or service not known` vers `api.openai.com`
-- Rôles encore à qualifier sur un VPS avec réseau OpenAI : **planner, reviser, implementer**
+- Erreur exacte : `Could not resolve host: api.openai.com` / `Name or service not known`
+- Rôles non testés : **planner, reviser, implementer** (pas de substitution locale)
 
-Sur VPS joignable :
+Dès que le DNS OpenAI répond :
 
 ```bash
 NF_PROJECT_ROUTE=api bash scripts/e2e_project_cli_journey.sh
-# Le script suit toutes les étapes du plan renvoyé (boucle step).
-# Capturer: ask.json, revise.json (change_notes / mandat), step*.json (diff), status.json (usage_by_role)
 ```
-
-## Hors périmètre
-
-- Campagnes glob sous `docs/qa/e2e_intervention/campaigns/` : intactes
-- Pas de second SDK

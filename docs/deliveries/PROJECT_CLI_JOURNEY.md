@@ -1,69 +1,33 @@
-# Reçu — PROJECT_CLI_JOURNEY (arbres chaînés + reprise + intégrité pilote)
+# Reçu — PROJECT_CLI_JOURNEY (concurrence + oracle + API)
 
-## Lot / périmètre
+## Lot
 
-Suite PR #5 depuis `bf7f542` :
+Suite PR #5 depuis `239fb34` :
 
-1. Persistance `accepted_tree_ref` / hash / diff lisible ; étape N+1 appliquée sur l’arbre accepté
-2. Kill réel pendant `step` ; `resume` distingue terminé / interrompu ; issue fournisseur `unknown` sans rebill silencieux
-3. Plus de plans/mandats fabriqués ; `{}` → `plan_failed` ; vérif CSV liée à `recipe.json` ; tests binaire + patch CSV défaut
-4. Tentative API réelle archivée (premier résultat)
+1. Reprise concurrente : `owner_pid` ; resume=`active` si vivant ; second step=`already_running` (0 appel) ; après kill → `interrupted` + unknown
+2. Banc CSV : no-args / list / export admis ; négatif via `project step` → `verify_failed`/`list_mismatch` ; noms de fonctions libres pour l’API
+3. Campagne API réelle tentée ; premier échec DNS archivé
 
-## Base inspectée
+## SHA
 
-- Tip précédent : `bf7f542`
-- Branche : `feature/project-cli-journey`
+Tip testé après commit de ce lot (voir push). Inject : `docs/qa/project_cli_journey/20261122T014259Z`. API : `docs/qa/project_cli_journey/api_20261122T014323Z`.
 
-## Contrats
-
-- Consommés : `SqliteRunStore`, mission `applyDecision` / `parseFixDecision` / provider inject|api
-- Modifiés : `project/{types,pipeline,verify,store}` — pas de second SDK
-
-## Fichiers principaux
-
-| Chemin | Rôle |
-| --- | --- |
-| `src/nimfactory/project/pipeline.nim` | ask/revise/step/resume ; chaînage arbres ; pause kill |
-| `src/nimfactory/project/verify.nim` | `recipe.json` → `csv_journey` (partiel / final) |
-| `src/nimfactory/project/types.nim` | `interrupted`, `accepted_tree_*` |
-| `fixtures/demo_tasks_cli/recipe.json` | liaison vérif CSV |
-| `fixtures/demo_tasks_cli/inject/plan_v2.json` | 2 étapes chaînées |
-| `scripts/e2e_project_cli_journey.sh` | E2E inject/api |
-
-## Commandes exécutées
+## Commandes
 
 ```bash
 NF_PROJECT_ROUTE=inject bash scripts/e2e_project_cli_journey.sh
-# → ok ; docs/qa/project_cli_journey/20261122T004817Z
-
-# Premier résultat API (échec réseau, conservé) :
-./build/nimfactory project ask --route api ...
-# → docs/qa/project_cli_journey/api_20261122T004713Z  verdict=model_failed
+# API :
+NF_PROJECT_ROUTE=api bash scripts/e2e_project_cli_journey.sh
 ```
 
-## Doublures vs réel
+## Rôles (inject)
 
-| Couche | Inject | API |
-| --- | --- | --- |
-| Planner/reviser/implementer | inject (non qualifié modèle) | **indisponible** DNS |
-| Apply + arbres acceptés | réel | — |
-| Kill/resume SQLite | réel | — |
-| Verify CSV recipe | réel | — |
+| Rôle | Appels | Jetons | Coût | Résultat |
+| --- | --- | --- | --- | --- |
+| planner | 0 | 0 | 0 | inject (non qualifié modèle) |
+| reviser | 0 | 0 | 0 | inject |
+| implementer | 0 | 0 | 0 | inject |
 
-## Coûts
+## API
 
-- Inject : 0 USD / 0 tokens facturables
-- API : 0 appel abouti (échec résolution `api.openai.com`)
-
-## Limites
-
-- Rôles **planner, reviser, implementer** restent à qualifier dès que l’API est joignable
-- Un `target_file` par step (héritage mission)
-
-## État
-
-| Niveau | Statut |
-| --- | --- |
-| Composant (hors API) | utilisable — inject E2E vert |
-| Intégration store/resume/arbres | ok |
-| Parcours live LLM | bloqué réseau ; premier échec archivé |
+Indisponible : `curl: (6) Could not resolve host: api.openai.com` ; message CLI `Name or service not known`. Aucun appel facturable. Rôles non testés : planner, reviser, implementer.

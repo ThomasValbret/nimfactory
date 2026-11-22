@@ -1,0 +1,37 @@
+{
+  "sha": "239fb34ae1315dcb752b71188e7d231f00cd81cd",
+  "route": "api",
+  "model_planned": "gpt-4o-mini",
+  "exit": 4,
+  "ok": false,
+  "verdict": "model_failed",
+  "message": "No such device or address\nAdditional info: Name or service not known",
+  "exact_network_error": {
+    "getent_hosts_api_openai_com": "",
+    "curl": "curl: (6) Could not resolve host: api.openai.com\n000"
+  },
+  "usage_by_role": null,
+  "roles": {
+    "planner": {
+      "calls": 0,
+      "result": "not_executed",
+      "reason": "No such device or address\nAdditional info: Name or service not known"
+    },
+    "reviser": {
+      "calls": 0,
+      "result": "not_executed",
+      "reason": "blocked_by_planner_unreachable"
+    },
+    "implementer": {
+      "calls": 0,
+      "result": "not_executed",
+      "reason": "blocked_by_planner_unreachable"
+    }
+  },
+  "roles_untested": [
+    "planner",
+    "reviser",
+    "implementer"
+  ],
+  "note": "First API result archived without local model substitution."
+}

@@ -16,6 +16,7 @@
     "no_args_exit": 0,
     "no_args_out": "1. Acheter du pain\n2. Appeler Alice, Bob\n3. Relire le rapport",
     "expected_csv": "id,title\n1,Acheter du pain\n2,\"Appeler Alice, Bob\"\n3,Relire le rapport",
-    "csv_exit": 0
+    "csv_exit": 0,
+    "csv_form": "export-csv"
   }
 }

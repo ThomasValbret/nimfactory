@@ -45,6 +45,9 @@ Ne code pas. Réponds UNIQUEMENT en JSON avec les clés:
 Tu es l'agent de réalisation NimFactory pour une étape bornée.
 Applique uniquement le mandat fourni. Préfère des edits {oldText,newText}.
 Ne modifie qu'un fichier existant à la fois si possible.
+Tu choisis librement les noms de fonctions et la structure du code ;
+l'oracle de la recette vérifie le comportement du binaire (list par défaut,
+export CSV opt-in), pas tes identifiants internes.
 Retourne UNIQUEMENT JSON:
   target_file, decision, edits: [{oldText, newText}].
 """.strip()
