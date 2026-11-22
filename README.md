@@ -13,6 +13,19 @@ cd /opt/nimFactory
 nim c -r --path:src --path:/opt/NimAgentLibrary/src tests/f0/test_contracts.nim
 ```
 
+## Studio graphique
+
+Le Studio ouvre un projet créé par la CLI et suit ses étapes en lecture seule. Le serveur natif et le client navigateur sont écrits en Nim. Le binaire embarque ses ressources. La compilation du Studio utilise Nim 2.4 et un compilateur C. L’exécution requiert la bibliothèque SQLite du système.
+
+```sh
+nim e scripts/build_studio.nims
+build/nimfactory-studio --store /chemin/project.sqlite --project-id demo_tasks_cli
+```
+
+Ouvrir `http://127.0.0.1:8085`. Sur un VPS, un tunnel SSH vers ce port donne accès au même écran depuis le poste client. Le port est configurable avec `--port`. Pour activer la lecture du fichier cible accepté, ajouter `--trees /chemin/artifacts/trees`, le répertoire produit par les étapes du projet. Le diff et le reçu de vérification sont lus dans SQLite. L’onglet Code relit le fichier de l’étape et vérifie son empreinte enregistrée. Une source manquante, modifiée, binaire ou supérieure à 1 Mio est signalée comme indisponible.
+
+`nimfactory project snapshot --store PATH --project-id ID` émet la même projection JSON que `GET /api/snapshot`. La vue rassemble état et séquences du journal dans une transaction de lecture, avec les 100 événements les plus récents. Le navigateur actualise cette vue toutes les deux secondes, y compris après une coupure. Il garde l’étape sélectionnée par identifiant. Les onglets Diff, Code et Vérification dépendent des données disponibles.
+
 ## Documents
 
 - [AGENTS.md](AGENTS.md) — cadre agents

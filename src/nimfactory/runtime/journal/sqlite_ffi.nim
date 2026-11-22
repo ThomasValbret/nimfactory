@@ -19,6 +19,7 @@ type
 const SQLITE_TRANSIENT* = cast[SqliteDestructor](-1)
 
 proc sqlite3_open*(filename: cstring, ppDb: ptr SqliteDb): int32 {.cdecl, dynlib: SqliteLib, importc.}
+proc sqlite3_open_v2*(filename: cstring, ppDb: ptr SqliteDb, flags: int32, zVfs: cstring): int32 {.cdecl, dynlib: SqliteLib, importc.}
 proc sqlite3_close*(db: SqliteDb): int32 {.cdecl, dynlib: SqliteLib, importc.}
 proc sqlite3_errmsg*(db: SqliteDb): cstring {.cdecl, dynlib: SqliteLib, importc.}
 proc sqlite3_exec*(

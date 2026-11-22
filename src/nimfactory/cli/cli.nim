@@ -8,6 +8,7 @@ import nimfactory/runtime/executor/executor
 import nimfactory/mission/pipeline
 import nimfactory/project/pipeline
 import nimfactory/project/store
+import nimfactory/application/project_view
 
 const
   ExitOk* = 0
@@ -71,7 +72,7 @@ Commands:
   inspect --store PATH --run-id ID
   events --store PATH --run-id ID
   mission-fix --repo PATH --oracle PATH --route api|local|inject [options]
-  project ask|revise|step|status|resume --store PATH [options]
+  project ask|revise|step|status|resume|snapshot --store PATH [options]
 
 Options:
   --mode sequential|concurrent
@@ -329,8 +330,11 @@ proc runCli*(args: seq[string]): int =
       return ExitFailed
     of "project":
       if o.sub.len == 0:
-        writeHuman("project requires subcommand: ask|revise|step|status|resume")
+        writeHuman("project requires subcommand: ask|revise|step|status|resume|snapshot")
         return ExitInvalid
+      if o.sub == "snapshot":
+        writeMachine(readProjectView(o.store, o.projectId))
+        return ExitOk
       var preq = defaultProjectRequest()
       preq.storePath = o.store
       preq.projectId = o.projectId

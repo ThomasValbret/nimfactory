@@ -5,8 +5,7 @@ import nimfactory/runtime/journal/run_store
 import nimfactory/application/compose
 import ./types
 
-proc projectRunId*(projectId: string): string =
-  "project:" & projectId
+export types.projectRunId
 
 proc openProjectStore*(storePath: string): SqliteRunStore =
   openAppStore(storePath)
