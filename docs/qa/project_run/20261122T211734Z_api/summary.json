@@ -1,0 +1,115 @@
+{
+  "stamp": "20261122T211734Z",
+  "route": "api",
+  "code_sha": "1076ccd4d0b8e247b7e6c7b273c6dd346d809893",
+  "exit_code": 4,
+  "ok": false,
+  "verdict": "verify_failed",
+  "message": "compile failed (exit 1)",
+  "next_action": "step",
+  "interventions": [
+    {
+      "kind": "ask",
+      "ok": true,
+      "verdict": "plan_ready",
+      "message": "plan v1 persisted",
+      "api_calls": 1,
+      "provider_calls": 1
+    },
+    {
+      "kind": "revise",
+      "ok": true,
+      "verdict": "plan_revised",
+      "message": "plan v2 persisted",
+      "api_calls": 1,
+      "provider_calls": 1
+    },
+    {
+      "kind": "step:1",
+      "ok": false,
+      "verdict": "recovery_exhausted",
+      "message": "recovery still refused (anchor_missing); no write",
+      "api_calls": 2,
+      "provider_calls": 2
+    },
+    {
+      "kind": "revise:auto",
+      "ok": true,
+      "verdict": "plan_revised",
+      "message": "plan v3 persisted",
+      "api_calls": 1,
+      "provider_calls": 1
+    },
+    {
+      "kind": "step:1",
+      "ok": false,
+      "verdict": "verify_failed",
+      "message": "compile failed (exit 1)",
+      "api_calls": 1,
+      "provider_calls": 1
+    }
+  ],
+  "api_calls_this_command": 6,
+  "provider_calls_this_command": 6,
+  "usage_by_role": {
+    "planner": {
+      "prompt_tokens": 562,
+      "completion_tokens": 344,
+      "calls": 1,
+      "estimated_usd": 0.0002907,
+      "model": "gpt-4o-mini"
+    },
+    "implementer": {
+      "prompt_tokens": 2190,
+      "completion_tokens": 389,
+      "calls": 2,
+      "estimated_usd": 0.0005618999999999999,
+      "model": "gpt-4o-mini"
+    },
+    "reviser": {
+      "prompt_tokens": 2034,
+      "completion_tokens": 989,
+      "calls": 2,
+      "estimated_usd": 0.0008984999999999999,
+      "model": "gpt-4o-mini"
+    },
+    "implementer_recovery": {
+      "prompt_tokens": 1433,
+      "completion_tokens": 191,
+      "calls": 1,
+      "estimated_usd": 0.00032954999999999996,
+      "model": "gpt-4o-mini"
+    }
+  },
+  "delivered_tree": "",
+  "delivered_hash": "",
+  "binary_behaviour": {},
+  "blocked": {
+    "kind": "verify_failed",
+    "step_id": "1",
+    "next_action": "step",
+    "message": "compile failed (exit 1)"
+  },
+  "status_verdict": "verify_failed",
+  "user_command": "nimfactory project run --store \u2026 --cwd fixtures/demo_tasks_cli --objective 'Je veux pouvoir exporter mes t\u00e2ches.' --refinement '\u2026CSV\u2026' --route api",
+  "estimated_usd_total": 0.00208065,
+  "key_source": "/opt/nimFactory/.keys",
+  "api_calls_by_role": {
+    "planner": 1,
+    "implementer": 2,
+    "reviser": 2,
+    "implementer_recovery": 1
+  },
+  "first_faulty_decision": "recovery_exhausted",
+  "first_faulty_raw": "{\n  \"target_file\": \"src/demo_tasks.nim\",\n  \"decision\": \"Ajout d'un cas pour l'exportation CSV sans changer le comportement par d\u00e9faut.\",\n  \"edits\": [\n    {\n      \"insertAfter\": \"echo formatList(loadTasks())\",\n      \"newText\": \"elif cmd == \\\"export-csv\\\":\\n    echo formatCsv(loadTasks())\"\n    },\n    {\n      \"insertAfter\": \"var lines: seq[string] = @[]\",\n      \"newText\": \"proc formatCsv*(tasks: openArray[Task]): string =\\n  var lines: seq[string] = @[]\\n  for t in tasks:\\n    lines.add(\\\"\\\\\\\"\\\" & t.title.replace(\\\"\\\\\\\", \\\"\\\\\\\\\\\").replace(\\\",\\\", \\\"\\\\\\\",\\\") & \\\"\\\\\\\"\\\")\\n  lines.join(\\\"\\\\n\\\")\"\n    }\n  ]\n}",
+  "engine_decision": {
+    "blocked": {
+      "kind": "verify_failed",
+      "step_id": "1",
+      "next_action": "step",
+      "message": "compile failed (exit 1)"
+    },
+    "auto_revise": true,
+    "next_action": "step"
+  }
+}

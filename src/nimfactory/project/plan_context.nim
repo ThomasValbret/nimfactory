@@ -49,23 +49,29 @@ proposition JSON (un target_file). Plusieurs blocs JSON ou plusieurs
 target_file = refus avant toute écriture.
 Si un prérequis hors mandat impose de revoir le plan, retourne:
   {"revise_plan": true, "decision": "<motif>"}.
-Sinon préfère des edits {oldText,newText} sur un fichier existant.
+Sinon préfère des edits sur un fichier existant. Deux formes admises:
+  - remplacement: {oldText, newText} (oldText unique dans l'arbre courant)
+  - insertion: {insertBefore|insertAfter: "<ancre unique>", newText: "..."}
+JSON strict uniquement (pas de \"\"\" hors chaîne JSON, pas de markdown utile).
 Tu choisis librement les noms de fonctions et la structure du code ;
 l'oracle de la recette vérifie le comportement du binaire (list par défaut,
 export CSV opt-in), pas tes identifiants internes.
 Retourne UNIQUEMENT JSON:
-  target_file, decision, edits: [{oldText, newText}].
+  target_file, decision, edits: [...].
 """.strip()
 
   ProjectRecoverySystemPrompt* = """
 Tu récupères une proposition d'édition refusée par project step.
 On t'a donné: une seule copie fidèle de ta réponse brute (y compris un
-bloc malformé), un diagnostic sans écriture (compte d'occurrences oldText
-par édition lisible, extraits si ancre ambiguë).
+bloc malformé / JSON illisible), un diagnostic sans écriture (compte
+d'occurrences d'ancre par édition lisible, extraits si ancre ambiguë).
 Tu choisis le fichier et le correctif. Une seule proposition JSON
 (un target_file). Si un prérequis impose de réviser le plan:
   {"revise_plan": true, "decision": "<motif>"}.
-Sinon: target_file, decision, edits: [{oldText, newText}] avec oldText unique.
+Sinon JSON strict: target_file, decision, edits avec soit
+  {oldText, newText} (ancre unique), soit
+  {insertBefore|insertAfter, newText} sur une ancre unique vérifiée
+  dans l'arbre courant. Pas de oldText vide.
 """.strip()
 
 proc collectProjectSources*(cwd: string; maxFiles = 12; maxBytes = 80_000): seq[ProjectSource] =

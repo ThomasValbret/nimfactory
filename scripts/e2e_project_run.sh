@@ -63,11 +63,22 @@ run = json.loads((out/"run.json").read_text())
 status = json.loads((out/"status.json").read_text()) if (out/"status.json").exists() else {}
 tree = run.get("delivered_tree") or run.get("accepted_tree_ref") or ""
 bin_out = {}
-if tree and Path(tree, "build/demo_tasks").exists():
-    binp = str(Path(tree)/"build"/"demo_tasks")
+bin_candidates = []
+if tree:
+    bin_candidates.append(Path(tree) / "build" / "demo_tasks")
+for p in sorted((out / "worktrees").glob("*/build/demo_tasks"), reverse=True):
+    bin_candidates.append(p)
+for binp in bin_candidates:
+    if not binp.exists():
+        continue
+    cwd = str(binp.parent.parent)
     for args, key in [([], "no_args"), (["list"], "list"), (["export-csv"], "export_csv")]:
-        r = subprocess.run([binp, *args], cwd=tree, capture_output=True, text=True)
+        r = subprocess.run([str(binp), *args], cwd=cwd, capture_output=True, text=True)
         bin_out[key] = {"exit": r.returncode, "out": r.stdout.strip()[:500]}
+    summary_tree = cwd
+    break
+else:
+    summary_tree = tree
 summary = {
   "stamp": "$STAMP",
   "route": "$ROUTE",
@@ -81,11 +92,13 @@ summary = {
   "api_calls_this_command": run.get("api_calls_this_command"),
   "provider_calls_this_command": run.get("provider_calls_this_command"),
   "usage_by_role": run.get("usage_by_role"),
-  "delivered_tree": tree,
+  "delivered_tree": tree or summary_tree,
   "delivered_hash": run.get("delivered_hash") or run.get("accepted_tree_hash"),
   "binary_behaviour": bin_out,
   "blocked": run.get("blocked"),
   "status_verdict": status.get("verdict"),
+  "first_faulty_decision": run.get("first_faulty_decision"),
+  "first_faulty_raw": run.get("first_faulty_raw"),
   "user_command": "nimfactory project run --store … --cwd fixtures/demo_tasks_cli --objective 'Je veux pouvoir exporter mes tâches.' --refinement '…CSV…' --route $ROUTE" + (" --inject-dir fixtures/demo_tasks_cli/inject" if "$ROUTE"=="inject" else ""),
 }
 usd = 0.0
@@ -93,6 +106,8 @@ for u in (summary.get("usage_by_role") or {}).values():
     usd += float(u.get("estimated_usd") or 0)
 summary["estimated_usd_total"] = usd
 (out/"summary.json").write_text(json.dumps(summary, indent=2)+"\n")
+if run.get("first_faulty_raw"):
+    (out/"first_faulty.txt").write_text(run.get("first_faulty_raw"))
 print(json.dumps({k: summary[k] for k in ["ok","verdict","api_calls_this_command","estimated_usd_total","binary_behaviour"]}, indent=2))
 PY
 

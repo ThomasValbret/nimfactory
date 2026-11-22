@@ -1,11 +1,10 @@
-# Project run — première commande pilote
+# Project run — commande unique vers l’export
 
 Date : 2026-11-22  
-Branche : `feature/project-run` (worktree depuis `655f7ea`)  
-**SHA du code exécuté (run API)** : `123d5157e6e3363e13442da5829b21a1e4946576`  
-**SHA fonctionnel (lease/criteria)** : `4d2c68410c92ff5fcd3a1a73ca616b03f5ebc495`
+Branche : `feature/project-run`  
+**SHA exécuté** : `1076ccd4d0b8e247b7e6c7b273c6dd346d809893`
 
-## Commande utilisateur
+## Commande unique
 
 ```bash
 nimfactory project run \
@@ -16,62 +15,52 @@ nimfactory project run \
   --route api
 ```
 
-Inject (preuve binaire) : même commande avec `--route inject --inject-dir fixtures/demo_tasks_cli/inject`.
+(Inject de qualification : ajouter `--route inject --inject-dir fixtures/demo_tasks_cli/inject`.)
 
-Clé : `scripts/lib_load_openai_key.sh` charge `nimFactory/.keys` (avant le fallback legacy `/opt/.keys`).
+## Changements livrés (depuis `affe5d4`)
 
-## Régressions conditionnant l'usage
+- Rejeu des 3 sorties archivées (`archive_api_raw_parse_error`, `archive_api_raw_empty_oldtext`, sticky engine)
+- JSON illisible → récupération bornée ; `insertBefore` / `insertAfter` sur ancre unique vérifiée
+- Après épuisement, `run` demande une révision motivée (`revise:auto`) ; révision équivalente → motif conservé
+- Critères rattachés à la recette + objectif d’étape ; commentaire seul échoue si export promis ; preuve compile+list ne couvre pas un export ajouté
+- Comptage `ask` corrigé (`provider_calls` / `api_calls`)
+- Mutex run↔step (lease + owner vivant) ; issue fournisseur `unknown` visible après interruption
 
-| # | Exigence | Preuve |
+## Qualification inject (binaire livré)
+
+`docs/qa/project_run/20261122T211836Z_inject` — verdict **done**
+
+| Usage | Résultat |
+| --- | --- |
+| (sans argument) | liste intacte |
+| `list` | liste intacte |
+| `export-csv` | `id,title` + `"Appeler Alice, Bob"` |
+
+Appels API : 0 · USD : 0
+
+## Campagne route réelle (API)
+
+`docs/qa/project_run/20261122T211734Z_api` — **blocage** `verify_failed` (compile) après auto-revise
+
+### Appels par rôle
+
+| Rôle | Appels | USD est. |
 | --- | --- | --- |
-| 1 | Deux départs simultanés → une seule tentative fournisseur | `claimProjectRunLease` ; second `project run` → `already_running`, 0 appel |
-| 2 | Récupération épuisée survit au redémarrage → décision différente | `recovery_exhausted` + `revise_plan_pending` ; status/resume=`revise` ; step 0 appel |
-| 3 | Commentaire seul échoue si l'étape promet une commande d'export | critères `export_command` ; `step_comment_only.json` → `verify_failed` |
+| planner | 1 | 0.000291 |
+| reviser | 2 | 0.000898 |
+| implementer | 2 | 0.000562 |
+| implementer_recovery | 1 | 0.000330 |
+| **total** | **6** | **~$0.0021** |
+
+### Première sortie fautive / décision moteur
+
+- Première faute : `recovery_exhausted` (`anchor_missing` après recovery) — raw conservé dans `first_faulty.txt`
+- Décision moteur : `revise:auto` → plan v3 → step 1 appliqué → `verify_failed` (compile `undeclared identifier: 'cmd'`)
+- Ask compté : **api_calls=1**
+
+## Tests
 
 ```bash
 nim c -r --path:src --path:vendor/NimAgentLibrary/src \
   tests/project/test_project_run_regressions.nim
 ```
-
-## Critères et preuves après revise
-
-Chaque étape porte `criteria`. L'oracle `verifyStepCriteria` applique `export_command` même hors dernière étape. Après `project revise`, une preuve `done` n'est conservée que si `proofCoversCriteria` et si les dépendances restent `done`.
-
-## Qualification archives (inject)
-
-`docs/qa/project_run/20261122T210117Z_inject`
-
-- Verdict : **done**
-- Interventions : ask → revise → step:add_csv_helpers → step:wire_export_csv
-- Binaire :
-  - `demo_tasks` / `list` → liste intacte
-  - `export-csv` → `id,title` + titre à virgule quoté
-- Appels API : **0** · coût : **$0**
-
-## Route réelle (API) — clé `nimFactory/.keys`
-
-`docs/qa/project_run/20261122T210420Z_api`
-
-| Phase | Verdict | Détail |
-| --- | --- | --- |
-| `project run` | `apply_failed` | step 1 : `parse_error` (JSON modèle illisible) |
-| `project step` retry | `recovery_exhausted` | `empty_or_missing_oldText` → recovery → même refus |
-| status / resume | `revise` | sticky |
-| step après épuisement | `revise_plan_needed` | **0** appel fournisseur |
-
-Blocage explicable : décisions modèle non applicables sur la route réelle ; le pilote s'arrête sur revise sticky. Le parcours inject reste la preuve jusqu'au binaire.
-
-## Dépenses
-
-| Campagne | Appels (rôles) | USD estimé |
-| --- | --- | --- |
-| inject archive | 0 | 0 |
-| api (ask/revise/step + retry + recovery) | 5 | **~$0.0017** |
-| sticky step après épuisement | 0 | 0 |
-
-## Fichiers
-
-- `src/nimfactory/project/{pipeline,store,types,verify}.nim`
-- `src/nimfactory/cli/cli.nim` — sous-commande `run`
-- `scripts/{e2e_project_run,lib_load_openai_key}.sh`
-- `tests/project/test_project_run_regressions.nim`

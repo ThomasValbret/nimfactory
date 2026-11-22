@@ -68,6 +68,30 @@ proc claimProjectRunLease*(
     store.db.execSql("ROLLBACK")
     result.message = e.msg
 
+proc peekProjectRunLease*(
+    store: SqliteRunStore; projectId: string): tuple[
+    active: bool; holderPid: int; holderAlive: bool] =
+  ## Read-only: active run lease held by a live process?
+  result.active = false
+  result.holderPid = 0
+  result.holderAlive = false
+  let rid = projectRunId(projectId)
+  let tid = runLeaseTransitionId(projectId)
+  let rows = store.db.queryAll(
+    "SELECT transition_json FROM nf_transitions WHERE run_id = ? AND transition_id = ?",
+    [rid, tid])
+  if rows.len == 0: return
+  try:
+    let body = parseJson(rows[0])
+    if body{"status"}.getStr != "active": return
+    let pid = body{"holder_pid"}.getInt
+    result.holderPid = pid
+    if pid > 0:
+      result.holderAlive = (kill(Pid(pid), 0.cint) == 0.cint)
+      result.active = result.holderAlive
+  except CatchableError:
+    discard
+
 proc releaseProjectRunLease*(store: SqliteRunStore; projectId: string) =
   let rid = projectRunId(projectId)
   let tid = runLeaseTransitionId(projectId)
