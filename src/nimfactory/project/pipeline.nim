@@ -38,6 +38,7 @@ type
     expectedPlanVersion*: int   ## optimistic concurrency (with expectPlanVersion)
     expectPlanVersion*: bool    ## when true, refuse if current != expected
     maxSteps*: int              ## project run safety ceiling (0 → 8)
+    pauseAfterStep*: bool       ## stop after one successful step (Studio « Pause »)
 
   ProjectReport* = object
     ok*: bool
@@ -1475,10 +1476,16 @@ proc projectRun*(req: ProjectRequest): ProjectReport =
     return
   result.doc = loaded.doc
 
-  if req.refinement.len > 0 and result.doc.currentPlanVersion >= 1:
+  ## Apply an explicit refinement once; resume/relaunch must not re-bump the plan.
+  if req.refinement.len > 0 and result.doc.currentPlanVersion >= 1 and
+     req.refinement notin result.doc.refinements:
     var revReq = reqMut
-    revReq.injectPath = resolveInject(reqMut, "plan_v2.json")
-    if revReq.injectPath.len == 0: revReq.injectPath = reqMut.injectPath
+    let nextPlan = resolveInject(reqMut, "plan_v" & $(result.doc.currentPlanVersion + 1) & ".json")
+    let v2 = resolveInject(reqMut, "plan_v2.json")
+    revReq.injectPath =
+      if nextPlan.len > 0: nextPlan
+      elif v2.len > 0: v2
+      else: reqMut.injectPath
     let revised = projectRevise(revReq)
     recordIntervention("revise", revised)
     if not revised.ok:
@@ -1576,6 +1583,19 @@ proc projectRun*(req: ProjectRequest): ProjectReport =
         "next_action": stepped.doc.nextAction,
         "message": stepped.message
       }
+      return
+    if req.pauseAfterStep:
+      result.ok = true
+      result.verdict = "paused_after_step"
+      result.message = "paused after step " & actionable.step.id
+      result.providerCallsThisCommand = totalProvider
+      result.apiCallsThisCommand = totalApi
+      result.report = reportBase("run", result.doc)
+      result.report["sub"] = %"run"
+      result.report["interventions"] = interventions
+      result.report["provider_calls_this_command"] = %totalProvider
+      result.report["api_calls_this_command"] = %totalApi
+      result.report["paused_after_step"] = %actionable.step.id
       return
 
   loaded = loadProject(store, req.projectId)

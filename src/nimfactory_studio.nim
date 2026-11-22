@@ -2,7 +2,7 @@
 import std/[asynchttpserver, asyncdispatch, httpcore, os, strutils, json, uri]
 import nimfactory/application/project_view
 import nimfactory/application/project_command
-import nimfactory/project/pipeline
+import nimfactory/project/[pipeline, store]
 import nimfactory/studio/sources
 
 const
@@ -11,15 +11,23 @@ const
   css = staticRead(sourceDir / "nimfactory/studio/studio.css")
   client = staticRead(sourceDir / "../build/studio/client.js")
 
-type Config = object
-  store, project, trees, cwd, route, inject, artifactDir: string
-  port: int
+type
+  Config = object
+    store, project, trees, cwd, route, inject, injectDir, artifactDir, objective, refinement: string
+    port: int
+
+  WorkerArgs = object
+    command: string
+    req: ProjectRequest
+
+var workerThreads: seq[Thread[ptr WorkerArgs]]
 
 proc options(): Config =
   let args = commandLineParams()
   if args.len == 1 and args[0] in ["-h", "--help"]:
     quit("nimfactory-studio --store PATH --project-id ID [--trees DIR] [--port N] " &
-         "[--cwd DIR] [--route api|inject] [--inject PATH] [--artifact-dir DIR]", 0)
+         "[--cwd DIR] [--route api|inject] [--inject PATH] [--inject-dir DIR] " &
+         "[--artifact-dir DIR] [--objective TEXT] [--refinement TEXT]", 0)
   result.port = 8085
   result.route = "inject"
   var i = 0
@@ -38,22 +46,35 @@ proc options(): Config =
     of "--cwd": result.cwd = value
     of "--route": result.route = value
     of "--inject": result.inject = value
+    of "--inject-dir": result.injectDir = value
     of "--artifact-dir": result.artifactDir = value
+    of "--objective": result.objective = value
+    of "--refinement": result.refinement = value
     else: raise newException(ValueError, "Unknown option " & args[i])
     i += 2
   if result.store.len == 0 or result.project.len == 0:
     raise newException(ValueError, "Supply --store PATH and --project-id ID")
-  if result.route == "inject" and result.inject.len == 0:
-    ## Write commands stay disabled until an inject payload is configured.
-    discard
+
+proc allowedHosts(): seq[string] =
+  result = @["127.0.0.1", "localhost"]
+  let extra = getEnv("NIMFACTORY_STUDIO_ALLOW_HOSTS")
+  if extra.len > 0:
+    for h in extra.split(','):
+      let t = h.strip().toLowerAscii
+      if t.len > 0: result.add(t)
 
 proc localRequest(req: Request): bool =
   let authority = req.headers.getOrDefault("Host").string.toLowerAscii
   let parts = authority.split(':')
-  if parts.len notin 1..2 or parts[0] notin ["127.0.0.1", "localhost"]: return false
+  if parts.len notin 1..2 or parts[0] notin allowedHosts(): return false
   if parts.len == 2 and (parts[1].len == 0 or not parts[1].allCharsInSet(Digits)): return false
   let origin = req.headers.getOrDefault("Origin").string
   origin.len == 0 or origin == "http://" & authority
+
+proc listenAddr(): string =
+  let raw = getEnv("NIMFACTORY_STUDIO_BIND")
+  if raw.len > 0: return raw
+  "127.0.0.1"
 
 proc baseProjectRequest(config: Config): ProjectRequest =
   result = defaultProjectRequest()
@@ -62,7 +83,47 @@ proc baseProjectRequest(config: Config): ProjectRequest =
   result.cwd = config.cwd
   result.route = config.route
   result.injectPath = config.inject
+  result.injectDir = config.injectDir
   result.artifactDir = config.artifactDir
+  result.objective = config.objective
+  result.refinement = config.refinement
+
+proc demoWorkerDelayMs(): int =
+  ## Optional pause so dual-tab consultation stays observable during inject demos.
+  let raw = getEnv("NIMFACTORY_STUDIO_DEMO_DELAY_MS")
+  if raw.len == 0: return 0
+  try: result = parseInt(raw)
+  except CatchableError: result = 0
+
+proc workerThread(args: ptr WorkerArgs) {.thread, gcsafe.} =
+  ## Long commands run off the accept loop so GET /api/snapshot stays live.
+  ## Caller already claimed command_id; we only perform + finish.
+  try:
+    let delayMs = demoWorkerDelayMs()
+    if delayMs > 0:
+      sleep(delayMs)
+    var prep: ProjectReport
+    var receipt: JsonNode
+    {.cast(gcsafe).}:
+      prep = performProjectCommand(args.command, args.req)
+      receipt = finishPerformedCommand(args.command, args.req, prep)
+      let store = openProjectStore(args.req.storePath)
+      finishCommandRecord(store, args.req.projectId, args.req.commandId, receipt)
+      closeProjectStore(store)
+  except CatchableError:
+    discard
+  finally:
+    deallocShared(args)
+
+proc spawnCommand(command: string; preq: ProjectRequest) =
+  let args = createShared(WorkerArgs)
+  args[] = WorkerArgs(command: command, req: preq)
+  workerThreads.add(default(Thread[ptr WorkerArgs]))
+  createThread(workerThreads[^1], workerThread, args)
+
+proc writesEnabled(config: Config): bool =
+  config.route == "api" or
+    (config.route == "inject" and (config.inject.len > 0 or config.injectDir.len > 0))
 
 proc run(config: Config) =
   discard readProjectView(config.store, config.project)
@@ -88,10 +149,25 @@ proc run(config: Config) =
         of "/api/snapshot":
           let snapshot = readProjectView(config.store, config.project)
           headers["X-Studio-Sources"] = if config.trees.len > 0: "1" else: "0"
-          let canWrite = config.route == "api" or
-            (config.route == "inject" and config.inject.len > 0)
-          headers["X-Studio-Writes"] = if canWrite: "1" else: "0"
+          headers["X-Studio-Writes"] = if writesEnabled(config): "1" else: "0"
           reply(Http200, "application/json", $snapshot)
+        of "/api/command":
+          var commandId: string
+          for key, value in decodeQuery(req.url.query):
+            if key == "id": commandId = value
+          if commandId.len == 0:
+            reply(Http400, "application/json",
+              "{\"ok\":false,\"verdict\":\"invalid\",\"message\":\"id required\"}")
+            return
+          let receipt = loadCommandReceipt(config.store, config.project, commandId)
+          if receipt.isNil or receipt.kind == JNull:
+            reply(Http404, "application/json",
+              "{\"ok\":false,\"verdict\":\"missing\",\"message\":\"Unknown command_id\"}")
+          else:
+            ## Readonly retransmit view: historical spend only, no new calls.
+            if receipt{"status"}.getStr == "done":
+              annotateSpend(receipt, 0, 0, true)
+            reply(Http200, "application/json", $receipt)
         of "/api/source":
           var stepId, treeHash: string
           for key, value in decodeQuery(req.url.query):
@@ -113,9 +189,9 @@ proc run(config: Config) =
         if req.url.path != "/api/command":
           reply(Http404, "text/plain", "Not found")
           return
-        if config.route == "inject" and config.inject.len == 0:
+        if not writesEnabled(config):
           reply(Http503, "application/json",
-            "{\"ok\":false,\"verdict\":\"writes_disabled\",\"message\":\"Studio write route requires --inject\"}")
+            "{\"ok\":false,\"verdict\":\"writes_disabled\",\"message\":\"Studio write route requires --inject or --inject-dir\"}")
           return
         if req.body.len > 1_000_000:
           reply(Http413, "application/json",
@@ -129,25 +205,66 @@ proc run(config: Config) =
             "{\"ok\":false,\"verdict\":\"invalid\",\"message\":\"JSON body required\"}")
           return
         let command = body{"command"}.getStr
-        if command != project_command.RevisePlanCommand:
+        if command notin [RevisePlanCommand, RunCommand, ResumeCommand, PauseAfterStepCommand]:
           reply(Http400, "application/json",
-            "{\"ok\":false,\"verdict\":\"unsupported_command\",\"message\":\"Only revise_plan is available\"}")
+            "{\"ok\":false,\"verdict\":\"unsupported_command\",\"message\":\"Unsupported command\"}")
           return
         if body{"command_id"}.getStr.len == 0:
           reply(Http400, "application/json",
             "{\"ok\":false,\"verdict\":\"invalid\",\"message\":\"command_id required\"}")
           return
-        if not body.hasKey("expected_plan_version"):
+        if command == RevisePlanCommand and not body.hasKey("expected_plan_version"):
           reply(Http400, "application/json",
             "{\"ok\":false,\"verdict\":\"invalid\",\"message\":\"expected_plan_version required\"}")
           return
         var preq = parseStudioCommand(body, baseProjectRequest(config))
+        let existing = loadCommandReceipt(config.store, config.project, preq.commandId)
+        if existing != nil and existing.kind != JNull:
+          if existing{"status"}.getStr == "done":
+            annotateSpend(existing, 0, 0, true)
+            reply(Http200, "application/json", $existing)
+            return
+          if existing{"status"}.getStr == "active":
+            reply(Http202, "application/json", $existing)
+            return
+        let longRunning = command in [RunCommand, ResumeCommand, PauseAfterStepCommand]
+        if longRunning:
+          var claimedBody: JsonNode
+          {.cast(gcsafe).}:
+            let storeHandle = openProjectStore(preq.storePath)
+            let claimed = claimCommandActive(
+              storeHandle, preq.projectId, preq.commandId, command,
+              preq.expectedPlanVersion, preq.refinement)
+            closeProjectStore(storeHandle)
+            case claimed.phase
+            of cpDone:
+              let prep = reportFromReceipt(claimed.body)
+              reply(Http200, "application/json", $prep.report)
+              return
+            of cpActive:
+              reply(Http202, "application/json", $claimed.body)
+              return
+            of cpFresh, cpAbsent:
+              claimedBody = claimed.body
+              spawnCommand(command, preq)
+          var accepted =
+            if claimedBody.isNil or claimedBody.kind != JObject: newJObject()
+            else: claimedBody.copy()
+          accepted["schema"] = %CommandSchema
+          accepted["status"] = %"active"
+          accepted["command"] = %command
+          accepted["command_id"] = %preq.commandId
+          accepted["project_id"] = %preq.projectId
+          accepted["accepted"] = %true
+          reply(Http202, "application/json", $accepted)
+          return
         var prep: ProjectReport
         {.cast(gcsafe).}:
-          prep = executeRevisePlan(preq)
+          prep = executeProjectCommand(command, preq)
         let code =
           if prep.ok: Http200
-          elif prep.verdict in ["stale_plan_version", "command_active", "invalid", "missing"]:
+          elif prep.verdict in ["stale_plan_version", "command_active", "invalid",
+                                "missing", "already_running"]:
             Http409
           else: Http422
         reply(code, "application/json", $prep.report)
@@ -161,8 +278,9 @@ proc run(config: Config) =
       reply(Http404, "text/plain", "Project unavailable")
     except CatchableError:
       reply(Http503, "text/plain", "Unable to serve project")
-  server.listen(Port(config.port), "127.0.0.1")
-  echo "NimFactory Studio  http://127.0.0.1:", config.port
+  let bindHost = listenAddr()
+  server.listen(Port(config.port), bindHost)
+  echo "NimFactory Studio  http://", bindHost, ":", config.port
   while true:
     waitFor server.acceptRequest(serveRequest)
 

@@ -20,7 +20,7 @@ proc uriPart(text: cstring): cstring {.importjs: "encodeURIComponent(#)".}
 proc actionTarget(node: Node): Element {.importjs: "#.closest?.('[data-action]')".}
 proc activeId(): cstring {.importjs: "(document.activeElement?.id || '')".}
 proc fieldValue(id: cstring): cstring {.importjs: "(document.getElementById(#)?.value || '')".}
-proc mintCommandId(): cstring {.importjs: "('studio-revise-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10))".}
+proc mintCommandId(prefix: cstring): cstring {.importjs: "(# + '-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10))".}
 
 var
   model: JsonNode
@@ -28,10 +28,10 @@ var
   tab = diff
   selection, lastBody, sourceText, sourceMsg: string
   sourceRequest = 0
-  canReadSources, canWrite, pendingRefresh, showAllEvents, reviseBusy: bool
-  draftRefinement, reviseStatus: string
+  canReadSources, canWrite, pendingRefresh, showAllEvents, commandBusy: bool
+  draftRefinement, commandStatus: string
   lastReceipt: JsonNode
-  activeCommandId: string
+  activeCommandId, pendingCommandKind: string
 
 proc html(s: string): string =
   s.multiReplace(("&","&amp;"), ("<","&lt;"), (">","&gt;"), ("\"","&quot;"), ("'","&#39;"))
@@ -63,6 +63,10 @@ proc stateLabel(state: string): string =
   of "": "État inconnu"
   else: state
 
+proc hasCmd(name: string): bool =
+  if model.isNil or not canWrite: return false
+  model{"capabilities","commands"}.getElems.anyIt(it.getStr == name)
+
 proc hasTab(step: JsonNode; which: CodeTab): bool =
   if step.isNil: return false
   case which
@@ -73,15 +77,9 @@ proc hasTab(step: JsonNode; which: CodeTab): bool =
 
 proc hasIde(step: JsonNode): bool = step.hasTab(diff) or step.hasTab(source) or step.hasTab(receipt)
 
-proc canRevise(): bool =
-  if model.isNil or not canWrite: return false
-  let caps = model{"capabilities","commands"}.getElems
-  caps.anyIt(it.getStr == "revise_plan")
-
 proc captureDraft() =
-  let value = $fieldValue("revise-text")
   if getElementById("revise-text") != nil:
-    draftRefinement = value
+    draftRefinement = $fieldValue("revise-text")
 
 proc resetSource() =
   inc sourceRequest
@@ -97,59 +95,108 @@ proc deltaList(items: JsonNode; emptyLabel: string): string =
       html(item{"title"}.getStr) & "</li>")
   result.add("</ul>")
 
+proc proofList(items: JsonNode; emptyLabel: string): string =
+  if items.isNil or items.len == 0:
+    return "<p class='fine'>" & html(emptyLabel) & "</p>"
+  result = "<ul class='delta'>"
+  for item in items:
+    var line = "<code>" & html(item{"id"}.getStr) & "</code>"
+    if item{"file"}.getStr.len > 0: line.add(" · " & html(item{"file"}.getStr))
+    if item{"title"}.getStr.len > 0: line.add(" — " & html(item{"title"}.getStr))
+    if item{"reason"}.getStr.len > 0: line.add(" (" & html(item{"reason"}.getStr) & ")")
+    result.add("<li>" & line & "</li>")
+  result.add("</ul>")
+
 proc receiptPanel(): string =
   if lastReceipt.isNil: return ""
-  let fromV = lastReceipt{"from_version"}.getInt
-  let toV = lastReceipt{"to_version"}.getInt
-  let verdict = lastReceipt{"verdict"}.getStr
   let ok = lastReceipt{"ok"}.getBool
   let replayed = lastReceipt{"replayed"}.getBool
   let cls = if ok: "receipt ok" else: "receipt bad"
   result = "<div class='" & cls & "'><div class='small-title'>Reçu du moteur</div>"
-  result.add("<p><strong>" & html(verdict) & "</strong>")
+  result.add("<p><strong>" & html(lastReceipt{"command"}.getStr) & " · " &
+    html(lastReceipt{"verdict"}.getStr) & "</strong>")
   if replayed: result.add(" · retransmission")
   result.add("</p>")
-  if ok:
-    result.add("<p class='fine'>Plan v" & $fromV & " → v" & $toV & "</p>")
-  else:
-    result.add("<p class='fine'>" & html(lastReceipt{"message"}.getStr) & "</p>")
+  result.add("<p class='fine'>" & html(lastReceipt{"message"}.getStr) & "</p>")
+  if lastReceipt.hasKey("from_version"):
+    result.add("<p class='fine'>Plan v" & $lastReceipt{"from_version"}.getInt &
+      " → v" & $lastReceipt{"to_version"}.getInt & "</p>")
+  result.add("<p class='fine'>Appels nouveaux · " & $lastReceipt{"new_provider_calls"}.getInt &
+    " · historiques · " & $lastReceipt{"historical_provider_calls"}.getInt &
+    " · API nouvelles · " & $lastReceipt{"new_api_calls"}.getInt & "</p>")
+  if lastReceipt{"proof_kept"} != nil:
+    result.add("<div class='small-title'>Preuves conservées</div>" &
+      proofList(lastReceipt{"proof_kept"}, "Aucune"))
+  if lastReceipt{"proof_dropped"} != nil:
+    result.add("<div class='small-title'>Preuves invalidées</div>" &
+      proofList(lastReceipt{"proof_dropped"}, "Aucune"))
   let delta = lastReceipt{"plan_delta"}
   if delta != nil:
-    result.add("<div class='small-title'>Étapes ajoutées</div>" &
-      deltaList(delta{"added"}, "Aucune"))
-    result.add("<div class='small-title'>Étapes retirées</div>" &
-      deltaList(delta{"removed"}, "Aucune"))
-    result.add("<div class='small-title'>Étapes conservées</div>" &
-      deltaList(delta{"kept"}, "Aucune"))
-    let dropped = delta{"accepted_steps_dropped"}
-    if dropped != nil and dropped.len > 0:
-      result.add("<p class='message'>Des étapes déjà acceptées quittent le plan.</p>" &
-        deltaList(dropped, ""))
+    result.add("<div class='small-title'>Étapes ajoutées</div>" & deltaList(delta{"added"}, "Aucune"))
+    result.add("<div class='small-title'>Étapes retirées</div>" & deltaList(delta{"removed"}, "Aucune"))
+  if lastReceipt{"blocked"} != nil:
+    result.add("<p class='message'>Blocage · " &
+      html(lastReceipt{"blocked","kind"}.getStr) & " · " &
+      html(lastReceipt{"blocked","message"}.getStr) & "</p>")
   result.add("</div>")
 
+proc statusStrip(): string =
+  let wf = model{"workflow"}
+  let cost = model{"cost"}
+  let active = wf{"active_step"}
+  let decision = wf{"next_decision"}.getStr
+  let proposal = wf{"engine_proposal"}.getStr
+  result = "<section class='panel status-strip'><div class='ph'><span>Situation</span><small>" &
+    html(if model{"run_lease","status"}.getStr == "active": "Worker actif" else: "Observateur") &
+    "</small></div><div class='status-grid'>"
+  result.add("<div><div class='small-title'>Objectif</div><p>" &
+    html(wf{"objective"}.getStr(model{"objective"}.getStr)) & "</p></div>")
+  result.add("<div><div class='small-title'>Étape active</div><p>" &
+    (if active.isNil or active.kind == JNull: "—"
+     else: html(active{"title"}.getStr) & " <code>" & html(active{"id"}.getStr) &
+           "</code> · " & html(stateLabel(active{"status"}.getStr))) & "</p></div>")
+  result.add("<div><div class='small-title'>Preuve obtenue</div>")
+  result.add(proofList(wf{"obtained_proofs"}, "Aucune preuve acceptée"))
+  result.add("</div><div><div class='small-title'>En attente de vérification</div>")
+  result.add(proofList(wf{"awaiting_verification"}, "Rien en attente"))
+  result.add("</div><div><div class='small-title'>Coût connu</div><p>" &
+    $(if cost.isNil: 0.0 else: cost{"estimated_usd"}.getFloat) & " USD · " &
+    $(if cost.isNil: 0 else: cost{"calls"}.getInt) & " appels</p></div>")
+  result.add("<div><div class='small-title'>Prochaine décision</div><p><strong>" &
+    html(decision) & "</strong>")
+  if proposal.len > 0: result.add("<br><span class='fine'>" & html(proposal) & "</span>")
+  result.add("</p></div></div>")
+  if commandStatus.len > 0:
+    result.add("<p class='fine' id='command-status'>" & html(commandStatus) & "</p>")
+  result.add("<div class='command-bar'>")
+  if hasCmd("run"):
+    result.add(button("run", if commandBusy and pendingCommandKind == "run": "Lancement…" else: "Lancer",
+      "cta", disabled = commandBusy))
+  if hasCmd("pause_after_step"):
+    result.add(button("pause-after-step",
+      if commandBusy and pendingCommandKind == "pause_after_step": "Pause…" else: "Pause après l’étape",
+      "secondary", disabled = commandBusy))
+  if hasCmd("resume"):
+    result.add(button("resume",
+      if commandBusy and pendingCommandKind == "resume": "Reprise…" else: "Reprendre",
+      "secondary", disabled = commandBusy))
+  result.add("</div></section>")
+
 proc revisePanel(): string =
-  if not canRevise() and lastReceipt.isNil: return ""
+  if not hasCmd("revise_plan") and lastReceipt.isNil: return ""
   let caps = model{"capabilities"}
-  let pending = caps{"revise_plan_pending"}.getBool
   result = "<section class='panel revise'><div class='ph'><span>Réviser le plan</span><small>Plan v" &
     $model{"current_plan_version"}.getInt & "</small></div><div class='revise-body'>"
-  if pending:
-    result.add("<p class='message'>Le moteur demande une révision : " &
-      html(caps{"revise_plan_reason"}.getStr) & "</p>")
-  let plan = model{"plan_versions"}
-  if plan != nil and plan.len > 0:
-    let current = plan[plan.len - 1]
-    result.add("<p class='fine'><strong>Plan courant</strong> — " &
-      html(current{"summary"}.getStr) & "</p>")
-  if canRevise():
+  if caps{"revise_plan_pending"}.getBool or caps{"recovery_exhausted"}.getBool:
+    result.add("<p class='message'>" & html(caps{"revise_plan_reason"}.getStr(
+      caps{"recovery_exhausted_reason"}.getStr)) & "</p>")
+  if hasCmd("revise_plan"):
     result.add("<label class='small-title' for='revise-text'>Précision</label>")
     result.add("<textarea id='revise-text' rows='4' placeholder='Décrire la précision à intégrer…'>" &
       html(draftRefinement) & "</textarea>")
-    if reviseStatus.len > 0:
-      result.add("<p class='fine' id='revise-status'>" & html(reviseStatus) & "</p>")
     result.add(button("revise-submit",
-      if reviseBusy: "Révision en cours…" else: "Soumettre la révision",
-      "cta wide", disabled = reviseBusy))
+      if commandBusy and pendingCommandKind == "revise_plan": "Révision…" else: "Soumettre la révision",
+      "cta wide", disabled = commandBusy))
   result.add(receiptPanel())
   result.add("</div></section>")
 
@@ -184,20 +231,28 @@ proc inspector(step: JsonNode): string =
     html(step{"title"}.getStr(selection)) & "</h2></div><div class='inspect-body'><div class='rows'>" &
     detailLine("État", stateLabel(step{"status"}.getStr)) & detailLine("Mandat", step{"mandate_key"}.getStr) &
     detailLine("Route", step{"provider","route"}.getStr) & detailLine("Fichier", step{"change","target_file"}.getStr) &
-    detailLine("Arbre accepté", step{"accepted_tree_hash"}.getStr) & "</div>"
+    detailLine("Arbre accepté", step{"accepted_tree_hash"}.getStr) &
+    detailLine("Refus", step{"refuse_code"}.getStr) & "</div>"
   if provider == "unknown": result.add("<p class='message'>Issue fournisseur inconnue.</p>")
-  let dependencies = step{"depends_on"}.getElems
-  if dependencies.len > 0:
-    result.add("<div class='small-title'>Prérequis</div><div class='prerequisites'>")
-    for dep in dependencies:
-      let id = dep.getStr
-      result.add("<button class='hlink' data-action='prerequisite' data-step='" &
-        html(id) & "'>" & html(id) & "</button>")
-    result.add("</div>")
+  if step{"controls_executed"} != nil and step{"controls_executed"}.len > 0:
+    result.add("<div class='small-title'>Contrôles exécutés</div><ul class='delta'>")
+    for c in step{"controls_executed"}:
+      result.add("<li>" & html(c{"name"}.getStr) &
+        (if c{"ok"}.getBool: " · ok" else: " · échec") &
+        (if c{"message"}.getStr.len > 0: " — " & html(c{"message"}.getStr) else: "") &
+        "</li>")
+    result.add("</ul>")
   if step{"verify"} != nil:
     result.add("<p class='small-title'>Vérification</p><p class='fine'>" & html(step{"verify","message"}.getStr) & "</p>")
-  if view != ide and step.hasIde: result.add(button("open-ide","Ouvrir dans l’IDE →","cta wide"))
-  elif view == ide: result.add(button("back-flow","Revenir au workflow ←","secondary wide"))
+  let proposal = model{"workflow","engine_proposal"}.getStr
+  if step{"status"}.getStr in ["blocked", "interrupted"] and proposal.len > 0:
+    result.add("<p class='message'>Proposition du moteur · " & html(proposal) & "</p>")
+  if view != ide and step.hasIde:
+    result.add(button("open-ide-diff","Ouvrir le diff →","cta wide"))
+    if step.hasTab(receipt):
+      result.add(button("open-ide-verify","Ouvrir la vérification →","secondary wide"))
+  elif view == ide:
+    result.add(button("back-flow","Revenir au workflow ←","secondary wide"))
   result.add("</div></aside>")
 
 proc journal(): string =
@@ -273,7 +328,10 @@ proc render() =
     (if hasPlans: button("plans","Versions du plan","",view == plans) else: ""))
   let foot = getElementById("session-foot")
   if foot != nil:
-    foot.textContent = cstring(if canWrite: "Commandes locales" else: "Consultation en direct")
+    foot.textContent = cstring(
+      if model{"run_lease","status"}.getStr == "active": "Worker en cours — consultation libre"
+      elif canWrite: "Commandes locales"
+      else: "Consultation en direct")
   let project = model{"project_id"}.getStr
   getElementById("project-name").textContent = cstring(project)
   let title = case view
@@ -283,7 +341,8 @@ proc render() =
   let hero = "<div class='hero'><div><div class='crumb'>" & html(project) &
     "</div><h1>" & title & "</h1><p class='sub'>" & html(model{"objective"}.getStr) & "</p></div></div>"
   let body = case view
-    of workflow: "<div class='body-grid'><div>" & graph() & revisePanel() & journal() & "</div>" & inspector(step) & "</div>"
+    of workflow: "<div class='body-grid'><div>" & statusStrip() & graph() & revisePanel() & journal() &
+      "</div>" & inspector(step) & "</div>"
     of ide: "<div class='body-grid'><div>" & editor(step) & "</div>" & inspector(step) & "</div>"
     of plans: planHistory()
   put("app", hero & body)
@@ -316,6 +375,9 @@ proc loadSource() =
   req.ontimeout = finish
   req.send()
 
+proc refresh()
+proc pollCommandReceipt()
+
 proc refresh() =
   if pendingRefresh: return
   pendingRefresh = true
@@ -337,7 +399,9 @@ proc refresh() =
     let body = $req.responseText
     let available = $req.header("X-Studio-Sources") == "1"
     let writes = $req.header("X-Studio-Writes") == "1"
-    if body == lastBody and available == canReadSources and writes == canWrite: return
+    if body == lastBody and available == canReadSources and writes == canWrite:
+      if commandBusy: pollCommandReceipt()
+      return
     try:
       let next = parseJson(body)
       if next{"schema"}.getStr != "nimfactory.studio/v1":
@@ -358,71 +422,116 @@ proc refresh() =
         if view == ide and tab == source: loadSource()
       lastBody = body
       render()
+      if commandBusy: pollCommandReceipt()
     except CatchableError: unavailable()
   req.send()
 
-proc submitRevise() =
-  if reviseBusy or not canRevise(): return
-  captureDraft()
-  if draftRefinement.strip.len == 0:
-    reviseStatus = "Saisir une précision avant de soumettre."
-    render()
-    return
-  if activeCommandId.len == 0:
-    activeCommandId = $mintCommandId()
-  reviseBusy = true
-  reviseStatus = "Envoi de la révision…"
+proc pollCommandReceipt() =
+  if activeCommandId.len == 0: return
+  let req = newGet()
+  req.open("GET", cstring("/api/command?id=" & $uriPart(cstring(activeCommandId))))
+  req.timeout = 6000
+  req.onload = proc() =
+    if req.status != 200: return
+    try:
+      let receipt = parseJson($req.responseText)
+      if receipt{"status"}.getStr == "done" or receipt.hasKey("ok"):
+        lastReceipt = receipt
+        commandBusy = false
+        commandStatus =
+          if receipt{"replayed"}.getBool: "Reçu rejoué — aucun nouvel appel."
+          else: "Commande terminée · " & receipt{"verdict"}.getStr
+        activeCommandId = ""
+        pendingCommandKind = ""
+        lastBody = ""
+        refresh()
+    except CatchableError: discard
+  req.onerror = proc() = discard
+  req.ontimeout = proc() = discard
+  req.send()
+
+proc postCommand(kind: string; extra: JsonNode = nil) =
+  if commandBusy or not canWrite: return
+  if not hasCmd(kind) and kind != "revise_plan": return
+  activeCommandId = $mintCommandId(cstring("studio-" & kind))
+  pendingCommandKind = kind
+  commandBusy = true
+  commandStatus = "Commande acceptée — le plan reste consultable."
   render()
-  let payload = %*{
-    "command": "revise_plan",
+  var payload = %*{
+    "command": kind,
     "project_id": model{"project_id"}.getStr,
-    "expected_plan_version": model{"current_plan_version"}.getInt,
-    "refinement": draftRefinement,
-    "command_id": activeCommandId
+    "command_id": activeCommandId,
+    "expected_plan_version": model{"current_plan_version"}.getInt
   }
+  if extra != nil:
+    for k, v in extra.pairs: payload[k] = v
   let req = newGet()
   req.open("POST", "/api/command")
   req.setRequestHeader("Content-Type", "application/json")
   req.timeout = 120000
   proc finish() =
-    reviseBusy = false
     try:
       lastReceipt = parseJson($req.responseText)
     except CatchableError:
-      lastReceipt = %*{
-        "ok": false, "verdict": "transport_error",
-        "message": "Réponse illisible du serveur",
-        "from_version": model{"current_plan_version"}.getInt,
-        "to_version": model{"current_plan_version"}.getInt
-      }
-    if lastReceipt{"ok"}.getBool:
-      reviseStatus = "Plan révisé."
-      draftRefinement = ""
+      lastReceipt = %*{"ok": false, "verdict": "transport_error", "message": "Réponse illisible",
+                       "new_provider_calls": 0, "historical_provider_calls": 0}
+    if req.status == 202 or lastReceipt{"status"}.getStr == "active":
+      commandStatus = "Worker lancé — consultation libre pendant l’exécution."
+      render()
+      pollCommandReceipt()
+      return
+    commandBusy = false
+    if lastReceipt{"ok"}.getBool or lastReceipt{"replayed"}.getBool:
+      commandStatus =
+        if lastReceipt{"replayed"}.getBool: "Reçu rejoué — dépense historique seule."
+        else: "Commande terminée."
+      if kind == "revise_plan": draftRefinement = ""
       activeCommandId = ""
+      pendingCommandKind = ""
       lastBody = ""
       refresh()
-      ## refresh→render may re-read the old textarea before it is replaced.
-      draftRefinement = ""
-      render()
+      if kind == "revise_plan":
+        draftRefinement = ""
+        render()
     else:
-      reviseStatus = lastReceipt{"message"}.getStr
-      if lastReceipt{"verdict"}.getStr != "command_active":
-        ## Keep the same command_id only while the attempt is still open.
-        if lastReceipt{"verdict"}.getStr in ["stale_plan_version"]:
-          activeCommandId = ""
+      commandStatus = lastReceipt{"message"}.getStr
+      if lastReceipt{"verdict"}.getStr in ["stale_plan_version", "already_running"]:
+        activeCommandId = ""
+        pendingCommandKind = ""
       render()
   req.onload = finish
   req.onerror = finish
   req.ontimeout = finish
   req.sendBody(cstring($payload))
 
+proc submitRevise() =
+  captureDraft()
+  if draftRefinement.strip.len == 0:
+    commandStatus = "Saisir une précision avant de soumettre."
+    render()
+    return
+  postCommand("revise_plan", %*{"refinement": draftRefinement})
+
+proc openIde(which: CodeTab) =
+  view = ide
+  tab = which
+  if which == source: loadSource()
+  render()
+
 document.addEventListener("click", proc(e: Event) =
   let target = actionTarget(e.target)
   if target.isNil or model.isNil: return
   case $target.getAttribute("data-action")
   of "ide", "open-ide":
-    view = ide
-    if tab == source or (not selected().hasTab(diff) and not selected().hasTab(receipt)): loadSource()
+    openIde(if selected().hasTab(diff): diff elif selected().hasTab(receipt): receipt else: source)
+    return
+  of "open-ide-diff":
+    openIde(diff)
+    return
+  of "open-ide-verify":
+    openIde(receipt)
+    return
   of "workflow", "overview", "back-flow": view = workflow
   of "plans": view = plans
   of "step", "prerequisite":
@@ -440,6 +549,15 @@ document.addEventListener("click", proc(e: Event) =
     loadSource()
   of "revise-submit":
     submitRevise()
+    return
+  of "run":
+    postCommand("run")
+    return
+  of "pause-after-step":
+    postCommand("pause_after_step", %*{"pause_after_step": true})
+    return
+  of "resume":
+    postCommand("resume")
     return
   else: return
   render()

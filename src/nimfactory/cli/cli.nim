@@ -60,6 +60,8 @@ type
     commandId: string
     expectedPlanVersion: int
     hasExpectedPlanVersion: bool
+    pauseAfterStep: bool
+    maxSteps: int
     positional: seq[string]
 
 proc writeHuman(msg: string) =
@@ -111,6 +113,8 @@ Options:
   --inject-dir PATH     project run inject folder (plan_v1/v2, step_*.json)
   --command-id ID       idempotent project write command key
   --expected-plan-version N  refuse revise if plan moved
+  --pause-after-step    project run stops after one successful step
+  --max-steps N         project run safety ceiling
   --json                machine mode (stdout JSON only; default)
 """)
 
@@ -145,7 +149,8 @@ proc parseArgs(args: seq[string]): CliOptions =
     result.sub = rest[0]
     rest = rest[1..^1]
   var p = initOptParser(rest, shortNoVal = {'h'},
-                        longNoVal = @["json", "human", "help", "recovery-api"])
+                        longNoVal = @["json", "human", "help", "recovery-api",
+                                      "pause-after-step"])
   while true:
     p.next()
     case p.kind
@@ -215,6 +220,10 @@ proc parseArgs(args: seq[string]): CliOptions =
       of "expected-plan-version":
         result.expectedPlanVersion = parseInt(takeValue(p))
         result.hasExpectedPlanVersion = true
+      of "pause-after-step":
+        result.pauseAfterStep = true
+      of "max-steps":
+        result.maxSteps = parseInt(takeValue(p))
       of "recovery-api":
         result.recoveryApi = true
       of "json":
@@ -375,6 +384,8 @@ proc runCli*(args: seq[string]): int =
       preq.worktree = o.worktree
       preq.artifactDir = o.artifactDir
       preq.commandId = o.commandId
+      preq.pauseAfterStep = o.pauseAfterStep
+      preq.maxSteps = o.maxSteps
       if o.hasExpectedPlanVersion:
         preq.expectedPlanVersion = o.expectedPlanVersion
         preq.expectPlanVersion = true
@@ -397,9 +408,16 @@ proc runCli*(args: seq[string]): int =
       of "status":
         prep = projectStatus(preq)
       of "resume":
-        prep = projectResume(preq)
+        if preq.commandId.len > 0:
+          prep = executeProjectCommand(ResumeCommand, preq)
+        else:
+          prep = projectResume(preq)
       of "run":
-        prep = projectRun(preq)
+        if preq.commandId.len > 0 or preq.pauseAfterStep:
+          let cmd = if preq.pauseAfterStep: PauseAfterStepCommand else: RunCommand
+          prep = executeProjectCommand(cmd, preq)
+        else:
+          prep = projectRun(preq)
       else:
         writeHuman("unknown project subcommand: " & o.sub)
         return ExitInvalid
