@@ -23,6 +23,7 @@ type
     dependsOn*: seq[string]
     status*: StepStatus
     mandateKey*: string
+    criteria*: seq[string]       ## acceptance checks attached to the step
     result*: JsonNode
 
   PlanVersion* = object
@@ -55,6 +56,10 @@ type
     revisePlanReason*: string
     revisePlanStepId*: string
     revisePlanAtVersion*: int    ## plan version that blocked
+    recoveryExhausted*: bool     ## one recovery turn used; must change decision
+    recoveryExhaustedStepId*: string
+    recoveryExhaustedReason*: string
+    recoveryExhaustedFingerprint*: string
 
 proc projectRunId*(projectId: string): string =
   "project:" & projectId
@@ -111,12 +116,15 @@ proc usageFromJson*(j: JsonNode): UsageRollup =
 proc stepToJson*(s: ProjectStep): JsonNode =
   var deps = newJArray()
   for d in s.dependsOn: deps.add(%d)
+  var crit = newJArray()
+  for c in s.criteria: crit.add(%c)
   %*{
     "id": s.id,
     "title": s.title,
     "depends_on": deps,
     "status": $s.status,
     "mandate_key": s.mandateKey,
+    "criteria": crit,
     "result": if s.result.isNil: newJObject() else: s.result
   }
 
@@ -131,6 +139,10 @@ proc stepFromJson*(j: JsonNode): ProjectStep =
   let deps = j{"depends_on"}
   if deps != nil and deps.kind == JArray:
     for d in deps: result.dependsOn.add(d.getStr)
+  result.criteria = @[]
+  let crit = j{"criteria"}
+  if crit != nil and crit.kind == JArray:
+    for c in crit: result.criteria.add(c.getStr)
 
 proc planToJson*(p: PlanVersion): JsonNode =
   var steps = newJArray()
@@ -185,7 +197,11 @@ proc docToJson*(d: ProjectDoc): JsonNode =
     "revise_plan_pending": d.revisePlanPending,
     "revise_plan_reason": d.revisePlanReason,
     "revise_plan_step_id": d.revisePlanStepId,
-    "revise_plan_at_version": d.revisePlanAtVersion
+    "revise_plan_at_version": d.revisePlanAtVersion,
+    "recovery_exhausted": d.recoveryExhausted,
+    "recovery_exhausted_step_id": d.recoveryExhaustedStepId,
+    "recovery_exhausted_reason": d.recoveryExhaustedReason,
+    "recovery_exhausted_fingerprint": d.recoveryExhaustedFingerprint
   }
 
 proc docFromJson*(j: JsonNode): ProjectDoc =
@@ -206,6 +222,10 @@ proc docFromJson*(j: JsonNode): ProjectDoc =
   result.revisePlanReason = j{"revise_plan_reason"}.getStr
   result.revisePlanStepId = j{"revise_plan_step_id"}.getStr
   result.revisePlanAtVersion = j{"revise_plan_at_version"}.getInt
+  result.recoveryExhausted = j{"recovery_exhausted"}.getBool(false)
+  result.recoveryExhaustedStepId = j{"recovery_exhausted_step_id"}.getStr
+  result.recoveryExhaustedReason = j{"recovery_exhausted_reason"}.getStr
+  result.recoveryExhaustedFingerprint = j{"recovery_exhausted_fingerprint"}.getStr
   result.mandates = j{"mandates"}
   if result.mandates.isNil: result.mandates = newJObject()
   result.refinements = @[]

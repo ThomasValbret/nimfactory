@@ -1,0 +1,43 @@
+{
+  "summary": "Export CSV opt-in sur stdout ; conserver list comme comportement par défaut. Deux étapes : helpers puis câblage CLI.",
+  "hypothesis": "",
+  "optional_question": "",
+  "change_notes": "La précision impose CSV sur stdout et interdit de remplacer l'affichage list par défaut. Découpe en add_csv_helpers puis wire_export_csv.",
+  "steps": [
+    {
+      "id": "add_csv_helpers",
+      "title": "Ajouter csvQuote/formatCsv dans tasks.nim",
+      "depends_on": [],
+      "criteria": [
+        "compile",
+        "list_intact"
+      ]
+    },
+    {
+      "id": "wire_export_csv",
+      "title": "Câbler export-csv dans demo_tasks.nim en réutilisant formatCsv",
+      "depends_on": [
+        "add_csv_helpers"
+      ],
+      "criteria": [
+        "compile",
+        "list_intact",
+        "export_command"
+      ]
+    }
+  ],
+  "mandate_sketch": {
+    "goal": "Exporter les tâches en CSV sur la sortie standard via une commande opt-in",
+    "constraints": [
+      "CSV sur stdout",
+      "garder list inchangé par défaut",
+      "quoter correctement les titres contenant une virgule",
+      "étape 2 doit réutiliser formatCsv créé à l'étape 1",
+      "Respecter AGENTS.md"
+    ],
+    "files_likely": [
+      "src/tasks.nim",
+      "src/demo_tasks.nim"
+    ]
+  }
+}

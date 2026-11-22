@@ -177,6 +177,64 @@ proc verifyForRecipe*(
     result.message = "unknown recipe verify: " & recipe.verify
     result.details = newJObject()
 
+proc verifyStepCriteria*(
+    recipe: ProjectRecipe; worktree, repoRoot: string;
+    criteria: seq[string]; finalStep = false): ProjectVerifyResult =
+  ## Verify against criteria attached to the step (not only "last step" heuristic).
+  ## export_command forces CSV/opt-in command checks — a comment-only edit fails.
+  var needCsv = finalStep or ("export_command" in criteria)
+  var needCompile = criteria.len == 0 or "compile" in criteria or
+                    "list_intact" in criteria or "export_command" in criteria
+  if not needCompile and criteria.len > 0:
+    result.kind = "criteria"
+    result.ok = false
+    result.message = "unknown_criteria"
+    result.details = %*{"criteria": criteria}
+    return
+  case recipe.verify
+  of "csv_journey", "":
+    # Empty recipe verify still allows compile/list when criteria demand it.
+    if recipe.verify == "" and needCsv:
+      result.kind = "criteria"
+      result.ok = false
+      result.message = "no verify bound to recipe for export_command"
+      result.details = %*{"criteria": criteria}
+      return
+    if recipe.verify == "" and not needCsv:
+      # compile+list via csv journey partial without recipe id
+      result = verifyCsvJourney(worktree, repoRoot, requireCsv = false)
+      result.kind = "criteria_partial"
+    else:
+      result = verifyCsvJourney(worktree, repoRoot, requireCsv = needCsv)
+    if result.ok and "export_command" in criteria and not result.csvOk:
+      result.ok = false
+      result.message = "export_command_missing"
+    result.details["criteria"] = %criteria
+  else:
+    result = verifyForRecipe(recipe, worktree, repoRoot, finalStep = needCsv)
+    result.details["criteria"] = %criteria
+
+proc proofCoversCriteria*(verifyNode: JsonNode; criteria: seq[string]): bool =
+  ## Prior accepted verify proof still covers the (possibly revised) criteria.
+  if verifyNode.isNil or verifyNode.kind != JObject:
+    return false
+  if not verifyNode{"ok"}.getBool:
+    return false
+  for c in criteria:
+    case c
+    of "compile":
+      if verifyNode{"compile_exit"}.getInt != 0:
+        return false
+    of "list_intact":
+      if not verifyNode{"list_ok"}.getBool:
+        return false
+    of "export_command":
+      if not verifyNode{"csv_ok"}.getBool:
+        return false
+    else:
+      discard
+  true
+
 proc verifyToJson*(v: ProjectVerifyResult): JsonNode =
   %*{
     "ok": v.ok,

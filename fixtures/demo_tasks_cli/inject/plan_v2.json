@@ -7,12 +7,14 @@
     {
       "id": "add_csv_helpers",
       "title": "Ajouter csvQuote/formatCsv dans tasks.nim",
-      "depends_on": []
+      "depends_on": [],
+      "criteria": ["compile", "list_intact"]
     },
     {
       "id": "wire_export_csv",
       "title": "Câbler export-csv dans demo_tasks.nim en réutilisant formatCsv",
-      "depends_on": ["add_csv_helpers"]
+      "depends_on": ["add_csv_helpers"],
+      "criteria": ["compile", "list_intact", "export_command"]
     }
   ],
   "mandate_sketch": {

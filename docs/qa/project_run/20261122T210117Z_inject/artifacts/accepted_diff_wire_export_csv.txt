@@ -1,0 +1,21 @@
+--- a/src/demo_tasks.nim
++++ b/src/demo_tasks.nim
+-## Minimal tasks CLI — default: list tasks.
++## Minimal tasks CLI — default: list tasks; opt-in CSV export.
+-  else:
++  of "export-csv":
+-    stderr.writeLine("unknown command: " & cmd)
++    echo formatCsv(loadTasks())
+-    stderr.writeLine("usage: demo_tasks [list]")
++  else:
+-    quit(2)
++    stderr.writeLine("unknown command: " & cmd)
+-
++    stderr.writeLine("usage: demo_tasks [list|export-csv]")
+-when isMainModule:
++    quit(2)
+-  main()
++
+-
++when isMainModule:
++  main()

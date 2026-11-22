@@ -29,6 +29,7 @@ type
     route*: string              ## api | inject
     injectPath*: string
     injectRecoveryPath*: string ## offline second inject (one recovery turn)
+    injectDir*: string          ## ask/revise/step injects for project run
     replayFirstPath*: string    ## historical first raw; no new ask/revise/step bill
     historicalProvenance*: string ## note / path preserved in report
     worktree*: string
@@ -36,6 +37,7 @@ type
     commandId*: string          ## idempotency key for write commands
     expectedPlanVersion*: int   ## optimistic concurrency (with expectPlanVersion)
     expectPlanVersion*: bool    ## when true, refuse if current != expected
+    maxSteps*: int              ## project run safety ceiling (0 → 8)
 
   ProjectReport* = object
     ok*: bool
@@ -153,12 +155,24 @@ proc validatePlanNode(node: JsonNode): tuple[ok: bool; err: string] =
     return (false, "empty_plan: mandate_sketch.goal required")
   (true, "")
 
+proc inferStepCriteria(st: ProjectStep; index, total: int): seq[string] =
+  ## Attach default criteria when the plan omits them.
+  if st.criteria.len > 0:
+    return st.criteria
+  result = @["compile", "list_intact"]
+  let t = st.title.toLowerAscii
+  let id = st.id.toLowerAscii
+  if "export" in t or "csv" in t or "export" in id or "csv" in id or
+     index == total:
+    result.add("export_command")
+
 proc stepsFromPlanNode(node: JsonNode; mandateKey: string): seq[ProjectStep] =
   result = @[]
   let arr = node{"steps"}
   if arr.isNil or arr.kind != JArray:
     return
   var i = 0
+  let total = arr.len
   for s in arr:
     inc i
     var st = stepFromJson(s)
@@ -168,6 +182,7 @@ proc stepsFromPlanNode(node: JsonNode; mandateKey: string): seq[ProjectStep] =
       st.title = st.id
     st.status = ssPending
     st.mandateKey = mandateKey
+    st.criteria = inferStepCriteria(st, i, total)
     if st.result.isNil: st.result = newJObject()
     result.add(st)
 
@@ -205,6 +220,9 @@ proc reportBase(cmd: string; doc: ProjectDoc): JsonNode =
     "revise_plan_reason": doc.revisePlanReason,
     "revise_plan_step_id": doc.revisePlanStepId,
     "revise_plan_at_version": doc.revisePlanAtVersion,
+    "recovery_exhausted": doc.recoveryExhausted,
+    "recovery_exhausted_step_id": doc.recoveryExhaustedStepId,
+    "recovery_exhausted_reason": doc.recoveryExhaustedReason,
     "usage_by_role": usageTableJson(doc),
     "steps": doc.steps.mapIt(stepToJson(it)),
     "plan_versions": doc.planVersions.mapIt(planToJson(it))
@@ -236,7 +254,24 @@ proc finishStepRefuse*(
       }
   doc.blockedReason = messageText
   doc.lastVerdict = verdictText
-  if refuseCode == "revise_plan":
+  let exhausted = applyNode{"recovery_exhausted"}.getBool(false)
+  if exhausted:
+    ## Survives restart: next decision must differ (force revise, no silent retry).
+    doc.recoveryExhausted = true
+    doc.recoveryExhaustedStepId = stepId
+    doc.recoveryExhaustedReason = messageText
+    doc.recoveryExhaustedFingerprint = applyNode{"prior_refuse"}.getStr & ":" &
+      refuseCode
+    doc.revisePlanPending = true
+    doc.revisePlanReason =
+      "recovery exhausted on step " & stepId & ": " & messageText &
+      "; propose a different plan or edit (same recovery path refused)"
+    doc.revisePlanStepId = stepId
+    doc.revisePlanAtVersion = doc.currentPlanVersion
+    doc.nextAction = "revise"
+    doc.lastVerdict = "recovery_exhausted"
+    report.verdict = "recovery_exhausted"
+  elif refuseCode == "revise_plan":
     doc.revisePlanPending = true
     doc.revisePlanReason = messageText
     doc.revisePlanStepId = stepId
@@ -248,9 +283,10 @@ proc finishStepRefuse*(
   emitProjectEvent(store, doc.projectId, "project.step_refused", %*{
     "step_id": stepId,
     "refuse_code": refuseCode,
-    "verdict": verdictText,
+    "verdict": report.verdict,
     "recovery_attempted": report.recoveryAttempted,
-    "revise_plan_pending": doc.revisePlanPending
+    "revise_plan_pending": doc.revisePlanPending,
+    "recovery_exhausted": doc.recoveryExhausted
   })
   report.doc = doc
   report.report = reportBase("step", doc)
@@ -638,14 +674,56 @@ proc projectRevise*(req: ProjectRequest): ProjectReport =
   for s in doc.steps:
     if s.status == ssDone:
       doneIds[s.id] = s
+  var keptProof = newJArray()
+  var droppedProof = newJArray()
+  # First mark candidates; deps checked after statuses assigned.
   for i, s in plan.steps.mpairs:
     if s.id in doneIds:
-      plan.steps[i].status = ssDone
-      plan.steps[i].result = doneIds[s.id].result
+      let old = doneIds[s.id]
+      let verifyNode = if old.result.isNil: newJObject() else: old.result{"verify"}
+      if proofCoversCriteria(verifyNode, s.criteria):
+        plan.steps[i].status = ssDone
+        plan.steps[i].result = old.result
+        keptProof.add(%*{"id": s.id, "criteria": s.criteria})
+      else:
+        droppedProof.add(%*{
+          "id": s.id,
+          "reason": "proof_does_not_cover_criteria",
+          "criteria": s.criteria
+        })
+  # Drop proofs whose dependencies are no longer done in the revised plan.
+  for i, s in plan.steps.mpairs:
+    if s.status != ssDone: continue
+    for d in s.dependsOn:
+      var depOk = false
+      for t in plan.steps:
+        if t.id == d and t.status == ssDone:
+          depOk = true
+          break
+      if not depOk:
+        plan.steps[i].status = ssPending
+        plan.steps[i].result = newJObject()
+        droppedProof.add(%*{
+          "id": s.id,
+          "reason": "dependency_not_covered",
+          "missing_dep": d
+        })
+        break
 
   doc.planVersions.add(plan)
   doc.currentPlanVersion = newVersion
   doc.steps = plan.steps
+  # Tip accepted tree only if that step remains done.
+  if doc.acceptedStepId.len > 0:
+    var tipOk = false
+    for s in doc.steps:
+      if s.id == doc.acceptedStepId and s.status == ssDone:
+        tipOk = true
+        break
+    if not tipOk:
+      doc.acceptedTreeRef = ""
+      doc.acceptedTreeHash = ""
+      doc.acceptedStepId = ""
   var mandate = parsed.node{"mandate_sketch"}.copy()
   mandate["plan_version"] = %newVersion
   mandate["change_notes"] = %parsed.node{"change_notes"}.getStr
@@ -657,11 +735,15 @@ proc projectRevise*(req: ProjectRequest): ProjectReport =
   if doc.mandates.isNil: doc.mandates = newJObject()
   doc.mandates[mandateKey] = mandate
   recordUsage(doc, "reviser", result.provider)
-  # Accepted revision clears the implementer block and re-opens step work.
+  # Accepted revision clears implementer + exhausted-recovery blocks.
   doc.revisePlanPending = false
   doc.revisePlanReason = ""
   doc.revisePlanStepId = ""
   doc.revisePlanAtVersion = 0
+  doc.recoveryExhausted = false
+  doc.recoveryExhaustedStepId = ""
+  doc.recoveryExhaustedReason = ""
+  doc.recoveryExhaustedFingerprint = ""
   doc.blockedReason = ""
   doc.nextAction = "step"
   doc.lastVerdict = "plan_v" & $newVersion
@@ -672,7 +754,9 @@ proc projectRevise*(req: ProjectRequest): ProjectReport =
     "summary": plan.summary,
     "refinement": refinement,
     "implementer_revise_reason": implementerReason,
-    "route": result.provider.route
+    "route": result.provider.route,
+    "proof_kept": keptProof,
+    "proof_dropped": droppedProof
   })
 
   let planPath = writeArtifact(req.artifactDir, "plan_v" & $newVersion & ".json", pretty(parsed.node))
@@ -685,6 +769,8 @@ proc projectRevise*(req: ProjectRequest): ProjectReport =
   result.report = reportBase("revise", doc)
   result.report["provider"] = providerToJson(result.provider)
   result.report["artifacts"] = %*{"plan": planPath, "mandate": manPath}
+  result.report["proof_kept"] = keptProof
+  result.report["proof_dropped"] = droppedProof
   if result.untested.len > 0:
     result.report["untested"] = %result.untested
 
@@ -1004,15 +1090,16 @@ proc projectStep*(req: ProjectRequest): ProjectReport =
                         "via_recovery=" & $usedRecovery & "\n")
 
   let recipe = loadProjectRecipe(doc.cwd)
-  # Full CSV oracle only on the last pending step of the recipe; earlier
-  # steps must leave a compilable tree (list intact; export may still be absent).
+  # Criteria attached to the step drive the oracle (export_command ⇒ CSV check).
   var otherPending = 0
   for s in doc.steps:
     if s.id != step.id and s.status in {ssPending, ssInterrupted, ssRunning, ssBlocked}:
       inc otherPending
   let finalStep = otherPending == 0
-  result.verify = verifyForRecipe(
-    recipe, result.apply.worktree, doc.cwd, finalStep = finalStep)
+  let stepCriteria = if step.criteria.len > 0: step.criteria
+                     else: inferStepCriteria(step, 1, if finalStep: 1 else: 2)
+  result.verify = verifyStepCriteria(
+    recipe, result.apply.worktree, doc.cwd, stepCriteria, finalStep = finalStep)
 
   if result.verify.ok:
     let snap = snapshotAcceptedTree(req.artifactDir, step.id, result.apply.worktree)
@@ -1023,9 +1110,11 @@ proc projectStep*(req: ProjectRequest): ProjectReport =
     for i, s in doc.steps.mpairs:
       if s.id == step.id:
         doc.steps[i].status = ssDone
+        doc.steps[i].criteria = stepCriteria
         doc.steps[i].result = %*{
           "verify": verifyToJson(result.verify),
           "apply": applyToJson(result.apply),
+          "criteria": stepCriteria,
           "accepted_tree_ref": snap.path,
           "accepted_tree_hash": snap.hash,
           "accepted_diff_path": diffPath,
@@ -1044,6 +1133,10 @@ proc projectStep*(req: ProjectRequest): ProjectReport =
     let more = nextPendingStep(doc)
     doc.nextAction = if more.found: "step" else: "done"
     doc.blockedReason = ""
+    doc.recoveryExhausted = false
+    doc.recoveryExhaustedStepId = ""
+    doc.recoveryExhaustedReason = ""
+    doc.recoveryExhaustedFingerprint = ""
     result.ok = true
     result.verdict = "pass"
     result.message = result.verify.message
@@ -1285,3 +1378,227 @@ proc projectResume*(req: ProjectRequest): ProjectReport =
     result.verdict = "resumed"
     result.message = "resumed; no pending steps"
   emitProjectEvent(store, result.doc.projectId, "project.resume", result.report["resume"])
+
+proc resolveInject(req: ProjectRequest; name: string): string =
+  if req.injectDir.len > 0:
+    let p = req.injectDir / name
+    if fileExists(p): return p
+  if req.injectPath.len > 0 and name.len == 0:
+    return req.injectPath
+  ""
+
+proc projectRun*(req: ProjectRequest): ProjectReport =
+  ## Pilot walk through ask → (revise) → step* until binary accepted or explainable block.
+  ## Reuses project services + journal lease (M1 transition serialization).
+  result.command = "run"
+  result.projectId = req.projectId
+  result.untested = @[]
+  result.providerCallsThisCommand = 0
+  result.apiCallsThisCommand = 0
+  if req.storePath.len == 0:
+    result.ok = false
+    result.verdict = "invalid"
+    result.message = "run requires --store"
+    return
+  if req.cwd.len == 0 and req.objective.len == 0:
+    result.ok = false
+    result.verdict = "invalid"
+    result.message = "run requires --cwd and --objective (or existing project)"
+    return
+
+  let store = openProjectStore(req.storePath)
+  defer: closeProjectStore(store)
+  let lease = claimProjectRunLease(store, req.projectId)
+  if not lease.ok:
+    result.ok = false
+    result.verdict = "already_running"
+    result.message = lease.message
+    result.providerCallsThisCommand = 0
+    result.apiCallsThisCommand = 0
+    result.report = %*{
+      "command": "project", "sub": "run", "ok": false,
+      "verdict": "already_running", "message": lease.message,
+      "holder_pid": lease.holderPid,
+      "provider_calls_this_command": 0,
+      "api_calls_this_command": 0
+    }
+    return
+  defer: releaseProjectRunLease(store, req.projectId)
+
+  var interventions = newJArray()
+  var reqMut = req
+  let maxSteps = if req.maxSteps > 0: req.maxSteps else: 8
+  var totalProvider = 0
+  var totalApi = 0
+
+  template recordIntervention(kind: string; prep: ProjectReport) =
+    interventions.add(%*{
+      "kind": kind,
+      "ok": prep.ok,
+      "verdict": prep.verdict,
+      "message": prep.message,
+      "api_calls": prep.apiCallsThisCommand,
+      "provider_calls": prep.providerCallsThisCommand
+    })
+    totalProvider += prep.providerCallsThisCommand
+    totalApi += prep.apiCallsThisCommand
+    for u in prep.untested: result.untested.add(u)
+
+  let existing = loadProject(store, req.projectId)
+  if not existing.ok:
+    if req.objective.len == 0:
+      result.ok = false
+      result.verdict = "missing"
+      result.message = existing.err
+      return
+    var askReq = reqMut
+    askReq.injectPath = resolveInject(reqMut, "plan_v1.json")
+    if askReq.injectPath.len == 0: askReq.injectPath = reqMut.injectPath
+    let asked = projectAsk(askReq)
+    recordIntervention("ask", asked)
+    if not asked.ok:
+      result = asked
+      result.command = "run"
+      result.providerCallsThisCommand = totalProvider
+      result.apiCallsThisCommand = totalApi
+      if result.report.isNil: result.report = newJObject()
+      result.report["sub"] = %"run"
+      result.report["interventions"] = interventions
+      return
+    result.doc = asked.doc
+
+  var loaded = loadProject(store, req.projectId)
+  if not loaded.ok:
+    result.ok = false
+    result.verdict = "missing"
+    result.message = loaded.err
+    return
+  result.doc = loaded.doc
+
+  if req.refinement.len > 0 and result.doc.currentPlanVersion >= 1:
+    var revReq = reqMut
+    revReq.injectPath = resolveInject(reqMut, "plan_v2.json")
+    if revReq.injectPath.len == 0: revReq.injectPath = reqMut.injectPath
+    let revised = projectRevise(revReq)
+    recordIntervention("revise", revised)
+    if not revised.ok:
+      result = revised
+      result.command = "run"
+      result.providerCallsThisCommand = totalProvider
+      result.apiCallsThisCommand = totalApi
+      if result.report.isNil: result.report = newJObject()
+      result.report["sub"] = %"run"
+      result.report["interventions"] = interventions
+      return
+    result.doc = revised.doc
+
+  var stepIdx = 0
+  while stepIdx < maxSteps:
+    inc stepIdx
+    loaded = loadProject(store, req.projectId)
+    if not loaded.ok:
+      result.ok = false
+      result.verdict = "missing"
+      result.message = loaded.err
+      break
+    result.doc = loaded.doc
+
+    if result.doc.revisePlanPending or result.doc.recoveryExhausted:
+      result.ok = false
+      result.verdict =
+        if result.doc.recoveryExhausted: "recovery_exhausted"
+        else: "revise_plan_needed"
+      result.message =
+        if result.doc.recoveryExhausted: result.doc.recoveryExhaustedReason
+        else: result.doc.revisePlanReason
+      result.providerCallsThisCommand = totalProvider
+      result.apiCallsThisCommand = totalApi
+      result.report = reportBase("run", result.doc)
+      result.report["sub"] = %"run"
+      result.report["interventions"] = interventions
+      result.report["provider_calls_this_command"] = %totalProvider
+      result.report["api_calls_this_command"] = %totalApi
+      result.report["blocked"] = %*{
+        "kind": result.verdict,
+        "next_action": "revise",
+        "reason": result.message
+      }
+      return
+
+    let actionable = nextActionableStep(result.doc)
+    if not actionable.found:
+      result.ok = true
+      result.verdict = "done"
+      result.message = "project run complete"
+      break
+
+    var stepReq = reqMut
+    let helpers = resolveInject(reqMut, "step_helpers.json")
+    let exportInj = resolveInject(reqMut, "step_export.json")
+    if actionable.step.id == "add_csv_helpers" and helpers.len > 0:
+      stepReq.injectPath = helpers
+    elif ("export" in actionable.step.id.toLowerAscii or
+          "export" in actionable.step.title.toLowerAscii) and exportInj.len > 0:
+      stepReq.injectPath = exportInj
+    elif helpers.len > 0 and stepIdx == 1:
+      stepReq.injectPath = helpers
+    elif exportInj.len > 0:
+      stepReq.injectPath = exportInj
+    elif reqMut.injectPath.len > 0:
+      stepReq.injectPath = reqMut.injectPath
+    if reqMut.worktree.len > 0:
+      stepReq.worktree = reqMut.worktree / ("step_" & actionable.step.id)
+    let stepped = projectStep(stepReq)
+    recordIntervention("step:" & actionable.step.id, stepped)
+    result.apply = stepped.apply
+    result.verify = stepped.verify
+    result.provider = stepped.provider
+    result.recoveryProvider = stepped.recoveryProvider
+    result.recoveryTriggered = stepped.recoveryTriggered
+    result.recoveryAttempted = stepped.recoveryAttempted
+    result.recoveryReason = stepped.recoveryReason
+    result.doc = stepped.doc
+    if not stepped.ok:
+      result.ok = false
+      result.verdict = stepped.verdict
+      result.message = stepped.message
+      result.providerCallsThisCommand = totalProvider
+      result.apiCallsThisCommand = totalApi
+      result.report = if stepped.report.isNil: reportBase("run", stepped.doc)
+                      else: stepped.report
+      result.report["sub"] = %"run"
+      result.report["interventions"] = interventions
+      result.report["provider_calls_this_command"] = %totalProvider
+      result.report["api_calls_this_command"] = %totalApi
+      result.report["blocked"] = %*{
+        "kind": stepped.verdict,
+        "step_id": actionable.step.id,
+        "next_action": stepped.doc.nextAction,
+        "message": stepped.message
+      }
+      return
+
+  loaded = loadProject(store, req.projectId)
+  if loaded.ok: result.doc = loaded.doc
+  let pending = nextPendingStep(result.doc)
+  result.providerCallsThisCommand = totalProvider
+  result.apiCallsThisCommand = totalApi
+  if result.verdict.len == 0 or result.verdict == "done":
+    if pending.found:
+      result.ok = false
+      result.verdict = "step_ceiling"
+      result.message = "max steps reached with pending work"
+    else:
+      result.ok = true
+      result.verdict = "done"
+      result.message = "project run complete; accepted tree ready"
+  result.report = reportBase("run", result.doc)
+  result.report["sub"] = %"run"
+  result.report["interventions"] = interventions
+  result.report["provider_calls_this_command"] = %totalProvider
+  result.report["api_calls_this_command"] = %totalApi
+  if result.doc.acceptedTreeRef.len > 0:
+    result.report["delivered_tree"] = %result.doc.acceptedTreeRef
+    result.report["delivered_hash"] = %result.doc.acceptedTreeHash
+  if result.untested.len > 0:
+    result.report["untested"] = %result.untested

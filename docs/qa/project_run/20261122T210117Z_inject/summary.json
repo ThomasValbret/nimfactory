@@ -1,0 +1,91 @@
+{
+  "stamp": "20261122T210117Z",
+  "route": "inject",
+  "code_sha": "655f7ea190b1ec5dbd6f250365f47dd342225045",
+  "exit_code": 0,
+  "ok": true,
+  "verdict": "done",
+  "message": "project run complete; accepted tree ready",
+  "next_action": "done",
+  "interventions": [
+    {
+      "kind": "ask",
+      "ok": true,
+      "verdict": "plan_ready",
+      "message": "plan v1 persisted",
+      "api_calls": 0,
+      "provider_calls": 0
+    },
+    {
+      "kind": "revise",
+      "ok": true,
+      "verdict": "plan_revised",
+      "message": "plan v2 persisted",
+      "api_calls": 0,
+      "provider_calls": 1
+    },
+    {
+      "kind": "step:add_csv_helpers",
+      "ok": true,
+      "verdict": "pass",
+      "message": "intermediate: compile+list intact (CSV deferred to final step)",
+      "api_calls": 0,
+      "provider_calls": 1
+    },
+    {
+      "kind": "step:wire_export_csv",
+      "ok": true,
+      "verdict": "pass",
+      "message": "list default intact; CSV stdout ok; comma title quoted",
+      "api_calls": 0,
+      "provider_calls": 1
+    }
+  ],
+  "api_calls_this_command": 0,
+  "provider_calls_this_command": 3,
+  "usage_by_role": {
+    "planner": {
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "calls": 0,
+      "estimated_usd": 0.0,
+      "model": ""
+    },
+    "implementer": {
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "calls": 0,
+      "estimated_usd": 0.0,
+      "model": ""
+    },
+    "reviser": {
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "calls": 0,
+      "estimated_usd": 0.0,
+      "model": ""
+    }
+  },
+  "delivered_tree": "/opt/nimFactory-project-run/docs/qa/project_run/20261122T210117Z_inject/artifacts/trees/wire_export_csv",
+  "delivered_hash": "73518A6720844BE7",
+  "binary_behaviour": {
+    "no_args": {
+      "exit": 0,
+      "out": "1. Acheter du pain\n2. Appeler Alice, Bob\n3. Relire le rapport"
+    },
+    "list": {
+      "exit": 0,
+      "out": "1. Acheter du pain\n2. Appeler Alice, Bob\n3. Relire le rapport"
+    },
+    "export_csv": {
+      "exit": 0,
+      "out": "id,title\n1,Acheter du pain\n2,\"Appeler Alice, Bob\"\n3,Relire le rapport"
+    }
+  },
+  "blocked": null,
+  "status_verdict": "step_pass",
+  "user_command": "nimfactory project run --store \u2026 --cwd fixtures/demo_tasks_cli --objective 'Je veux pouvoir exporter mes t\u00e2ches.' --refinement '\u2026CSV\u2026' --route inject --inject-dir fixtures/demo_tasks_cli/inject",
+  "estimated_usd_total": 0.0,
+  "delivered_worktree": "/opt/nimFactory-project-run/docs/qa/project_run/20261122T210117Z_inject/worktrees/step_wire_export_csv",
+  "note": "inject walk: ask\u2192revise\u2192helpers\u2192export; CSV oracle pass"
+}

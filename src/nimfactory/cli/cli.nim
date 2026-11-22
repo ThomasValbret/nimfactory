@@ -56,6 +56,7 @@ type
     artifactDir: string
     replayFirst: string
     historicalProvenance: string
+    injectDir: string
     commandId: string
     expectedPlanVersion: int
     hasExpectedPlanVersion: bool
@@ -78,7 +79,7 @@ Commands:
   inspect --store PATH --run-id ID
   events --store PATH --run-id ID
   mission-fix --repo PATH --oracle PATH --route api|local|inject [options]
-  project ask|revise|step|status|resume|snapshot --store PATH [options]
+  project ask|revise|step|status|resume|run|snapshot --store PATH [options]
 
 Options:
   --mode sequential|concurrent
@@ -107,6 +108,7 @@ Options:
   --objective TEXT      initial pilot request (project ask)
   --refinement TEXT     pilot precision (project revise)
   --artifact-dir PATH   write plan/mandate/verify artifacts
+  --inject-dir PATH     project run inject folder (plan_v1/v2, step_*.json)
   --command-id ID       idempotent project write command key
   --expected-plan-version N  refuse revise if plan moved
   --json                machine mode (stdout JSON only; default)
@@ -206,6 +208,8 @@ proc parseArgs(args: seq[string]): CliOptions =
         result.refinement = takeValue(p)
       of "artifact-dir":
         result.artifactDir = takeValue(p)
+      of "inject-dir":
+        result.injectDir = takeValue(p)
       of "command-id":
         result.commandId = takeValue(p)
       of "expected-plan-version":
@@ -351,7 +355,7 @@ proc runCli*(args: seq[string]): int =
       return ExitFailed
     of "project":
       if o.sub.len == 0:
-        writeHuman("project requires subcommand: ask|revise|step|status|resume|snapshot")
+        writeHuman("project requires subcommand: ask|revise|step|status|resume|run|snapshot")
         return ExitInvalid
       if o.sub == "snapshot":
         writeMachine(readProjectView(o.store, o.projectId))
@@ -365,6 +369,7 @@ proc runCli*(args: seq[string]): int =
       preq.route = o.route
       preq.injectPath = o.inject
       preq.injectRecoveryPath = o.injectRecovery
+      preq.injectDir = o.injectDir
       preq.replayFirstPath = o.replayFirst
       preq.historicalProvenance = o.historicalProvenance
       preq.worktree = o.worktree
@@ -375,11 +380,11 @@ proc runCli*(args: seq[string]): int =
         preq.expectPlanVersion = true
       if preq.objective.len == 0 and o.positional.len > 0:
         preq.objective = o.positional.join(" ")
-      if preq.refinement.len == 0 and o.sub == "revise" and o.positional.len > 0:
+      if preq.refinement.len == 0 and o.sub in ["revise", "run"] and o.positional.len > 0:
         preq.refinement = o.positional.join(" ")
       if o.route == "inject" and o.inject.len == 0 and o.replayFirst.len == 0 and
-         o.sub in ["ask", "revise", "step"]:
-        writeHuman("project " & o.sub & " --route inject requires --inject (or --replay-first for step)")
+         o.injectDir.len == 0 and o.sub in ["ask", "revise", "step", "run"]:
+        writeHuman("project " & o.sub & " --route inject requires --inject/--inject-dir (or --replay-first for step)")
         return ExitInvalid
       var prep: ProjectReport
       case o.sub
@@ -393,6 +398,8 @@ proc runCli*(args: seq[string]): int =
         prep = projectStatus(preq)
       of "resume":
         prep = projectResume(preq)
+      of "run":
+        prep = projectRun(preq)
       else:
         writeHuman("unknown project subcommand: " & o.sub)
         return ExitInvalid
