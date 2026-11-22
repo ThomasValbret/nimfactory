@@ -1,0 +1,46 @@
+{
+  "summary": "Ajouter une fonctionnalité d'exportation des tâches en format CSV sur la sortie standard tout en préservant le comportement d'affichage par défaut.",
+  "hypothesis": "Les utilisateurs préfèrent une option d'exportation en ligne de commande pour éviter les modifications non souhaitées de l'affichage par défaut, donnant une option d'exportation simple et directe.",
+  "optional_question": "Devons-nous prendre en charge d'autres formats d'exportation à l'avenir, ou nous concentrons-nous uniquement sur CSV ?",
+  "steps": [
+    {
+      "id": "1",
+      "title": "Ajouter un drapeau CLI pour l'exportation CSV",
+      "depends_on": []
+    },
+    {
+      "id": "2",
+      "title": "Créer une fonction pour formater les tâches au format CSV",
+      "depends_on": [
+        "1"
+      ]
+    },
+    {
+      "id": "3",
+      "title": "Modifier la fonction main pour gérer le command CLI d'exportation en CSV",
+      "depends_on": [
+        "1",
+        "2"
+      ]
+    },
+    {
+      "id": "4",
+      "title": "Tester la nouvelle fonctionnalité d'exportation en CSV",
+      "depends_on": [
+        "3"
+      ]
+    }
+  ],
+  "mandate_sketch": {
+    "goal": "Implémenter une fonctionnalité pour exporter les tâches sous forme de fichier CSV sur la sortie standard tout en conservant le comportement d'affichage standard.",
+    "constraints": [
+      "L'exportation doit être activée par un drapeau clairement documenté.",
+      "Les titres doivent être correctement quotés pour les virgules dans le CSV."
+    ],
+    "files_likely": [
+      "src/demo_tasks.nim",
+      "src/tasks.nim"
+    ]
+  },
+  "change_notes": "La précision change le plan en spécifiant que l'exportation doit se faire sur la sortie standard au format CSV, tout en préservant l'affichage actuel par défaut sans le modifier."
+}

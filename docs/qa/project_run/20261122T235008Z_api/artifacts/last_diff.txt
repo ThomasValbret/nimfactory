@@ -1,0 +1,32 @@
+--- a/src/demo_tasks.nim
++++ b/src/demo_tasks.nim
+-  let cmd = if args.len > 0: args[0] else: "list"
++  let cmd = if args.len > 0: args[0] else: "list"var exportCsv = false
+-  case cmd
++if "--export-csv" in args:
+-  of "list", "":
++  exportCsv = true
+-    echo formatList(loadTasks())
++theArgs.remove("--export-csv")
+-  else:
++  case cmd
+-    stderr.writeLine("unknown command: " & cmd)
++  of "list", "":if exportCsv:
+-    stderr.writeLine("usage: demo_tasks [list]")
++  echo formatCsv(loadTasks())
+-    quit(2)
++  quit(0)
+-
++    echo formatList(loadTasks())
+-when isMainModule:
++  else:
+-  main()
++    stderr.writeLine("unknown command: " & cmd)
+-
++    stderr.writeLine("usage: demo_tasks [list]")
++    quit(2)
++when isMainModule:
++  main()
+before_hash=1AFA914E after_hash=FB060099
+source_tree=/opt/nimFactory-studio-merge/fixtures/demo_tasks_cli
+via_recovery=false

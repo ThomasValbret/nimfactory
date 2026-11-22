@@ -29,7 +29,7 @@ var
   selection, lastBody, sourceText, sourceMsg: string
   sourceRequest = 0
   canReadSources, canWrite, pendingRefresh, showAllEvents, commandBusy: bool
-  draftRefinement, commandStatus: string
+  draftRefinement, draftObjective, commandStatus: string
   lastReceipt: JsonNode
   activeCommandId, pendingCommandKind: string
 
@@ -80,6 +80,8 @@ proc hasIde(step: JsonNode): bool = step.hasTab(diff) or step.hasTab(source) or 
 proc captureDraft() =
   if getElementById("revise-text") != nil:
     draftRefinement = $fieldValue("revise-text")
+  if getElementById("ask-objective") != nil:
+    draftObjective = $fieldValue("ask-objective")
 
 proc resetSource() =
   inc sourceRequest
@@ -165,7 +167,18 @@ proc statusStrip(): string =
   result.add("<div><div class='small-title'>Prochaine décision</div><p><strong>" &
     html(decision) & "</strong>")
   if proposal.len > 0: result.add("<br><span class='fine'>" & html(proposal) & "</span>")
-  result.add("</p></div></div>")
+  result.add("</p></div>")
+  let ev = wf{"engine_verdict"}
+  if ev != nil:
+    result.add("<div><div class='small-title'>Verdict moteur</div><p><strong>" &
+      html(ev{"last_verdict"}.getStr(model{"last_verdict"}.getStr)) & "</strong>")
+    if ev{"output_incorrect"}.getBool:
+      result.add("<br><span class='message'>Sortie non vide incorrecte · " &
+        html(ev{"incorrect_detail"}.getStr) & "</span>")
+    elif ev{"proposal"}.getStr.len > 0 and ev{"proposal"}.getStr != proposal:
+      result.add("<br><span class='fine'>" & html(ev{"proposal"}.getStr) & "</span>")
+    result.add("</p></div>")
+  result.add("</div>")
   if commandStatus.len > 0:
     result.add("<p class='fine' id='command-status'>" & html(commandStatus) & "</p>")
   result.add("<div class='command-bar'>")
@@ -180,6 +193,30 @@ proc statusStrip(): string =
     result.add(button("resume",
       if commandBusy and pendingCommandKind == "resume": "Reprise…" else: "Reprendre",
       "secondary", disabled = commandBusy))
+  result.add("</div></section>")
+
+proc newProjectPanel(): string =
+  ## Parcours « Nouveau projet → demande → aperçu local ».
+  if not hasCmd("ask_plan") and not model{"bootstrap"}.getBool: return ""
+  result = "<section class='panel revise'><div class='ph'><span>Nouveau projet</span><small>Demande → aperçu local</small></div><div class='revise-body'>"
+  result.add("<p class='fine'>Le squelette démarre le projet. La demande produit un aperçu local du plan, sans lancer d’étapes.</p>")
+  result.add("<label class='small-title' for='ask-objective'>Demande</label>")
+  result.add("<textarea id='ask-objective' rows='4' placeholder='Décrire l’objectif du projet…'>" &
+    html(if draftObjective.len > 0: draftObjective else: model{"objective"}.getStr) & "</textarea>")
+  result.add(button("ask-submit",
+    if commandBusy and pendingCommandKind == "ask_plan": "Aperçu…" else: "Obtenir l’aperçu local",
+    "cta wide", disabled = commandBusy))
+  if model{"current_plan_version"}.getInt >= 1:
+    result.add("<div class='small-title'>Aperçu local · plan v" &
+      $model{"current_plan_version"}.getInt & "</div>")
+    result.add("<p class='fine'>next_action · " & html(model{"next_action"}.getStr) &
+      " · verdict · " & html(model{"last_verdict"}.getStr) & "</p>")
+  if lastReceipt != nil and lastReceipt{"command"}.getStr == "ask_plan":
+    result.add(receiptPanel())
+    let preview = lastReceipt{"preview"}
+    if preview != nil:
+      result.add("<div class='small-title'>Étapes proposées</div>")
+      result.add(deltaList(preview{"steps"}, "Aucune étape"))
   result.add("</div></section>")
 
 proc revisePanel(): string =
@@ -244,9 +281,15 @@ proc inspector(step: JsonNode): string =
     result.add("</ul>")
   if step{"verify"} != nil:
     result.add("<p class='small-title'>Vérification</p><p class='fine'>" & html(step{"verify","message"}.getStr) & "</p>")
+    if step{"output_incorrect"}.getBool or
+       (step{"verify","csv_out"}.getStr.len > 0 and not step{"verify","csv_ok"}.getBool):
+      result.add("<p class='message'>Verdict moteur · sortie non vide mais incorrecte</p>")
   let proposal = model{"workflow","engine_proposal"}.getStr
-  if step{"status"}.getStr in ["blocked", "interrupted"] and proposal.len > 0:
+  let activeStatus = step{"status"}.getStr
+  if (activeStatus in ["blocked", "interrupted"] or
+      model{"last_verdict"}.getStr == "verify_failed") and proposal.len > 0:
     result.add("<p class='message'>Proposition du moteur · " & html(proposal) & "</p>")
+  result.add("<p class='fine'>Verdict · " & html(model{"last_verdict"}.getStr) & "</p>")
   if view != ide and step.hasIde:
     result.add(button("open-ide-diff","Ouvrir le diff →","cta wide"))
     if step.hasTab(receipt):
@@ -341,7 +384,8 @@ proc render() =
   let hero = "<div class='hero'><div><div class='crumb'>" & html(project) &
     "</div><h1>" & title & "</h1><p class='sub'>" & html(model{"objective"}.getStr) & "</p></div></div>"
   let body = case view
-    of workflow: "<div class='body-grid'><div>" & statusStrip() & graph() & revisePanel() & journal() &
+    of workflow: "<div class='body-grid'><div>" & statusStrip() & newProjectPanel() &
+      graph() & revisePanel() & journal() &
       "</div>" & inspector(step) & "</div>"
     of ide: "<div class='body-grid'><div>" & editor(step) & "</div>" & inspector(step) & "</div>"
     of plans: planHistory()
@@ -452,7 +496,7 @@ proc pollCommandReceipt() =
 
 proc postCommand(kind: string; extra: JsonNode = nil) =
   if commandBusy or not canWrite: return
-  if not hasCmd(kind) and kind != "revise_plan": return
+  if not hasCmd(kind) and kind notin ["revise_plan", "ask_plan"]: return
   activeCommandId = $mintCommandId(cstring("studio-" & kind))
   pendingCommandKind = kind
   commandBusy = true
@@ -513,6 +557,14 @@ proc submitRevise() =
     return
   postCommand("revise_plan", %*{"refinement": draftRefinement})
 
+proc submitAsk() =
+  captureDraft()
+  if draftObjective.strip.len == 0:
+    commandStatus = "Saisir une demande avant l’aperçu local."
+    render()
+    return
+  postCommand("ask_plan", %*{"objective": draftObjective})
+
 proc openIde(which: CodeTab) =
   view = ide
   tab = which
@@ -549,6 +601,9 @@ document.addEventListener("click", proc(e: Event) =
     loadSource()
   of "revise-submit":
     submitRevise()
+    return
+  of "ask-submit":
+    submitAsk()
     return
   of "run":
     postCommand("run")

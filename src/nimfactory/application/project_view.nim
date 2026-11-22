@@ -44,18 +44,36 @@ proc projectStepView(step: JsonNode): JsonNode =
   if detail{"verify"} != nil:
     result["verify"] = allowedFields(detail["verify"],
       ["ok", "kind", "message", "compile_exit", "list_out", "csv_out",
-       "criteria", "controls"])
+       "list_ok", "csv_ok", "quote_ok", "criteria", "controls", "details"])
   ## Controls actually executed (for blocked / verified steps).
   var controls = newJArray()
+  var outputIncorrect = false
   if detail{"verify"} != nil:
     let v = detail["verify"]
     if v{"compile_exit"} != nil:
       controls.add(%*{"name": "compile", "exit": v{"compile_exit"}.getInt,
                       "ok": v{"compile_exit"}.getInt == 0})
     if v{"list_out"}.getStr.len > 0:
-      controls.add(%*{"name": "list", "ok": true})
+      let listOk = v{"list_ok"}.getBool(v{"ok"}.getBool)
+      controls.add(%*{
+        "name": "list",
+        "ok": listOk,
+        "message": if listOk: "" else: "sortie non vide mais incorrecte"
+      })
+      if not listOk: outputIncorrect = true
     if v{"csv_out"}.getStr.len > 0:
-      controls.add(%*{"name": "export-csv", "ok": true})
+      let csvOk = v{"csv_ok"}.getBool(false)
+      let quoteOk = v{"quote_ok"}.getBool(true)
+      let csvPass = csvOk and quoteOk
+      controls.add(%*{
+        "name": "export-csv",
+        "ok": csvPass,
+        "message":
+          if csvPass: ""
+          elif v{"csv_out"}.getStr.len > 0: "sortie non vide mais incorrecte"
+          else: "sortie vide"
+      })
+      if not csvPass: outputIncorrect = true
     if v{"criteria"} != nil:
       for c in v{"criteria"}:
         controls.add(c)
@@ -64,6 +82,8 @@ proc projectStepView(step: JsonNode): JsonNode =
                     "message": detail{"apply","message"}.getStr})
   if controls.len > 0:
     result["controls_executed"] = controls
+  if outputIncorrect:
+    result["output_incorrect"] = %true
   let proof = detail{"accepted_tree_hash"}.getStr.len > 0 and
               step{"status"}.getStr == "done"
   result["has_proof"] = %proof
@@ -79,6 +99,8 @@ proc projectCapabilities(doc: JsonNode): JsonNode =
     if step{"status"}.getStr in ["running", "interrupted"]:
       running = true
       break
+  if version == 0:
+    commands.add(%"ask_plan")
   if version >= 1 or doc{"objective"}.getStr.len > 0:
     commands.add(%"run")
   if version >= 1 and not pendingRevise and not exhausted:
@@ -148,6 +170,22 @@ proc workflowStatus(doc: JsonNode; steps: JsonNode): JsonNode =
     decision = "revise"
   elif doc{"last_verdict"}.getStr == "verify_failed":
     decision = "blocked"
+  var outputIncorrect = false
+  var incorrectDetail = ""
+  if active.kind != JNull and active{"output_incorrect"}.getBool:
+    outputIncorrect = true
+    incorrectDetail = active{"verify","message"}.getStr
+  elif active.kind != JNull:
+    for c in active{"controls_executed"}.getElems:
+      if c{"message"}.getStr.contains("non vide"):
+        outputIncorrect = true
+        incorrectDetail = c{"message"}.getStr & " · " & active{"verify","message"}.getStr
+        break
+  let proposal =
+    if doc{"revise_plan_pending"}.getBool: doc{"revise_plan_reason"}.getStr
+    elif doc{"recovery_exhausted"}.getBool: doc{"recovery_exhausted_reason"}.getStr
+    elif doc{"blocked_reason"}.getStr.len > 0: doc{"blocked_reason"}.getStr
+    else: doc{"last_verdict"}.getStr
   result = %*{
     "objective": doc{"objective"}.getStr,
     "active_step": if active.kind == JNull: newJNull() else: %*{
@@ -162,11 +200,14 @@ proc workflowStatus(doc: JsonNode; steps: JsonNode): JsonNode =
     "awaiting_verification": awaiting,
     "next_decision": decision,
     "blocked_reason": doc{"blocked_reason"}.getStr,
-    "engine_proposal":
-      if doc{"revise_plan_pending"}.getBool: doc{"revise_plan_reason"}.getStr
-      elif doc{"recovery_exhausted"}.getBool: doc{"recovery_exhausted_reason"}.getStr
-      elif doc{"blocked_reason"}.getStr.len > 0: doc{"blocked_reason"}.getStr
-      else: doc{"last_verdict"}.getStr
+    "engine_proposal": proposal,
+    "engine_verdict": %*{
+      "last_verdict": doc{"last_verdict"}.getStr,
+      "next_action": next,
+      "proposal": proposal,
+      "output_incorrect": outputIncorrect,
+      "incorrect_detail": incorrectDetail
+    }
   }
 
 proc projectView(doc: JsonNode): JsonNode =
@@ -191,10 +232,59 @@ proc projectView(doc: JsonNode): JsonNode =
       item["steps"].add(allowedFields(step, ["id", "title", "depends_on", "criteria"]))
     result["plan_versions"].add(item)
 
-proc readProjectView*(path, projectId: string): JsonNode =
+proc bootstrapProjectView*(projectId: string; objective = ""): JsonNode =
+  ## Empty project shell for « Nouveau projet → demande → aperçu local ».
+  result = %*{
+    "schema": "nimfactory.studio/v1",
+    "project_id": projectId,
+    "objective": objective,
+    "refinements": newJArray(),
+    "current_plan_version": 0,
+    "last_verdict": "",
+    "next_action": "ask",
+    "blocked_reason": "",
+    "accepted_step_id": "",
+    "accepted_tree_hash": "",
+    "bootstrap": true,
+    "steps": newJArray(),
+    "plan_versions": newJArray(),
+    "events": newJArray(),
+    "cursor": 0,
+    "cost": {"estimated_usd": 0.0, "calls": 0},
+    "usage_by_role": {"_total": {"estimated_usd": 0.0, "calls": 0}},
+    "capabilities": {
+      "commands": ["ask_plan"],
+      "revise_plan_pending": false,
+      "recovery_exhausted": false,
+      "worker_active": false
+    },
+    "workflow": {
+      "objective": objective,
+      "active_step": newJNull(),
+      "obtained_proofs": newJArray(),
+      "awaiting_verification": newJArray(),
+      "next_decision": "ask",
+      "blocked_reason": "",
+      "engine_proposal": "Saisir une demande pour obtenir un aperçu local du plan.",
+      "engine_verdict": {
+        "last_verdict": "",
+        "next_action": "ask",
+        "proposal": "Saisir une demande pour obtenir un aperçu local du plan.",
+        "output_incorrect": false,
+        "incorrect_detail": ""
+      }
+    }
+  }
+
+proc readProjectView*(path, projectId: string; allowBootstrap = false;
+                      objective = ""): JsonNode =
   ## One SQLite read snapshot, even while a worker commits. Never opens a writer,
   ## runs a schema migration, claims a lease or calls projectResume.
-  if path.len == 0 or projectId.len == 0 or not fileExists(path):
+  if path.len == 0 or projectId.len == 0:
+    if allowBootstrap: return bootstrapProjectView(projectId, objective)
+    raise newException(ProjectMissing, "Existing store and project ID required")
+  if not fileExists(path):
+    if allowBootstrap: return bootstrapProjectView(projectId, objective)
     raise newException(ProjectMissing, "Existing store and project ID required")
   var db: SqliteDb
   const openReadonly = 1'i32
@@ -208,6 +298,8 @@ proc readProjectView*(path, projectId: string): JsonNode =
   let id = projectRunId(projectId)
   let row = db.queryAll("SELECT state_json FROM nf_runs WHERE run_id=?", [id])
   if row.len == 0:
+    db.execSql("COMMIT")
+    if allowBootstrap: return bootstrapProjectView(projectId, objective)
     raise newException(ProjectMissing, "Unknown project")
   let doc = parseJson(row[0])
   if doc{"kind"}.getStr != "project_mission" or doc{"project_id"}.getStr != projectId:

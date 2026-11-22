@@ -1,0 +1,5 @@
+data/
+*.sqlite
+*.pid
+__pycache__/
+*.pyc

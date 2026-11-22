@@ -126,7 +126,8 @@ proc writesEnabled(config: Config): bool =
     (config.route == "inject" and (config.inject.len > 0 or config.injectDir.len > 0))
 
 proc run(config: Config) =
-  discard readProjectView(config.store, config.project)
+  discard readProjectView(config.store, config.project, allowBootstrap = true,
+                          objective = config.objective)
   let server = newAsyncHttpServer()
   proc serveRequest(req: Request) {.async, gcsafe.} =
     var headers = newHttpHeaders({
@@ -147,7 +148,8 @@ proc run(config: Config) =
         of "/studio.css": reply(Http200, "text/css; charset=utf-8", css)
         of "/studio.js": reply(Http200, "text/javascript; charset=utf-8", client)
         of "/api/snapshot":
-          let snapshot = readProjectView(config.store, config.project)
+          let snapshot = readProjectView(config.store, config.project,
+            allowBootstrap = true, objective = config.objective)
           headers["X-Studio-Sources"] = if config.trees.len > 0: "1" else: "0"
           headers["X-Studio-Writes"] = if writesEnabled(config): "1" else: "0"
           reply(Http200, "application/json", $snapshot)
@@ -205,7 +207,8 @@ proc run(config: Config) =
             "{\"ok\":false,\"verdict\":\"invalid\",\"message\":\"JSON body required\"}")
           return
         let command = body{"command"}.getStr
-        if command notin [RevisePlanCommand, RunCommand, ResumeCommand, PauseAfterStepCommand]:
+        if command notin [AskPlanCommand, RevisePlanCommand, RunCommand, ResumeCommand,
+                          PauseAfterStepCommand]:
           reply(Http400, "application/json",
             "{\"ok\":false,\"verdict\":\"unsupported_command\",\"message\":\"Unsupported command\"}")
           return
@@ -218,6 +221,10 @@ proc run(config: Config) =
             "{\"ok\":false,\"verdict\":\"invalid\",\"message\":\"expected_plan_version required\"}")
           return
         var preq = parseStudioCommand(body, baseProjectRequest(config))
+        if command == AskPlanCommand and preq.objective.len == 0:
+          reply(Http400, "application/json",
+            "{\"ok\":false,\"verdict\":\"invalid\",\"message\":\"objective required for ask_plan\"}")
+          return
         let existing = loadCommandReceipt(config.store, config.project, preq.commandId)
         if existing != nil and existing.kind != JNull:
           if existing{"status"}.getStr == "done":

@@ -1,0 +1,14 @@
+{
+  "target_file": "src/demo_tasks.nim",
+  "decision": "Ajouter un drapeau CLI pour l'exportation CSV sans altérer le comportement de la liste par défaut.",
+  "edits": [
+    {
+      "insertAfter": "let cmd = if args.len > 0: args[0] else: \"list\"",
+      "newText": "var exportCsv = false\nif \"--export-csv\" in args:\n  exportCsv = true\ntheArgs.remove(\"--export-csv\")"
+    },
+    {
+      "insertAfter": "of \"list\", \"\":",
+      "newText": "if exportCsv:\n  echo formatCsv(loadTasks())\n  quit(0)"
+    }
+  ]
+}

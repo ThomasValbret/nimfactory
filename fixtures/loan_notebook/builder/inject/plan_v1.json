@@ -1,0 +1,28 @@
+{
+  "summary": "Carnet de prêts local : créer un prêt et le marquer remboursé.",
+  "hypothesis": "Le squelette HTTP/SQLite existe ; il manque le parcours métier complet vérifiable.",
+  "optional_question": "",
+  "steps": [
+    {
+      "id": "wire_loan_create",
+      "title": "Exposer la création de prêt sur POST /loans",
+      "depends_on": [],
+      "criteria": ["server_starts", "schema_ok"]
+    },
+    {
+      "id": "wire_loan_repay",
+      "title": "Permettre de marquer un prêt remboursé",
+      "depends_on": ["wire_loan_create"],
+      "criteria": ["server_starts", "schema_ok", "loan_roundtrip"]
+    }
+  ],
+  "mandate_sketch": {
+    "goal": "Carnet de prêts Python/SQLite avec création et remboursement",
+    "constraints": [
+      "Conserver le squelette technique",
+      "SQLite local uniquement",
+      "Oracle navigateur + redémarrage serveur"
+    ],
+    "files_likely": ["skeleton/server.py", "skeleton/schema.sql"]
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "ok": false,
+  "kind": "csv_journey",
+  "list_ok": false,
+  "csv_ok": false,
+  "quote_ok": false,
+  "message": "compile failed (exit 1)",
+  "list_out": "",
+  "csv_out": "",
+  "compile_exit": 1,
+  "details": {
+    "require_csv": true,
+    "compile_out": "/opt/nimFactory-studio-merge/docs/qa/project_run/20261122T235008Z_api/worktrees/step_1/src/demo_tasks.nim(11, 3) Error: invalid indentation\n",
+    "criteria": [
+      "compile",
+      "list_intact",
+      "export_command"
+    ]
+  }
+}

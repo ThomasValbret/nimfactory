@@ -1,10 +1,11 @@
 ## Shared project write commands (Studio + CLI). Idempotent by command_id.
-import std/[json, tables, times, os]
+import std/[json, tables, times, os, sequtils]
 import nimfactory/project/[pipeline, types, store]
 import nimfactory/runtime/journal/[run_store, sqlite_ffi]
 
 const
   CommandSchema* = "nimfactory.project_command/v1"
+  AskPlanCommand* = "ask_plan"
   RevisePlanCommand* = "revise_plan"
   RunCommand* = "run"
   ResumeCommand* = "resume"
@@ -335,6 +336,59 @@ proc executeRevisePlan*(req: ProjectRequest): ProjectReport =
   if work.commandId.len > 0:
     finishCommandRecord(store, work.projectId, work.commandId, receipt)
 
+proc bindAskInject*(req: var ProjectRequest) =
+  if req.injectPath.len > 0: return
+  if req.injectDir.len == 0: return
+  let p = req.injectDir / "plan_v1.json"
+  if fileExists(p): req.injectPath = p
+
+proc executeAskPlan*(req: ProjectRequest): ProjectReport =
+  ## Nouveau projet → demande → aperçu local (plan v1, sans step).
+  if req.storePath.len == 0 or req.projectId.len == 0:
+    result.ok = false
+    result.command = AskPlanCommand
+    result.verdict = "invalid"
+    result.message = "ask_plan requires --store and --project-id"
+    result.report = %*{
+      "schema": CommandSchema, "command": AskPlanCommand, "ok": false,
+      "verdict": "invalid", "message": result.message
+    }
+    return
+  if req.objective.len == 0:
+    result.ok = false
+    result.command = AskPlanCommand
+    result.verdict = "invalid"
+    result.message = "ask_plan requires an objective"
+    result.report = %*{
+      "schema": CommandSchema, "command": AskPlanCommand, "ok": false,
+      "verdict": "invalid", "message": result.message
+    }
+    return
+  let store = openProjectStore(req.storePath)
+  defer: closeProjectStore(store)
+  let gate = beginOrReplay(store, req, AskPlanCommand)
+  if gate.early: return gate.report
+  var work = req
+  bindAskInject(work)
+  result = projectAsk(work)
+  result.command = AskPlanCommand
+  let receipt = buildGenericReceipt(AskPlanCommand, work, result, false)
+  if result.ok:
+    receipt["preview"] = %*{
+      "plan_version": result.doc.currentPlanVersion,
+      "steps": result.doc.steps.mapIt(%*{
+        "id": it.id, "title": it.title, "depends_on": it.dependsOn,
+        "criteria": it.criteria
+      }),
+      "next_action": result.doc.nextAction,
+      "summary":
+        if result.doc.planVersions.len > 0: result.doc.planVersions[^1].summary
+        else: ""
+    }
+  result.report = receipt
+  if work.commandId.len > 0:
+    finishCommandRecord(store, work.projectId, work.commandId, receipt)
+
 proc performProjectCommand*(command: string; req: ProjectRequest): ProjectReport =
   ## Engine work only — caller owns claim/finish for command_id.
   var work = req
@@ -342,6 +396,10 @@ proc performProjectCommand*(command: string; req: ProjectRequest): ProjectReport
     work.pauseAfterStep = true
     if work.maxSteps == 0: work.maxSteps = 1
   case command
+  of AskPlanCommand:
+    bindAskInject(work)
+    result = projectAsk(work)
+    result.command = command
   of ResumeCommand:
     result = projectResume(work)
     if result.doc.nextAction in ["step", "revise_or_step", "retry_step"] or
@@ -384,9 +442,11 @@ proc finishPerformedCommand*(
     result = buildGenericReceipt(command, req, prep, false)
 
 proc executeProjectCommand*(command: string; req: ProjectRequest): ProjectReport =
-  ## Studio/CLI entry for run, resume, pause_after_step, revise_plan.
+  ## Studio/CLI entry for ask_plan, run, resume, pause_after_step, revise_plan.
   if command == RevisePlanCommand:
     return executeRevisePlan(req)
+  if command == AskPlanCommand:
+    return executeAskPlan(req)
   if command notin [RunCommand, PauseAfterStepCommand, ResumeCommand]:
     result.ok = false
     result.command = command

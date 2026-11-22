@@ -1,0 +1,17 @@
+{
+  "goal": "Implémenter une fonctionnalité pour exporter les tâches sous forme de fichier CSV tout en conservant le comportement d'affichage standard.",
+  "constraints": [
+    "L'exportation doit être activée par un drapeau clairement documenté.",
+    "Les titres doivent être correctement quotés pour les virgules dans le CSV."
+  ],
+  "files_likely": [
+    "src/demo_tasks.nim",
+    "src/tasks.nim"
+  ],
+  "plan_version": 1,
+  "agents_md_excerpt": "# Agents — demo_tasks_cli\n\nPetit CLI Nim de liste de tâches.\n\n## Consignes\n- Préserver le comportement d'affichage par défaut (`list`) sauf demande explicite.\n- Les changements d'export doivent être opt-in (drapeau CLI), pas remplacer `list`.\n- Les titres peuvent contenir des virgules ; un export CSV doit les quotter correctement.\n- Préférer de petites modifications localisées sous `src/`.\n",
+  "source_ids": [
+    "src/demo_tasks.nim",
+    "src/tasks.nim"
+  ]
+}

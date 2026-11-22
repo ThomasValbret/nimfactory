@@ -1,0 +1,14 @@
+{
+  "target_file": "skeleton/server.py",
+  "decision": "add_open_balance_endpoint",
+  "edits": [
+    {
+      "insertAfter": "def list_loans() -> list[dict]:",
+      "newText": "\ndef open_balance_cents() -> int:\n    with connect() as conn:\n        row = conn.execute(\n            \"SELECT COALESCE(SUM(amount_cents),0) AS total FROM loans WHERE status='open'\"\n        ).fetchone()\n    return int(row[\"total\"])\n"
+    },
+    {
+      "insertAfter": "if path == \"/loans\":",
+      "newText": "\n        if path == \"/balance\":\n            self._json(200, {\"open_balance_cents\": open_balance_cents()})\n            return\n        if path == \"/loans\":"
+    }
+  ]
+}

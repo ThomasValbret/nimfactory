@@ -1,0 +1,75 @@
+{
+  "stamp": "20261122T235008Z",
+  "route": "api",
+  "code_sha": "393c24b094f3f5ad72f9622bab8e72a5f11c4fb4",
+  "exit_code": 4,
+  "ok": false,
+  "verdict": "verify_failed",
+  "message": "compile failed (exit 1)",
+  "next_action": "step",
+  "interventions": [
+    {
+      "kind": "ask",
+      "ok": true,
+      "verdict": "plan_ready",
+      "message": "plan v1 persisted",
+      "api_calls": 1,
+      "provider_calls": 1
+    },
+    {
+      "kind": "revise",
+      "ok": true,
+      "verdict": "plan_revised",
+      "message": "plan v2 persisted",
+      "api_calls": 1,
+      "provider_calls": 1
+    },
+    {
+      "kind": "step:1",
+      "ok": false,
+      "verdict": "verify_failed",
+      "message": "compile failed (exit 1)",
+      "api_calls": 1,
+      "provider_calls": 1
+    }
+  ],
+  "api_calls_this_command": 3,
+  "provider_calls_this_command": 3,
+  "usage_by_role": {
+    "planner": {
+      "prompt_tokens": 562,
+      "completion_tokens": 363,
+      "calls": 1,
+      "estimated_usd": 0.00030209999999999997,
+      "model": "gpt-4o-mini"
+    },
+    "implementer": {
+      "prompt_tokens": 1040,
+      "completion_tokens": 161,
+      "calls": 1,
+      "estimated_usd": 0.00025259999999999996,
+      "model": "gpt-4o-mini"
+    },
+    "reviser": {
+      "prompt_tokens": 949,
+      "completion_tokens": 445,
+      "calls": 1,
+      "estimated_usd": 0.00040934999999999995,
+      "model": "gpt-4o-mini"
+    }
+  },
+  "delivered_tree": "",
+  "delivered_hash": "",
+  "binary_behaviour": {},
+  "blocked": {
+    "kind": "verify_failed",
+    "step_id": "1",
+    "next_action": "step",
+    "message": "compile failed (exit 1)"
+  },
+  "status_verdict": "verify_failed",
+  "first_faulty_decision": "verify_failed",
+  "first_faulty_raw": "{\n  \"target_file\": \"src/demo_tasks.nim\",\n  \"decision\": \"Ajouter un drapeau CLI pour l'exportation CSV sans alt\u00e9rer le comportement de la liste par d\u00e9faut.\",\n  \"edits\": [\n    {\n      \"insertAfter\": \"let cmd = if args.len > 0: args[0] else: \\\"list\\\"\",\n      \"newText\": \"var exportCsv = false\\nif \\\"--export-csv\\\" in args:\\n  exportCsv = true\\ntheArgs.remove(\\\"--export-csv\\\")\"\n    },\n    {\n      \"insertAfter\": \"of \\\"list\\\", \\\"\\\":\",\n      \"newText\": \"if exportCsv:\\n  echo formatCsv(loadTasks())\\n  quit(0)\"\n    }\n  ]\n}",
+  "user_command": "nimfactory project run --store \u2026 --cwd fixtures/demo_tasks_cli --objective 'Je veux pouvoir exporter mes t\u00e2ches.' --refinement '\u2026CSV\u2026' --route api",
+  "estimated_usd_total": 0.0009640499999999999
+}

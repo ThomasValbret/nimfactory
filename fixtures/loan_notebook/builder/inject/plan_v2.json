@@ -1,0 +1,25 @@
+{
+  "summary": "Ajouter mark_returned et total des prêts ouverts.",
+  "hypothesis": "",
+  "optional_question": "",
+  "change_notes": "Le builder réalise les fonctions métier demandées depuis Studio.",
+  "steps": [
+    {
+      "id": "bootstrap_server",
+      "title": "Démarrer le squelette HTTP/SQLite",
+      "depends_on": [],
+      "criteria": ["server_starts", "schema_ok"]
+    },
+    {
+      "id": "mark_returned",
+      "title": "Ajouter POST /loans/{id}/return pour marquer un prêt rendu",
+      "depends_on": ["bootstrap_server"],
+      "criteria": ["server_starts", "schema_ok", "mark_returned"]
+    }
+  ],
+  "mandate_sketch": {
+    "goal": "Carnet de prêts avec restitution",
+    "constraints": ["Python", "SQLite", "endpoint return"],
+    "files_likely": ["skeleton/app.py"]
+  }
+}

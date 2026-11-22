@@ -1,0 +1,12 @@
+{
+  "name": "loan_notebook",
+  "language": "python",
+  "verify": "loan_browser_oracle",
+  "roles": {
+    "skeleton": "Démarrage technique : serveur HTTP local + schéma SQLite (skeleton/app.py).",
+    "builder": "Fonctions métier demandées (création, restitution) via Studio.",
+    "oracle": "Pilote navigateur/Studio, redémarre le serveur, vérifie la modification."
+  },
+  "criteria": ["server_starts", "schema_ok"],
+  "export_criteria": ["server_starts", "schema_ok", "mark_returned"]
+}
