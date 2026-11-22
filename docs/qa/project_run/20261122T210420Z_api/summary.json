@@ -1,0 +1,103 @@
+{
+  "stamp": "20261122T210420Z",
+  "route": "api",
+  "code_sha": "123d5157e6e3363e13442da5829b21a1e4946576",
+  "key_source": "/opt/nimFactory/.keys",
+  "ok": false,
+  "verdict": "recovery_exhausted",
+  "message": "recovery still refused (empty_or_missing_oldText); no write",
+  "next_action": "revise",
+  "initial_run": {
+    "verdict": "apply_failed",
+    "message": "parse failed: input(7, 10) Error: } expected",
+    "interventions": [
+      {
+        "kind": "ask",
+        "ok": true,
+        "verdict": "plan_ready",
+        "message": "plan v1 persisted",
+        "api_calls": 0,
+        "provider_calls": 0
+      },
+      {
+        "kind": "revise",
+        "ok": true,
+        "verdict": "plan_revised",
+        "message": "plan v2 persisted",
+        "api_calls": 1,
+        "provider_calls": 1
+      },
+      {
+        "kind": "step:1",
+        "ok": false,
+        "verdict": "apply_failed",
+        "message": "parse failed: input(7, 10) Error: } expected",
+        "api_calls": 1,
+        "provider_calls": 1
+      }
+    ],
+    "api_calls_this_command": 2
+  },
+  "retry_step": {
+    "verdict": "recovery_exhausted",
+    "message": "recovery still refused (empty_or_missing_oldText); no write",
+    "recovery_triggered": true,
+    "recovery_attempted": true,
+    "recovery_reason": "empty_or_missing_oldText",
+    "api_calls_this_command": 2,
+    "provider_calls_this_command": 2
+  },
+  "sticky_after_exhausted": {
+    "verdict": "revise_plan_needed",
+    "message": "recovery exhausted on step 1: recovery still refused (empty_or_missing_oldText); no write; propose a different plan or edit (same recovery path refused)",
+    "api_calls_this_command": 0,
+    "provider_calls_this_command": 0,
+    "next_action": "revise"
+  },
+  "status_next_action": "revise",
+  "resume_next_action": "revise",
+  "usage_by_role": {
+    "planner": {
+      "prompt_tokens": 562,
+      "completion_tokens": 376,
+      "calls": 1,
+      "estimated_usd": 0.0003099,
+      "model": "gpt-4o-mini"
+    },
+    "implementer": {
+      "prompt_tokens": 2098,
+      "completion_tokens": 423,
+      "calls": 2,
+      "estimated_usd": 0.0005685,
+      "model": "gpt-4o-mini"
+    },
+    "reviser": {
+      "prompt_tokens": 949,
+      "completion_tokens": 523,
+      "calls": 1,
+      "estimated_usd": 0.00045615,
+      "model": "gpt-4o-mini"
+    },
+    "implementer_recovery": {
+      "prompt_tokens": 1489,
+      "completion_tokens": 206,
+      "calls": 1,
+      "estimated_usd": 0.00034694999999999995,
+      "model": "gpt-4o-mini"
+    }
+  },
+  "api_calls_total_roles": 5,
+  "estimated_usd_total": 0.0016814999999999998,
+  "binary_behaviour": {},
+  "blocked": {
+    "kind": "recovery_exhausted",
+    "step_id": "1",
+    "refuse_codes": [
+      "parse_error",
+      "empty_or_missing_oldText"
+    ],
+    "message": "Model edits unusable on real route; recovery refused same class; sticky revise"
+  },
+  "user_command": "nimfactory project run --store \u2026 --cwd fixtures/demo_tasks_cli --objective 'Je veux pouvoir exporter mes t\u00e2ches.' --refinement '\u2026CSV\u2026' --route api",
+  "note": "Key loaded from nimFactory/.keys (not expired /opt/.keys). Inject archive remains the delivered-binary walk."
+}

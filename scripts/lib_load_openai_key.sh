@@ -1,5 +1,5 @@
 # Shared OpenAI key loader for NimFactory E2E / mission scripts.
-# Preference: env → project .keys → host /opt/.keys (legacy).
+# Preference: env → project .keys → main checkout .keys → host /opt/.keys (legacy).
 # Never commit secrets; `.keys` is gitignored.
 #
 # Usage: source this file from a script whose ROOT is the repo root, or set ROOT first.
@@ -17,6 +17,10 @@ load_openai_key() {
     f="$root/.keys/api_provider_key"
   elif [[ -f "$root/.keys" ]]; then
     f="$root/.keys"
+  elif [[ -f /opt/nimFactory/.keys/api_provider_key ]]; then
+    f=/opt/nimFactory/.keys/api_provider_key
+  elif [[ -f /opt/nimFactory/.keys ]]; then
+    f=/opt/nimFactory/.keys
   elif [[ -f /opt/.keys/api_provider_key ]]; then
     f=/opt/.keys/api_provider_key
   elif [[ -f /opt/.keys ]]; then
