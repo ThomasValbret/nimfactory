@@ -29,8 +29,8 @@ proc saveProject*(store: SqliteRunStore; doc: ProjectDoc) =
   store.putRunState(rid, docToJson(doc))
 
 proc emitProjectEvent*(store: SqliteRunStore; projectId, kind: string; body: JsonNode) =
-  var ev = body
-  if ev.isNil: ev = newJObject()
+  ## Copy body so callers can keep an unmutated report node.
+  var ev = if body.isNil: newJObject() else: body.copy()
   ev["kind"] = %kind
   ev["project_id"] = %projectId
   ev["ts"] = %($epochTime())

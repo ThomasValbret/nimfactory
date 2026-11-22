@@ -1,75 +1,69 @@
-# Reçu — PROJECT_CLI_JOURNEY (premier parcours projet CLI)
+# Reçu — PROJECT_CLI_JOURNEY (arbres chaînés + reprise + intégrité pilote)
 
 ## Lot / périmètre
 
-Parcours CLI projet : `project ask|revise|step|status|resume`, fixture `demo_tasks_cli`, persistance SqliteRunStore, plan/révision gpt-4o-mini (ou inject), étape agent en worktree isolé, vérifs CSV + list défaut, reprise sans rejouer le plan.
+Suite PR #5 depuis `bf7f542` :
 
-Base inspectée : tip PR #4 `8363843` + commit clés `.keys` `d9a9b35` ; branche `feature/project-cli-journey`.
+1. Persistance `accepted_tree_ref` / hash / diff lisible ; étape N+1 appliquée sur l’arbre accepté
+2. Kill réel pendant `step` ; `resume` distingue terminé / interrompu ; issue fournisseur `unknown` sans rebill silencieux
+3. Plus de plans/mandats fabriqués ; `{}` → `plan_failed` ; vérif CSV liée à `recipe.json` ; tests binaire + patch CSV défaut
+4. Tentative API réelle archivée (premier résultat)
 
-## Contrats consommés
+## Base inspectée
 
-- `SqliteRunStore` : `ensureRunId`, `putRunState`, `getRunState`, `appendEvent`, `recover` (inspect/events)
-- Mission : `callPlannedApi` / `callFromInject`, `parseFixDecision`, `applyDecision` (worktree refuse-if-occupied)
-- NimAgent : via adaptateur mission (`gpt-4o-mini`) — pas de second SDK
+- Tip précédent : `bf7f542`
+- Branche : `feature/project-cli-journey`
+
+## Contrats
+
+- Consommés : `SqliteRunStore`, mission `applyDecision` / `parseFixDecision` / provider inject|api
+- Modifiés : `project/{types,pipeline,verify,store}` — pas de second SDK
 
 ## Fichiers principaux
 
 | Chemin | Rôle |
 | --- | --- |
-| `src/nimfactory/project/{types,store,plan_context,verify,pipeline}.nim` | Module projet |
-| `src/nimfactory/project.nim` | Barrel |
-| `src/nimfactory/cli/cli.nim` | Branchement CLI |
-| `src/nimfactory/runtime/journal/run_store.nim` | `putRunState` / `getRunState` / `ensureRunId` |
-| `fixtures/demo_tasks_cli/` | Fixture + injects |
-| `scripts/e2e_project_cli_journey.sh` | E2E |
-| `docs/qa/project_cli_journey/RECIPE.md` | Recette VPS |
-
-### Exemple
-
-```bash
-./build/nimfactory project ask --store /tmp/p.sqlite --cwd fixtures/demo_tasks_cli \
-  --objective "Je veux pouvoir exporter mes tâches." --route api
-./build/nimfactory project revise --store /tmp/p.sqlite --project-id demo_tasks_cli \
-  --refinement "Je veux du CSV sur stdout et garder list par défaut." --route api
-./build/nimfactory project resume --store /tmp/p.sqlite --project-id demo_tasks_cli
-./build/nimfactory project step --store /tmp/p.sqlite --project-id demo_tasks_cli --worktree /tmp/wt
-./build/nimfactory inspect --store /tmp/p.sqlite --run-id project:demo_tasks_cli
-```
+| `src/nimfactory/project/pipeline.nim` | ask/revise/step/resume ; chaînage arbres ; pause kill |
+| `src/nimfactory/project/verify.nim` | `recipe.json` → `csv_journey` (partiel / final) |
+| `src/nimfactory/project/types.nim` | `interrupted`, `accepted_tree_*` |
+| `fixtures/demo_tasks_cli/recipe.json` | liaison vérif CSV |
+| `fixtures/demo_tasks_cli/inject/plan_v2.json` | 2 étapes chaînées |
+| `scripts/e2e_project_cli_journey.sh` | E2E inject/api |
 
 ## Commandes exécutées
 
 ```bash
-nim c -d:release -d:ssl --path:src --path:vendor/NimAgentLibrary/src -o:build/nimfactory src/nimfactory_cli.nim
 NF_PROJECT_ROUTE=inject bash scripts/e2e_project_cli_journey.sh
-# → ok ; campagne docs/qa/project_cli_journey/20261121T223622Z (+ latest/)
-NF_PROJECT_ROUTE=api bash scripts/e2e_project_cli_journey.sh
-# → ask model_failed (api.openai.com unreachable in agent sandbox / DNS)
+# → ok ; docs/qa/project_cli_journey/20261122T004817Z
+
+# Premier résultat API (échec réseau, conservé) :
+./build/nimfactory project ask --route api ...
+# → docs/qa/project_cli_journey/api_20261122T004713Z  verdict=model_failed
 ```
 
 ## Doublures vs réel
 
-| Couche | Inject run | API run |
+| Couche | Inject | API |
 | --- | --- | --- |
-| Planner / reviser / implementer | inject JSON (décisions modèle **non testées**) | non exécuté ici (réseau) |
-| Apply edits + worktree | réel | — |
-| Verify CSV/list/quote | réel déterministe | — |
-| Resume / SQLite | réel ; 0 appel plan | — |
+| Planner/reviser/implementer | inject (non qualifié modèle) | **indisponible** DNS |
+| Apply + arbres acceptés | réel | — |
+| Kill/resume SQLite | réel | — |
+| Verify CSV recipe | réel | — |
 
 ## Coûts
 
-Inject vérifié : **0** USD, **0** tokens, `calls=0` par rôle (pas d’appel facturable).  
-API : non mesurée dans cette session (indisponibilité réseau).
+- Inject : 0 USD / 0 tokens facturables
+- API : 0 appel abouti (échec résolution `api.openai.com`)
 
-## Limites restantes
+## Limites
 
-- Un seul `target_file` par step (héritage `parseFixDecision`) ; le mandat inject édite `src/demo_tasks.nim` uniquement.
-- `project step` vérifie spécifiquement le parcours CSV de `demo_tasks_cli` (oracle métier du fixture, pas un oracle générique).
-- Campagnes glob archivées non rejouées (hors périmètre).
+- Rôles **planner, reviser, implementer** restent à qualifier dès que l’API est joignable
+- Un `target_file` par step (héritage mission)
 
 ## État
 
 | Niveau | Statut |
 | --- | --- |
-| Composant project + CLI | utilisable |
-| Intégration store/events/inspect | ok (inject E2E) |
-| Parcours complet live LLM | **bloqué réseau** ici ; prêt VPS avec `.keys` |
+| Composant (hors API) | utilisable — inject E2E vert |
+| Intégration store/resume/arbres | ok |
+| Parcours live LLM | bloqué réseau ; premier échec archivé |

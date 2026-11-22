@@ -6,6 +6,7 @@ type
   StepStatus* = enum
     ssPending = "pending"
     ssRunning = "running"
+    ssInterrupted = "interrupted"
     ssDone = "done"
     ssBlocked = "blocked"
 
@@ -43,6 +44,9 @@ type
     mandates*: JsonNode          ## key -> mandate object
     usageByRole*: Table[string, UsageRollup]
     worktree*: string
+    acceptedTreeRef*: string     ## absolute path of last accepted tree snapshot
+    acceptedTreeHash*: string
+    acceptedStepId*: string
     lastVerdict*: string
     lastDiff*: string
     blockedReason*: string
@@ -66,6 +70,7 @@ proc addUsage*(u: var UsageRollup; prompt, completion: int; model: string) =
 proc stepStatusFromStr*(s: string): StepStatus =
   case s
   of "running": ssRunning
+  of "interrupted": ssInterrupted
   of "done": ssDone
   of "blocked": ssBlocked
   else: ssPending
@@ -74,6 +79,7 @@ proc `$`*(s: StepStatus): string =
   case s
   of ssPending: "pending"
   of ssRunning: "running"
+  of ssInterrupted: "interrupted"
   of ssDone: "done"
   of ssBlocked: "blocked"
 
@@ -162,6 +168,9 @@ proc docToJson*(d: ProjectDoc): JsonNode =
     "mandates": if d.mandates.isNil: newJObject() else: d.mandates,
     "usage_by_role": usage,
     "worktree": d.worktree,
+    "accepted_tree_ref": d.acceptedTreeRef,
+    "accepted_tree_hash": d.acceptedTreeHash,
+    "accepted_step_id": d.acceptedStepId,
     "last_verdict": d.lastVerdict,
     "last_diff": d.lastDiff,
     "blocked_reason": d.blockedReason,
@@ -175,6 +184,9 @@ proc docFromJson*(j: JsonNode): ProjectDoc =
   result.objective = j{"objective"}.getStr
   result.currentPlanVersion = j{"current_plan_version"}.getInt
   result.worktree = j{"worktree"}.getStr
+  result.acceptedTreeRef = j{"accepted_tree_ref"}.getStr
+  result.acceptedTreeHash = j{"accepted_tree_hash"}.getStr
+  result.acceptedStepId = j{"accepted_step_id"}.getStr
   result.lastVerdict = j{"last_verdict"}.getStr
   result.lastDiff = j{"last_diff"}.getStr
   result.blockedReason = j{"blocked_reason"}.getStr
@@ -212,3 +224,13 @@ proc nextPendingStep*(d: ProjectDoc): tuple[found: bool; step: ProjectStep] =
     if s.status == ssPending:
       return (true, s)
   (false, ProjectStep())
+
+proc nextActionableStep*(d: ProjectDoc): tuple[found: bool; step: ProjectStep; kind: string] =
+  ## Prefer an interrupted/running attempt (explicit retry) over a fresh pending step.
+  for s in d.steps:
+    if s.status in {ssRunning, ssInterrupted}:
+      return (true, s, "retry")
+  for s in d.steps:
+    if s.status == ssPending:
+      return (true, s, "run")
+  (false, ProjectStep(), "")

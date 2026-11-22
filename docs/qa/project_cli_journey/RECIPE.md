@@ -1,14 +1,13 @@
-# Recette VPS — premier parcours projet CLI
+# Recette VPS — parcours projet CLI (arbres chaînés + reprise)
 
 ## Base
 
 | Champ | Valeur |
 | --- | --- |
 | Branche | `feature/project-cli-journey` |
-| SHA de départ (tip PR #4) | `8363843` |
-| Fixture | `fixtures/demo_tasks_cli/` |
+| Fixture | `fixtures/demo_tasks_cli/` (+ `recipe.json` → `verify=csv_journey`) |
 | Store | SQLite `nf_runs.state_json` + `nf_events` (`run_id=project:<id>`) |
-| Modèle planifié | `gpt-4o-mini` (roles `planner` / `reviser` / `implementer`) |
+| Modèle | `gpt-4o-mini` (roles `planner` / `reviser` / `implementer`) |
 
 ## Prérequis
 
@@ -16,69 +15,54 @@
 cd /opt/nimFactory
 export PATH="/root/.nimble/bin:${PATH:-}"
 # Clé: env → .keys (gitignoré) → /opt/.keys
-# Pour forcer inject (pas d'appel facturable):
-#   NF_PROJECT_ROUTE=inject bash scripts/e2e_project_cli_journey.sh
-```
-
-## Commandes exactes (script)
-
-```bash
-NF_PROJECT_ROUTE=api bash scripts/e2e_project_cli_journey.sh
-# ou
+# Hors API (déterministe):
 NF_PROJECT_ROUTE=inject bash scripts/e2e_project_cli_journey.sh
+# Mission réelle:
+NF_PROJECT_ROUTE=api bash scripts/e2e_project_cli_journey.sh
 ```
 
-Le script enchaîne :
+## Ce que le script vérifie (inject)
 
-1. `project ask` — objectif « Je veux pouvoir exporter mes tâches. »
-2. `project revise` — précision « Je veux du CSV sur la sortie standard et je veux garder l'affichage actuel par défaut. »
-3. interruption simulée (fin de processus ; SQLite conservé)
-4. `project resume` — rehydrate `plan_v2`, `billable_plan_calls=0`
-5. `project step` — worktree isolé + edits + vérifs déterministes
-6. `project status` + `inspect` / `events` sur `run_id=project:demo_tasks_cli`
-
-## Vérifications déterministes (étape)
-
-Sur le worktree :
-
-1. `list` inchangé vs baseline fixture (titre avec virgule affiché tel quel)
-2. `export-csv` → CSV sur stdout
-3. champ `Appeler Alice, Bob` correctement quoté
-
-## Artefacts inspectables
-
-Sous `docs/qa/project_cli_journey/<STAMP>/` :
-
-- `ask.json` / `revise.json` / `resume.json` / `step.json` / `status.json`
-- `artifacts/plan_v1.json`, `plan_v2.json`, `mandate_v1.json`, `mandate_v2.json`, `mandate.json`
-- `summary.json` — coûts/tokens par rôle
-- copie stable : `docs/qa/project_cli_journey/latest/`
+1. `{}` inject → `verdict=plan_failed` (pas de plan/mandat fabriqué)
+2. `ask` → plan v1 ; `revise` → plan v2 à **2 étapes** (`add_csv_helpers` → `wire_export_csv`)
+3. **Kill réel** pendant `step` (`NF_PROJECT_STEP_PAUSE_MS` + `kill -9`) ; `resume` → `interrupted` + `action=retry_step` + `provider_attempt_unknown`
+4. `resume` sur store sain → `action=run_step`
+5. Step 1 : helpers dans `tasks.nim` ; snapshot `accepted_tree_ref` + diff lisible
+6. Step 2 : édite sur l’arbre accepté (réutilise `formatCsv`) ; vérif CSV complète
+7. Binaire : sans argument / `list` / `export-csv` séparément
+8. Patch qui remplace le défaut par du CSV → oracle `list_mismatch`
 
 ## Transcription courte (inject, vérifié)
 
-Campagne : `docs/qa/project_cli_journey/20261121T223622Z` (SHA tip local au moment du run).
+Campagne : `docs/qa/project_cli_journey/20261122T004817Z`
 
 | Étape | Verdict | Notes |
 | --- | --- | --- |
-| ask | `plan_ready` | plan v1, 1 step pending |
-| revise | `plan_revised` | plan v2 + mandat CSV opt-in |
-| resume | `resumed` | `billable_plan_calls=0`, pending `implement_export` |
-| step | `pass` | list ok, CSV ok, comma quoted |
-| status | all `done` | usage inject = 0 tokens / 0 USD |
+| empty `{}` | `plan_failed` | `empty_plan` |
+| ask | `plan_ready` | plan v1 |
+| revise | `plan_revised` | 2 steps + mandat CSV |
+| kill+resume | `interrupted` | `retry_step`, provider unknown |
+| resume | `resumed` | `run_step`, `billable_plan_calls=0` |
+| step1 | `pass` | tree hash persisté ; verify partielle |
+| step2 | `pass` | source=tree step1 ; CSV ok |
+| status | all `done` | |
 
-`untested` en inject : décisions modèle planner / reviser / implementer.
+## API (premier résultat conservé)
 
-## Coûts par rôle
+Campagne : `docs/qa/project_cli_journey/api_20261122T004713Z`
 
-| Rôle | Inject (vérifié ici) | API (si clé + réseau) |
-| --- | --- | --- |
-| planner | 0 call facturable | 1× gpt-4o-mini |
-| reviser | 0 | 1× gpt-4o-mini |
-| implementer | 0 | 1× gpt-4o-mini (édits) |
+- `verdict=model_failed` — DNS / `Name or service not known` vers `api.openai.com`
+- Rôles encore à qualifier sur un VPS avec réseau OpenAI : **planner, reviser, implementer**
 
-Sur cette machine d’agent, `api.openai.com` n’était pas joignable (échec DNS / proxy sandbox) au moment de la recette ; le parcours inject a été exécuté de bout en bout. Sur le VPS avec `.keys` et réseau OpenAI : `NF_PROJECT_ROUTE=api`.
+Sur VPS joignable :
+
+```bash
+NF_PROJECT_ROUTE=api bash scripts/e2e_project_cli_journey.sh
+# Le script suit toutes les étapes du plan renvoyé (boucle step).
+# Capturer: ask.json, revise.json (change_notes / mandat), step*.json (diff), status.json (usage_by_role)
+```
 
 ## Hors périmètre
 
-- Campagnes glob archivées sous `docs/qa/e2e_intervention/campaigns/` : **intactes**.
-- Pas de second SDK ; NimAgent `newAgent`/`runSync` pour les appels API.
+- Campagnes glob sous `docs/qa/e2e_intervention/campaigns/` : intactes
+- Pas de second SDK

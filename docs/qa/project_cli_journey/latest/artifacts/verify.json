@@ -1,5 +1,6 @@
 {
   "ok": true,
+  "kind": "csv_journey",
   "list_ok": true,
   "csv_ok": true,
   "quote_ok": true,
@@ -8,9 +9,12 @@
   "csv_out": "id,title\n1,Acheter du pain\n2,\"Appeler Alice, Bob\"\n3,Relire le rapport",
   "compile_exit": 0,
   "details": {
+    "require_csv": true,
     "compile_out": "",
     "expected_list": "1. Acheter du pain\n2. Appeler Alice, Bob\n3. Relire le rapport",
     "list_exit": 0,
+    "no_args_exit": 0,
+    "no_args_out": "1. Acheter du pain\n2. Appeler Alice, Bob\n3. Relire le rapport",
     "expected_csv": "id,title\n1,Acheter du pain\n2,\"Appeler Alice, Bob\"\n3,Relire le rapport",
     "csv_exit": 0
   }

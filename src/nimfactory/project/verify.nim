@@ -1,4 +1,4 @@
-## Deterministic project verification for demo_tasks_cli CSV journey.
+## Deterministic project verification — CSV journey bound to demo recipe.
 
 import std/[os, osproc, strutils, json, sequtils]
 
@@ -8,13 +8,19 @@ type
     listOk*: bool
     csvOk*: bool
     quoteOk*: bool
+    kind*: string
     message*: string
     listOut*: string
     csvOut*: string
     compileExit*: int
     details*: JsonNode
 
-proc runCmd(dir, bin: string; args: seq[string]): tuple[exit: int; outp: string] =
+  ProjectRecipe* = object
+    id*: string
+    verify*: string
+    raw*: JsonNode
+
+proc runCmd*(dir, bin: string; args: seq[string]): tuple[exit: int; outp: string] =
   let cmdline = quoteShell(bin) & " " & args.mapIt(quoteShell(it)).join(" ")
   let r = execCmdEx(cmdline, workingDir = dir)
   (r.exitCode, r.output)
@@ -68,11 +74,28 @@ proc expectedCsvOutput*(repoRoot: string): string =
     lines.add($item["id"].getInt & "," & csvQuote(item["title"].getStr))
   lines.join("\n")
 
-proc verifyCsvJourney*(worktree, repoRoot: string): ProjectVerifyResult =
-  ## (1) default list unchanged vs fixture baseline
-  ## (2) CSV export on stdout
-  ## (3) title with comma correctly quoted
+proc loadProjectRecipe*(cwd: string): ProjectRecipe =
+  result.id = ""
+  result.verify = ""
+  result.raw = newJObject()
+  let p = absolutePath(cwd) / "recipe.json"
+  if not fileExists(p):
+    return
+  try:
+    let node = parseJson(readFile(p))
+    result.raw = node
+    result.id = node{"id"}.getStr
+    result.verify = node{"verify"}.getStr
+  except CatchableError:
+    discard
+
+proc verifyCsvJourney*(worktree, repoRoot: string; requireCsv = true): ProjectVerifyResult =
+  ## Demo recipe oracle:
+  ## - always: compile + no-args/list match fixture baseline
+  ## - when requireCsv (final step): export-csv + comma quoting
+  result.kind = if requireCsv: "csv_journey" else: "csv_journey_partial"
   result.details = newJObject()
+  result.details["require_csv"] = %requireCsv
   result.compileExit = -1
   let comp = compileDemo(worktree)
   result.compileExit = comp.exit
@@ -82,14 +105,29 @@ proc verifyCsvJourney*(worktree, repoRoot: string): ProjectVerifyResult =
     result.message = "compile failed (exit " & $comp.exit & ")"
     return
 
+  # Separate checks: no-args (default), list, export-csv.
+  let noArgsR = runCmd(worktree, comp.bin, @[])
   let listR = runCmd(worktree, comp.bin, @["list"])
   result.listOut = listR.outp.strip()
   let expectList = expectedListOutput(repoRoot).strip()
-  result.listOk = listR.exit == 0 and result.listOut == expectList
+  let noArgsOut = noArgsR.outp.strip()
+  result.listOk =
+    listR.exit == 0 and noArgsR.exit == 0 and
+    result.listOut == expectList and noArgsOut == expectList
   result.details["expected_list"] = %expectList
   result.details["list_exit"] = %listR.exit
+  result.details["no_args_exit"] = %noArgsR.exit
+  result.details["no_args_out"] = %noArgsOut
 
-  # Accept export-csv or --format=csv as the opt-in command.
+  if not requireCsv:
+    result.csvOk = true
+    result.quoteOk = true
+    result.ok = result.listOk
+    result.message =
+      if result.ok: "intermediate: compile+list intact (CSV deferred to final step)"
+      else: "list_mismatch"
+    return
+
   var csvR = runCmd(worktree, comp.bin, @["export-csv"])
   if csvR.exit != 0:
     csvR = runCmd(worktree, comp.bin, @["list", "--format=csv"])
@@ -99,11 +137,8 @@ proc verifyCsvJourney*(worktree, repoRoot: string): ProjectVerifyResult =
   result.details["expected_csv"] = %expectCsv
   result.details["csv_exit"] = %csvR.exit
 
-  result.quoteOk = result.csvOut.contains("\"Appeler Alice, Bob\"") or
-                   result.csvOut.contains("\"Appeler Alice, Bob\"")
-  # Also accept RFC-style doubled quotes if present; primary check is comma field quoted.
+  result.quoteOk = result.csvOut.contains("\"Appeler Alice, Bob\"")
   if not result.quoteOk and result.csvOut.contains("Alice, Bob"):
-    # field with comma must be inside quotes somewhere on that line
     for line in result.csvOut.splitLines():
       if "Alice" in line and line.contains('"') and line.contains(','):
         result.quoteOk = true
@@ -119,9 +154,29 @@ proc verifyCsvJourney*(worktree, repoRoot: string): ProjectVerifyResult =
     if not result.quoteOk: parts.add("comma_not_quoted")
     result.message = parts.join(",")
 
+proc verifyForRecipe*(
+    recipe: ProjectRecipe; worktree, repoRoot: string;
+    finalStep = true): ProjectVerifyResult =
+  ## Bind verification to the project recipe; generic pilot has no CSV oracle.
+  ## Intermediate steps only require list integrity; final step runs full CSV.
+  case recipe.verify
+  of "csv_journey":
+    result = verifyCsvJourney(worktree, repoRoot, requireCsv = finalStep)
+  of "":
+    result.kind = "none"
+    result.ok = false
+    result.message = "no verify bound to recipe (missing recipe.json verify)"
+    result.details = newJObject()
+  else:
+    result.kind = recipe.verify
+    result.ok = false
+    result.message = "unknown recipe verify: " & recipe.verify
+    result.details = newJObject()
+
 proc verifyToJson*(v: ProjectVerifyResult): JsonNode =
   %*{
     "ok": v.ok,
+    "kind": v.kind,
     "list_ok": v.listOk,
     "csv_ok": v.csvOk,
     "quote_ok": v.quoteOk,

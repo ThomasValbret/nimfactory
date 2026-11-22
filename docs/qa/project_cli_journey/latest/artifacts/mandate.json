@@ -4,19 +4,23 @@
     "CSV sur stdout",
     "garder list inchangé par défaut",
     "quoter correctement les titres contenant une virgule",
+    "étape 2 doit réutiliser formatCsv créé à l'étape 1",
     "Respecter AGENTS.md"
   ],
   "files_likely": [
+    "src/tasks.nim",
     "src/demo_tasks.nim"
   ],
   "plan_version": 2,
-  "change_notes": "La précision impose CSV sur stdout et interdit de remplacer l'affichage list par défaut.",
+  "change_notes": "La précision impose CSV sur stdout et interdit de remplacer l'affichage list par défaut. Découpe en add_csv_helpers puis wire_export_csv.",
   "agents_md_excerpt": "# Agents — demo_tasks_cli\n\nPetit CLI Nim de liste de tâches.\n\n## Consignes\n- Préserver le comportement d'affichage par défaut (`list`) sauf demande explicite.\n- Les changements d'export doivent être opt-in (drapeau CLI), pas remplacer `list`.\n- Les titres peuvent contenir des virgules ; un export CSV doit les quotter correctement.\n- Préférer de petites modifications localisées sous `src/`.\n",
   "source_ids": [
     "src/demo_tasks.nim",
     "src/tasks.nim"
   ],
   "refinement": "Je veux du CSV sur la sortie standard et je veux garder l'affichage actuel par défaut.",
-  "step_id": "implement_export",
-  "step_title": "Ajouter export-csv (CSV stdout) sans changer list"
+  "step_id": "wire_export_csv",
+  "step_title": "Câbler export-csv dans demo_tasks.nim en réutilisant formatCsv",
+  "source_tree": "/opt/nimFactory/docs/qa/project_cli_journey/20261122T004817Z/artifacts/trees/add_csv_helpers",
+  "prior_accepted_step": "add_csv_helpers"
 }

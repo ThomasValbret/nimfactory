@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# First project CLI journey: ask → revise → resume → step → status/inspect/events.
-# Uses gpt-4o-mini when OPENAI_API_KEY / .keys present; else inject (model untested).
+# Project CLI journey: ask → revise → kill/resume → chained steps → status.
+# Uses gpt-4o-mini when OPENAI_API_KEY / .keys present; else inject.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
@@ -8,7 +8,6 @@ export PATH="/root/.nimble/bin:${PATH:-}"
 
 # shellcheck disable=SC1091
 source "$ROOT/scripts/lib_load_openai_key.sh"
-# Override: NF_PROJECT_ROUTE=inject|api (default: api if key else inject)
 ROUTE="${NF_PROJECT_ROUTE:-}"
 MODEL_MODE=""
 if [[ -z "$ROUTE" ]]; then
@@ -40,12 +39,13 @@ STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 OUT="docs/qa/project_cli_journey/${STAMP}"
 STORE="$OUT/project.sqlite"
 ART="$OUT/artifacts"
-WT="$OUT/worktree_step"
+WT1="$OUT/worktree_step1"
+WT2="$OUT/worktree_step2"
+WT_BAD="$OUT/worktree_bad"
 mkdir -p "$ART"
-# fresh empty worktree path (must not exist / be empty for allocateWorktree)
-rm -rf "$WT"
-mkdir -p "$WT"
-rmdir "$WT"
+rm -rf "$WT1" "$WT2" "$WT_BAD"
+mkdir -p "$WT1" "$WT2" "$WT_BAD"
+rmdir "$WT1" "$WT2" "$WT_BAD"
 
 PID=demo_tasks_cli
 OBJ="Je veux pouvoir exporter mes tâches."
@@ -65,6 +65,25 @@ run_proj() {
   return "$ec"
 }
 
+# --- integrity: {} must fail planning (no fabricated steps/mandates) ---
+EMPTY_STORE="$OUT/empty_plan.sqlite"
+set +e
+"$BIN" project ask --store "$EMPTY_STORE" --project-id empty_probe \
+  --cwd "$FIX" --objective "$OBJ" --route inject \
+  --inject "$FIX/inject/empty_plan.json" > "$OUT/empty_plan.json"
+EMPTY_EC=$?
+set -e
+python3 - "$OUT/empty_plan.json" "$EMPTY_EC" <<'PY'
+import json,sys
+d=json.load(open(sys.argv[1]))
+ec=int(sys.argv[2])
+assert d.get("ok") is False, d
+assert d.get("verdict")=="plan_failed", d
+assert "empty_plan" in (d.get("message") or ""), d
+assert ec != 0
+print("empty_plan_ok verdict=plan_failed")
+PY
+
 # --- ask ---
 ASK_INJECT=()
 if [[ "$ROUTE" == "inject" ]]; then
@@ -77,10 +96,11 @@ d=json.load(open(sys.argv[1]))
 assert d.get("ok") is True, d
 assert d.get("current_plan_version")==1, d
 assert d.get("verdict")=="plan_ready", d
+assert len(d.get("steps") or []) >= 1, d
 print("ask_ok plan_v1 steps=", len(d.get("steps") or []))
 PY
 
-# --- revise ---
+# --- revise (inject: two chained steps) ---
 REV_INJECT=()
 if [[ "$ROUTE" == "inject" ]]; then
   REV_INJECT=(--inject "$FIX/inject/plan_v2.json")
@@ -92,13 +112,87 @@ d=json.load(open(sys.argv[1]))
 assert d.get("ok") is True, d
 assert d.get("current_plan_version")==2, d
 assert any("CSV" in r or "csv" in r.lower() for r in (d.get("refinements") or [])), d
-print("revise_ok plan_v2")
+steps=d.get("steps") or []
+assert len(steps) >= 1, steps
+print("revise_ok plan_v2 steps=", [(s.get("id"), s.get("depends_on")) for s in steps])
 PY
 
-# --- simulate interrupt: process ends; state stays in SQLite ---
-cp "$STORE" "$OUT/store_after_revise.sqlite"
+# Persist plan step count for later multi-step loop
+PLAN_STEPS=$(python3 -c "import json; print(len(json.load(open('$OUT/revise.json')).get('steps') or []))")
 
-# --- resume (0 planner/reviser billable calls) ---
+# --- kill mid-step then resume ---
+cp "$STORE" "$OUT/store_before_kill.sqlite"
+KILL_STORE="$OUT/kill.sqlite"
+cp "$STORE" "$KILL_STORE"
+KILL_ART="$OUT/kill_artifacts"
+KILL_WT="$OUT/kill_worktree"
+mkdir -p "$KILL_ART"
+rm -rf "$KILL_WT"
+mkdir -p "$KILL_WT" && rmdir "$KILL_WT"
+
+if [[ "$ROUTE" == "inject" ]]; then
+  KILL_INJECT=(--inject "$FIX/inject/step_helpers.json")
+else
+  KILL_INJECT=()
+fi
+
+export NF_PROJECT_STEP_PAUSE_MS=8000
+set +e
+"$BIN" project step --store "$KILL_STORE" --project-id "$PID" \
+  --cwd "$FIX" --artifact-dir "$KILL_ART" --route "$ROUTE" \
+  --worktree "$KILL_WT" "${KILL_INJECT[@]}" > "$OUT/step_killed.json" &
+KILL_PID=$!
+set -e
+
+# Wait until SQLite shows running (or timeout)
+python3 - "$KILL_STORE" "$PID" <<'PY'
+import json, sqlite3, sys, time
+store, pid = sys.argv[1], sys.argv[2]
+rid = "project:" + pid
+deadline = time.time() + 12
+while time.time() < deadline:
+    try:
+        con = sqlite3.connect(store)
+        row = con.execute("select state_json from nf_runs where run_id=?", (rid,)).fetchone()
+        con.close()
+        if row:
+            doc = json.loads(row[0])
+            for s in doc.get("steps") or []:
+                if s.get("status") == "running":
+                    print("observed_running", s.get("id"))
+                    raise SystemExit(0)
+    except Exception as e:
+        pass
+    time.sleep(0.15)
+print("timeout_waiting_running")
+raise SystemExit(1)
+PY
+
+kill -9 "$KILL_PID" 2>/dev/null || true
+wait "$KILL_PID" 2>/dev/null || true
+unset NF_PROJECT_STEP_PAUSE_MS
+
+# Resume on the killed store — must report interrupted + action
+set +e
+"$BIN" project resume --store "$KILL_STORE" --project-id "$PID" \
+  --cwd "$FIX" --route "$ROUTE" > "$OUT/resume_after_kill.json"
+set -e
+python3 - "$OUT/resume_after_kill.json" <<'PY'
+import json,sys
+d=json.load(open(sys.argv[1]))
+assert d.get("ok") is True, d
+assert d.get("verdict")=="interrupted", d
+r=d.get("resume") or {}
+assert r.get("rehydrated") is True
+assert r.get("billable_plan_calls")==0
+assert r.get("action")=="retry_step", r
+assert (r.get("interrupted_step") or "") != "", r
+assert r.get("provider_attempt_unknown") is True, r
+assert "unknown" in (r.get("action_note") or "").lower() or "rebill" in (r.get("action_note") or "").lower(), r
+print("kill_resume_ok interrupted=", r.get("interrupted_step"), "action=", r.get("action"))
+PY
+
+# --- resume on main store (after revise, before any step) ---
 run_proj resume "$OUT/resume.json"
 python3 - "$OUT/resume.json" <<'PY'
 import json,sys
@@ -108,14 +202,12 @@ assert d.get("verdict")=="resumed", d
 r=d.get("resume") or {}
 assert r.get("rehydrated") is True
 assert r.get("billable_plan_calls")==0
-assert r.get("planner_calls_this_command")==0
-assert r.get("reviser_calls_this_command")==0
+assert r.get("action")=="run_step", r
 assert (r.get("pending_step") or "") != ""
 assert d.get("current_plan_version")==2
-print("resume_ok pending=", r.get("pending_step"))
+print("resume_ok pending=", r.get("pending_step"), "action=", r.get("action"))
 PY
 
-# usage snapshot before step (plan/revise tokens only)
 python3 - "$OUT/resume.json" "$OUT/usage_before_step.json" <<'PY'
 import json,sys
 d=json.load(open(sys.argv[1]))
@@ -123,21 +215,150 @@ json.dump(d.get("usage_by_role") or {}, open(sys.argv[2],"w"), indent=2)
 print("usage_before_step written")
 PY
 
-# --- step (implementer) ---
-STEP_INJECT=()
-if [[ "$ROUTE" == "inject" ]]; then
-  STEP_INJECT=(--inject "$FIX/inject/step_export.json")
-fi
-run_proj step "$OUT/step.json" --worktree "$WT" "${STEP_INJECT[@]}"
-python3 - "$OUT/step.json" <<'PY'
+# --- steps: follow plan (inject: helpers then export on accepted tree) ---
+STEP_IDX=0
+ACCEPTED_HASH=""
+while true; do
+  PENDING=$(python3 - "$STORE" "$PID" <<'PY'
+import json,sqlite3,sys
+con=sqlite3.connect(sys.argv[1])
+row=con.execute("select state_json from nf_runs where run_id=?", ("project:"+sys.argv[2],)).fetchone()
+con.close()
+doc=json.loads(row[0])
+for s in doc.get("steps") or []:
+    if s.get("status") in ("pending","interrupted","running"):
+        print(s.get("id"))
+        break
+PY
+)
+  if [[ -z "$PENDING" ]]; then
+    break
+  fi
+  STEP_IDX=$((STEP_IDX + 1))
+  WT="$OUT/worktree_step${STEP_IDX}"
+  rm -rf "$WT"
+  mkdir -p "$WT" && rmdir "$WT"
+  STEP_INJECT=()
+  if [[ "$ROUTE" == "inject" ]]; then
+    if [[ "$PENDING" == "add_csv_helpers" ]]; then
+      STEP_INJECT=(--inject "$FIX/inject/step_helpers.json")
+    elif [[ "$PENDING" == "wire_export_csv" ]] || [[ "$PENDING" == "implement_export" ]]; then
+      STEP_INJECT=(--inject "$FIX/inject/step_export.json")
+    else
+      echo "unknown pending step for inject: $PENDING" >&2
+      exit 1
+    fi
+  fi
+  run_proj step "$OUT/step${STEP_IDX}.json" --worktree "$WT" "${STEP_INJECT[@]}"
+  python3 - "$OUT/step${STEP_IDX}.json" "$PENDING" "$STEP_IDX" <<'PY'
 import json,sys
 d=json.load(open(sys.argv[1]))
+pending, idx = sys.argv[2], int(sys.argv[3])
 assert d.get("ok") is True, d
 assert d.get("verdict")=="pass", d
+assert d.get("accepted_tree_ref"), d
+assert d.get("accepted_tree_hash"), d
+assert d.get("readable_diff") or d.get("last_diff"), d
+src=d.get("source_tree") or ""
+print(f"step{idx}_ok id={pending} source_tree={src}")
+print("accepted_tree_ref=", d.get("accepted_tree_ref"))
+print("accepted_tree_hash=", d.get("accepted_tree_hash"))
+if idx >= 2:
+    # Step 2+ must chain from prior accepted tree, not pristine cwd alone.
+    assert "trees/" in src.replace("\\","/") or src.endswith("add_csv_helpers") or "add_csv_helpers" in src, (src, d)
 v=d.get("verify") or {}
-assert v.get("list_ok") and v.get("csv_ok") and v.get("quote_ok"), v
-print("step_ok", v.get("message"))
-print("csv_out=", repr(v.get("csv_out")))
+# Full CSV verify only required when recipe says so AND last step that wires export.
+if pending in ("wire_export_csv", "implement_export"):
+    assert v.get("list_ok") and v.get("csv_ok") and v.get("quote_ok"), v
+    # Must use formatCsv from tasks (helpers from step 1)
+    import pathlib
+    tree=pathlib.Path(d["accepted_tree_ref"])
+    demo=(tree/"src"/"demo_tasks.nim").read_text()
+    tasks=(tree/"src"/"tasks.nim").read_text()
+    assert "formatCsv" in tasks, "helpers missing in accepted tree"
+    assert "formatCsv(loadTasks())" in demo, demo
+    assert "proc formatCsv" not in demo, "step2 must reuse tasks.formatCsv, not redefine"
+print("verify=", v.get("message"))
+PY
+  ACCEPTED_HASH=$(python3 -c "import json; print(json.load(open('$OUT/step${STEP_IDX}.json')).get('accepted_tree_hash') or '')")
+  # Safety: don't loop forever
+  if [[ "$STEP_IDX" -ge 8 ]]; then
+    echo "too many steps" >&2
+    exit 1
+  fi
+done
+
+# For API route with a single-step plan, still ok; inject expects 2.
+if [[ "$ROUTE" == "inject" ]]; then
+  python3 - "$STEP_IDX" <<'PY'
+import sys
+assert int(sys.argv[1]) == 2, "inject plan_v2 expects exactly 2 steps, got "+sys.argv[1]
+print("two_step_chain_ok")
+PY
+fi
+
+# --- separate binary checks on last accepted tree ---
+LAST_TREE=$(python3 -c "import json; print(json.load(open('$OUT/step${STEP_IDX}.json'))['accepted_tree_ref'])")
+python3 - "$LAST_TREE" "$FIX" <<'PY'
+import subprocess, json, sys, pathlib
+tree = pathlib.Path(sys.argv[1]).resolve()
+fix = pathlib.Path(sys.argv[2]).resolve()
+bin_path = tree / "build" / "demo_tasks"
+subprocess.check_call([
+  "nim","c","-d:release","--hints:off","--warnings:off",
+  f"--nimcache:{tree/'nimcache'}",
+  f"--path:{tree/'src'}",
+  f"-o:{bin_path}",
+  str(tree/"src"/"demo_tasks.nim"),
+], cwd=str(tree))
+data=json.loads((fix/"data"/"tasks.json").read_text())
+expect_list="\n".join(f'{t["id"]}. {t["title"]}' for t in data)
+
+def run(args):
+    r=subprocess.run([str(bin_path), *args], cwd=str(tree), capture_output=True, text=True)
+    return r.returncode, r.stdout.strip()
+
+ec0, out0 = run([])
+ec1, out1 = run(["list"])
+ec2, out2 = run(["export-csv"])
+assert ec0==0 and out0==expect_list, (ec0, out0, expect_list)
+assert ec1==0 and out1==expect_list, (ec1, out1)
+assert ec2==0 and out2.startswith("id,title"), out2
+assert '"Appeler Alice, Bob"' in out2, out2
+print("binary_checks_ok no-args/list/export-csv")
+PY
+
+# --- bad patch: replace default display with CSV → verify must fail ---
+rm -rf "$WT_BAD"
+cp -a "$LAST_TREE" "$WT_BAD"
+python3 - "$(cd "$WT_BAD" && pwd)" "$(cd "$FIX" && pwd)" <<'PY'
+import pathlib, sys, subprocess, json
+tree = pathlib.Path(sys.argv[1]).resolve()
+fix = pathlib.Path(sys.argv[2]).resolve()
+demo = tree / "src" / "demo_tasks.nim"
+text = demo.read_text()
+bad = text.replace(
+    'of "list", "":\n    echo formatList(loadTasks())',
+    'of "list", "":\n    echo formatCsv(loadTasks())',
+)
+assert bad != text, "failed to apply bad patch"
+demo.write_text(bad)
+bin_path = tree / "build" / "demo_tasks_bad"
+subprocess.check_call([
+  "nim","c","-d:release","--hints:off","--warnings:off",
+  f"--nimcache:{tree/'nimcache_bad'}",
+  f"--path:{tree/'src'}",
+  f"-o:{bin_path}",
+  str(demo),
+], cwd=str(tree))
+r=subprocess.run([str(bin_path)], cwd=str(tree), capture_output=True, text=True)
+out=r.stdout.strip()
+assert out.startswith("id,title"), out
+data=json.loads((fix/"data"/"tasks.json").read_text())
+expect_list="\n".join(f'{t["id"]}. {t["title"]}' for t in data)
+assert out != expect_list, "bad patch should break list default"
+# Recipe oracle: list_ok would be false (default display replaced by CSV).
+print("bad_default_csv_patch_fails_list_oracle ok (list_mismatch)")
 PY
 
 # --- status ---
@@ -148,25 +369,27 @@ d=json.load(open(sys.argv[1]))
 assert d.get("ok") is True
 steps=d.get("steps") or []
 assert all(s.get("status")=="done" for s in steps), steps
-print("status_ok all done; usage=", d.get("usage_by_role"))
+assert d.get("accepted_tree_ref"), d
+print("status_ok all done; accepted=", d.get("accepted_tree_ref"))
+print("usage=", d.get("usage_by_role"))
 PY
 
-# --- inspect / events via existing CLI (run_id project:…) ---
 RUN_ID="project:${PID}"
 "$BIN" inspect --store "$STORE" --run-id "$RUN_ID" > "$OUT/inspect.json"
 "$BIN" events --store "$STORE" --run-id "$RUN_ID" > "$OUT/events.jsonl"
 
-python3 - "$OUT" "$ROUTE" "$MODEL_MODE" "$SHA" <<'PY'
+python3 - "$OUT" "$ROUTE" "$MODEL_MODE" "$SHA" "$STEP_IDX" <<'PY'
 import json,sys
 from pathlib import Path
-out, route, mode, sha = Path(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4]
+out, route, mode, sha, nsteps = Path(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4], int(sys.argv[5])
 status=json.loads((out/"status.json").read_text())
 resume=json.loads((out/"resume.json").read_text())
 ask=json.loads((out/"ask.json").read_text())
 revise=json.loads((out/"revise.json").read_text())
-step=json.loads((out/"step.json").read_text())
+kill_resume=json.loads((out/"resume_after_kill.json").read_text())
+empty=json.loads((out/"empty_plan.json").read_text())
+last=json.loads((out/f"step{nsteps}.json").read_text())
 usage=status.get("usage_by_role") or {}
-# After resume, plan version still 2; step must not bump planner calls beyond ask+revise
 def calls(role):
     return int((usage.get(role) or {}).get("calls") or 0)
 summary={
@@ -174,13 +397,20 @@ summary={
   "route": route,
   "model_mode": mode,
   "plan_versions": status.get("current_plan_version"),
+  "plan_steps": len(status.get("steps") or []),
+  "steps_executed": nsteps,
   "resume_billable_plan_calls": (resume.get("resume") or {}).get("billable_plan_calls"),
+  "kill_resume": kill_resume.get("resume"),
+  "empty_plan_verdict": empty.get("verdict"),
   "usage_by_role": usage,
   "planner_calls": calls("planner"),
   "reviser_calls": calls("reviser"),
   "implementer_calls": calls("implementer"),
-  "step_verdict": step.get("verdict"),
-  "verify": step.get("verify"),
+  "accepted_tree_ref": status.get("accepted_tree_ref"),
+  "accepted_tree_hash": status.get("accepted_tree_hash"),
+  "last_step_verdict": last.get("verdict"),
+  "verify": last.get("verify"),
+  "source_tree_last": last.get("source_tree"),
   "artifacts": {
     "plan_v1": str(out/"artifacts"/"plan_v1.json"),
     "plan_v2": str(out/"artifacts"/"plan_v2.json"),
@@ -192,18 +422,18 @@ if route=="inject":
     summary["untested"]=["planner","reviser","implementer"]
 (out/"summary.json").write_text(json.dumps(summary, indent=2)+"\n")
 print(json.dumps(summary, indent=2))
-# Sanity: inject ⇒ zero estimated usd; api ⇒ planner/reviser/implementer calls >=1 each when usage reported
 if route=="inject":
     assert calls("planner")==0 and calls("reviser")==0
-    # implementer inject also records zero billable via recordUsage skip
 PY
 
-# Keep a stable "latest" pointer for the recipe (copy summary + key outputs)
 LATEST=docs/qa/project_cli_journey/latest
 rm -rf "$LATEST"
 mkdir -p "$LATEST"
 cp "$OUT/summary.json" "$OUT/ask.json" "$OUT/revise.json" "$OUT/resume.json" \
-   "$OUT/step.json" "$OUT/status.json" "$LATEST/" 2>/dev/null || true
+   "$OUT/resume_after_kill.json" "$OUT/empty_plan.json" "$OUT/status.json" "$LATEST/" 2>/dev/null || true
+for i in $(seq 1 "$STEP_IDX"); do
+  cp "$OUT/step${i}.json" "$LATEST/" 2>/dev/null || true
+done
 cp -r "$ART" "$LATEST/artifacts" 2>/dev/null || true
 
-echo "e2e_project_cli_journey: ok ROUTE=$ROUTE OUT=$OUT"
+echo "e2e_project_cli_journey: ok ROUTE=$ROUTE OUT=$OUT STEPS=$STEP_IDX"

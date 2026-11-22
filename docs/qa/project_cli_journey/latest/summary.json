@@ -1,9 +1,23 @@
 {
-  "sha": "d9a9b35cbc8e1b65a6cc06e2d931be2536e025c3",
+  "sha": "bf7f542e517536b469646bd1628cd0cd57a1b726",
   "route": "inject",
   "model_mode": "inject (model decisions untested)",
   "plan_versions": 2,
+  "plan_steps": 2,
+  "steps_executed": 2,
   "resume_billable_plan_calls": 0,
+  "kill_resume": {
+    "rehydrated": true,
+    "planner_calls_this_command": 0,
+    "reviser_calls_this_command": 0,
+    "billable_plan_calls": 0,
+    "interrupted_step": "add_csv_helpers",
+    "step_state": "interrupted",
+    "provider_attempt_unknown": true,
+    "action": "retry_step",
+    "action_note": "Prior provider call outcome is unknown; do not assume success or silently rebill. Re-run `project step` explicitly to retry."
+  },
+  "empty_plan_verdict": "plan_failed",
   "usage_by_role": {
     "planner": {
       "prompt_tokens": 0,
@@ -30,9 +44,12 @@
   "planner_calls": 0,
   "reviser_calls": 0,
   "implementer_calls": 0,
-  "step_verdict": "pass",
+  "accepted_tree_ref": "/opt/nimFactory/docs/qa/project_cli_journey/20261122T004817Z/artifacts/trees/wire_export_csv",
+  "accepted_tree_hash": "73518A6720844BE7",
+  "last_step_verdict": "pass",
   "verify": {
     "ok": true,
+    "kind": "csv_journey",
     "list_ok": true,
     "csv_ok": true,
     "quote_ok": true,
@@ -41,17 +58,21 @@
     "csv_out": "id,title\n1,Acheter du pain\n2,\"Appeler Alice, Bob\"\n3,Relire le rapport",
     "compile_exit": 0,
     "details": {
+      "require_csv": true,
       "compile_out": "",
       "expected_list": "1. Acheter du pain\n2. Appeler Alice, Bob\n3. Relire le rapport",
       "list_exit": 0,
+      "no_args_exit": 0,
+      "no_args_out": "1. Acheter du pain\n2. Appeler Alice, Bob\n3. Relire le rapport",
       "expected_csv": "id,title\n1,Acheter du pain\n2,\"Appeler Alice, Bob\"\n3,Relire le rapport",
       "csv_exit": 0
     }
   },
+  "source_tree_last": "/opt/nimFactory/docs/qa/project_cli_journey/20261122T004817Z/artifacts/trees/add_csv_helpers",
   "artifacts": {
-    "plan_v1": "docs/qa/project_cli_journey/20261121T223622Z/artifacts/plan_v1.json",
-    "plan_v2": "docs/qa/project_cli_journey/20261121T223622Z/artifacts/plan_v2.json",
-    "mandate": "docs/qa/project_cli_journey/20261121T223622Z/artifacts/mandate.json"
+    "plan_v1": "docs/qa/project_cli_journey/20261122T004817Z/artifacts/plan_v1.json",
+    "plan_v2": "docs/qa/project_cli_journey/20261122T004817Z/artifacts/plan_v2.json",
+    "mandate": "docs/qa/project_cli_journey/20261122T004817Z/artifacts/mandate.json"
   },
   "untested": [
     "planner",

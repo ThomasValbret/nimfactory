@@ -1,0 +1,15 @@
+{
+  "sha": "bf7f542e517536b469646bd1628cd0cd57a1b726",
+  "route": "api",
+  "exit": 4,
+  "ok": false,
+  "verdict": "model_failed",
+  "message": "No such device or address\nAdditional info: Name or service not known",
+  "usage_by_role": null,
+  "roles_still_unqualified": [
+    "planner",
+    "reviser",
+    "implementer"
+  ],
+  "note": "First API result archived (success or failure). Keep as-is."
+}
