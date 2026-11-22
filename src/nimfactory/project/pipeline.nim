@@ -2,6 +2,7 @@
 
 import std/[os, json, tables, sequtils, strutils, times, algorithm, posix]
 import nimfactory/mission/[provider, apply, context]
+import nimfactory/runtime/journal/run_store
 import ./types
 import ./store
 import ./plan_context
@@ -27,6 +28,9 @@ type
     refinement*: string
     route*: string              ## api | inject
     injectPath*: string
+    injectRecoveryPath*: string ## offline second inject (one recovery turn)
+    replayFirstPath*: string    ## historical first raw; no new ask/revise/step bill
+    historicalProvenance*: string ## note / path preserved in report
     worktree*: string
     artifactDir*: string        ## optional: write plan/mandate/diff here
 
@@ -38,6 +42,12 @@ type
     message*: string
     doc*: ProjectDoc
     provider*: ProviderCallResult
+    recoveryProvider*: ProviderCallResult
+    recoveryTriggered*: bool
+    recoveryAttempted*: bool
+    recoveryReason*: string
+    providerCallsThisCommand*: int
+    apiCallsThisCommand*: int
     verify*: ProjectVerifyResult
     apply*: ApplyResult
     mandatePath*: string
@@ -64,6 +74,9 @@ proc recordUsage(doc: var ProjectDoc; role: string; p: ProviderCallResult) =
     if p.model.len > 0: u.model = p.model
     doc.usageByRole[role] = u
 
+proc canProjectRecovery(req: ProjectRequest): bool =
+  req.injectRecoveryPath.len > 0 or req.route == "api"
+
 proc invokeProjectModel(req: ProjectRequest; systemPrompt, userPrompt: string): ProviderCallResult =
   case req.route
   of "api":
@@ -87,6 +100,23 @@ proc invokeProjectModel(req: ProjectRequest; systemPrompt, userPrompt: string): 
     result.available = false
     result.message = "unknown route: " & req.route
     result.status = "failed"
+
+proc invokeProjectRecovery(req: ProjectRequest; systemPrompt, userPrompt: string): ProviderCallResult =
+  ## Prefer explicit recovery inject (offline); else same API route as step.
+  if req.injectRecoveryPath.len > 0:
+    return callFromInject(req.injectRecoveryPath)
+  if req.route == "api":
+    var ctx = MissionContext(
+      route: "api",
+      systemPrompt: systemPrompt,
+      userPrompt: userPrompt,
+      ok: true
+    )
+    return callPlannedApi(ctx)
+  result.ok = false
+  result.available = false
+  result.message = "no recovery provider configured"
+  result.status = "failed"
 
 proc parsePlanPayload(raw: string): tuple[ok: bool; node: JsonNode; err: string] =
   try:
@@ -169,6 +199,89 @@ proc reportBase(cmd: string; doc: ProjectDoc): JsonNode =
     "steps": doc.steps.mapIt(stepToJson(it)),
     "plan_versions": doc.planVersions.mapIt(planToJson(it))
   }
+
+proc finishStepRefuse*(
+    report: var ProjectReport; doc: var ProjectDoc; store: SqliteRunStore;
+    req: ProjectRequest; stepId, sourceRoot, attemptStarted: string;
+    refuseCode, verdictText, messageText: string; applyNode: JsonNode) =
+  ## Persist a pre-write or apply refuse; no further recovery after this call.
+  report.ok = false
+  report.verdict = verdictText
+  report.message = messageText
+  for i, s in doc.steps.mpairs:
+    if s.id == stepId:
+      doc.steps[i].status = ssPending
+      doc.steps[i].result = %*{
+        "refuse_code": refuseCode,
+        "apply": applyNode,
+        "recovery_triggered": report.recoveryTriggered,
+        "recovery_attempted": report.recoveryAttempted,
+        "recovery_reason": report.recoveryReason,
+        "provider_attempt": {
+          "status": "completed",
+          "started_at": attemptStarted,
+          "route": report.provider.route,
+          "source_tree": sourceRoot
+        }
+      }
+  doc.blockedReason = messageText
+  doc.lastVerdict = verdictText
+  doc.nextAction = "step"
+  saveProject(store, doc)
+  emitProjectEvent(store, doc.projectId, "project.step_refused", %*{
+    "step_id": stepId,
+    "refuse_code": refuseCode,
+    "verdict": verdictText,
+    "recovery_attempted": report.recoveryAttempted
+  })
+  report.doc = doc
+  report.report = reportBase("step", doc)
+  report.report["provider"] = providerToJson(report.provider)
+  report.report["apply"] = applyNode
+  report.report["refuse_code"] = %refuseCode
+  report.report["recovery_triggered"] = %report.recoveryTriggered
+  report.report["recovery_attempted"] = %report.recoveryAttempted
+  report.report["recovery_reason"] = %report.recoveryReason
+  report.report["provider_calls_this_command"] = %report.providerCallsThisCommand
+  report.report["api_calls_this_command"] = %report.apiCallsThisCommand
+  if report.recoveryAttempted:
+    report.report["recovery_provider"] = providerToJson(report.recoveryProvider)
+  if req.historicalProvenance.len > 0:
+    report.report["historical_provenance"] = %req.historicalProvenance
+  if report.untested.len > 0:
+    report.report["untested"] = %report.untested
+
+proc runOneRecoveryTurn*(
+    report: var ProjectReport; doc: var ProjectDoc; req: ProjectRequest;
+    sourceRoot: string; mandate: JsonNode; stepTitle: string;
+    reason, finding, priorTarget, priorDecision, priorProposal: string;
+    recoveryRound: var int; rawText: var string; usedRecovery: var bool): bool =
+  ## At most one recovery turn. Fills report.recovery* and refreshes rawText.
+  if recoveryRound >= 1:
+    return false
+  if not canProjectRecovery(req):
+    return false
+  report.recoveryTriggered = true
+  report.recoveryReason = reason
+  inc recoveryRound
+  let rctx = buildProjectRecoveryContext(
+    sourceRoot, mandate, stepTitle,
+    priorTarget, priorDecision, priorProposal, finding)
+  report.recoveryProvider = invokeProjectRecovery(
+    req, rctx.systemPrompt, rctx.userPrompt)
+  report.recoveryAttempted = true
+  inc report.providerCallsThisCommand
+  if report.recoveryProvider.route == "api" or
+     (req.injectRecoveryPath.len == 0 and req.route == "api"):
+    inc report.apiCallsThisCommand
+    recordUsage(doc, "implementer_recovery", report.recoveryProvider)
+  if req.injectRecoveryPath.len > 0:
+    report.untested.add("recovery via inject")
+  if not report.recoveryProvider.ok:
+    return false
+  rawText = report.recoveryProvider.rawText
+  usedRecovery = true
+  true
 
 proc depsSatisfied(doc: ProjectDoc; step: ProjectStep): bool =
   for d in step.dependsOn:
@@ -678,9 +791,21 @@ proc projectStep*(req: ProjectRequest): ProjectReport =
 
   # Context from the accepted tree (or original cwd), not a stale pristine copy.
   let ctx = buildImplementContext(sourceRoot, mandate, step.title)
-  result.provider = invokeProjectModel(req, ctx.systemPrompt, ctx.userPrompt)
-  if req.route == "inject":
-    result.untested.add("implementer model decision (inject)")
+  result.providerCallsThisCommand = 0
+  result.apiCallsThisCommand = 0
+  let historicalFirst = req.replayFirstPath.len > 0
+  if historicalFirst:
+    result.provider = callFromInject(req.replayFirstPath)
+    result.provider.route = "historical_replay"
+    result.providerCallsThisCommand = 0
+    result.untested.add("first attempt = historical replay (no new bill)")
+  else:
+    result.provider = invokeProjectModel(req, ctx.systemPrompt, ctx.userPrompt)
+    result.providerCallsThisCommand = 1
+    if req.route == "api":
+      result.apiCallsThisCommand = 1
+    if req.route == "inject":
+      result.untested.add("implementer model decision (inject)")
 
   let attemptStatus =
     if result.provider.ok: "completed"
@@ -693,8 +818,6 @@ proc projectStep*(req: ProjectRequest): ProjectReport =
     result.message = result.provider.message
     for i, s in doc.steps.mpairs:
       if s.id == step.id:
-        # Unavailable / unknown outcome → interrupted (do not silent-retry as success).
-        # Known model failure → pending for explicit retry.
         if attemptStatus == "unknown":
           doc.steps[i].status = ssInterrupted
         else:
@@ -704,13 +827,12 @@ proc projectStep*(req: ProjectRequest): ProjectReport =
           "provider_attempt": {
             "status": attemptStatus,
             "started_at": attemptStarted,
-            "route": req.route,
+            "route": result.provider.route,
             "source_tree": sourceRoot,
             "finished_at": now().utc.format("yyyy-MM-dd'T'HH:mm:ss'Z'")
           }
         }
-    # Only record usage when the call clearly completed or failed with a response.
-    if attemptStatus != "unknown":
+    if attemptStatus != "unknown" and not historicalFirst:
       recordUsage(doc, "implementer", result.provider)
     doc.nextAction = "step"
     saveProject(store, doc)
@@ -718,49 +840,149 @@ proc projectStep*(req: ProjectRequest): ProjectReport =
     result.report = reportBase("step", doc)
     result.report["provider"] = providerToJson(result.provider)
     result.report["provider_attempt_status"] = %attemptStatus
+    result.report["provider_calls_this_command"] = %result.providerCallsThisCommand
+    result.report["api_calls_this_command"] = %result.apiCallsThisCommand
     return
 
-  recordUsage(doc, "implementer", result.provider)
+  if not historicalFirst:
+    recordUsage(doc, "implementer", result.provider)
 
-  let decision = parseFixDecision(result.provider.rawText)
-  # Apply on top of the accepted tree (chained), not always the original cwd.
-  result.apply = applyDecision(sourceRoot, req.worktree, decision)
-  if not result.apply.ok:
-    result.ok = false
-    result.verdict = "apply_failed"
-    result.message = result.apply.message
-    for i, s in doc.steps.mpairs:
-      if s.id == step.id:
-        doc.steps[i].status = ssPending
-        doc.steps[i].result = %*{
-          "apply": applyToJson(result.apply),
-          "provider_attempt": {
-            "status": "completed",
-            "started_at": attemptStarted,
-            "route": req.route,
-            "source_tree": sourceRoot
-          }
-        }
-    doc.blockedReason = result.apply.message
-    saveProject(store, doc)
-    emitProjectEvent(store, doc.projectId, "project.step_apply_failed", applyToJson(result.apply))
-    result.doc = doc
-    result.report = reportBase("step", doc)
-    result.report["provider"] = providerToJson(result.provider)
-    result.report["apply"] = applyToJson(result.apply)
-    return
+  # --- Plan↔exec contract gates (before any write) ---
+  var rawText = result.provider.rawText
+  var decision = FixDecision()
+  var usedRecovery = false
+  var recoveryRound = 0  # at most one
+  var readable = ""
 
+  template refuseNow(refuseCode, verdictText, messageText: string; applyNode: JsonNode) =
+    finishStepRefuse(result, doc, store, req, step.id, sourceRoot, attemptStarted,
+                     refuseCode, verdictText, messageText, applyNode)
+
+  template tryRecovery(reason, finding, priorTarget, priorDecision,
+                       priorProposal: string): bool =
+    runOneRecoveryTurn(result, doc, req, sourceRoot, mandate, step.title,
+                       reason, finding, priorTarget, priorDecision, priorProposal,
+                       recoveryRound, rawText, usedRecovery)
+
+  block applyGate:
+    # 1) Explicit plan revision signal (no write).
+    let revise = parseRevisePlan(rawText)
+    if revise.hit:
+      refuseNow("revise_plan", "revise_plan_needed", revise.decision,
+        %*{"ok": false, "refuse_code": "revise_plan", "message": revise.decision,
+           "wrote": false})
+      return
+
+    let cannot = parseCannotFix(rawText)
+    if cannot.hit:
+      refuseNow("cannot_fix", "model_cannot_fix", cannot.decision,
+        %*{"ok": false, "refuse_code": "cannot_fix", "message": cannot.decision,
+           "wrote": false})
+      return
+
+    # 2) Multi-proposal → refuse before any worktree write.
+    let multi = countFixProposals(rawText)
+    if multi.count > 1:
+      let exact = exactProposalPayload(rawText)
+      let finding = buildMultiProposalFinding(multi.targets, exact)
+      result.apply.ok = false
+      result.apply.refuseCode = "multi_proposal"
+      result.apply.message =
+        "multi_proposal: " & $multi.count & " target_file(s); no write"
+      result.apply.editDetails = multi.targets
+      if tryRecovery("multi_proposal", finding, multi.targets[0],
+                     "multi_proposal", exact):
+        # Re-enter gates with recovery raw (no second recovery if still multi).
+        let revise2 = parseRevisePlan(rawText)
+        if revise2.hit:
+          refuseNow("revise_plan", "revise_plan_needed", revise2.decision,
+            %*{"ok": false, "refuse_code": "revise_plan", "message": revise2.decision,
+               "wrote": false, "prior_refuse": "multi_proposal"})
+          return
+        let cannot2 = parseCannotFix(rawText)
+        if cannot2.hit:
+          refuseNow("cannot_fix", "model_cannot_fix", cannot2.decision,
+            %*{"ok": false, "refuse_code": "cannot_fix", "message": cannot2.decision,
+               "wrote": false, "prior_refuse": "multi_proposal"})
+          return
+        let multi2 = countFixProposals(rawText)
+        if multi2.count > 1:
+          refuseNow("multi_proposal", "multi_proposal_refused",
+            "recovery still returned " & $multi2.count & " proposals; no write",
+            %*{"ok": false, "refuse_code": "multi_proposal", "wrote": false,
+               "targets": multi2.targets, "recovery_exhausted": true})
+          return
+        # fall through to single-proposal apply below with recovery rawText
+      else:
+        refuseNow("multi_proposal", "multi_proposal_refused",
+          result.apply.message,
+          %*{"ok": false, "refuse_code": "multi_proposal", "wrote": false,
+             "targets": multi.targets, "message": result.apply.message})
+        return
+
+    decision = parseFixDecision(rawText)
+    result.apply = applyDecision(sourceRoot, req.worktree, decision)
+    if not result.apply.ok:
+      if result.apply.refuseCode == "anchor_ambiguous" and recoveryRound < 1 and
+         canProjectRecovery(req):
+        let exact =
+          if decision.exactProposalJson.len > 0: decision.exactProposalJson
+          else: exactProposalPayload(rawText)
+        let finding = buildAmbiguousFinding(result.apply, exact)
+        if tryRecovery("anchor_ambiguous", finding, decision.targetFile,
+                       decision.decision, exact):
+          let revise3 = parseRevisePlan(rawText)
+          if revise3.hit:
+            refuseNow("revise_plan", "revise_plan_needed", revise3.decision,
+              %*{"ok": false, "refuse_code": "revise_plan",
+                 "prior_refuse": "anchor_ambiguous", "wrote": false,
+                 "message": revise3.decision})
+            return
+          let cannot3 = parseCannotFix(rawText)
+          if cannot3.hit:
+            refuseNow("cannot_fix", "model_cannot_fix", cannot3.decision,
+              %*{"ok": false, "refuse_code": "cannot_fix",
+                 "prior_refuse": "anchor_ambiguous", "wrote": false,
+                 "message": cannot3.decision})
+            return
+          let multi3 = countFixProposals(rawText)
+          if multi3.count > 1:
+            refuseNow("multi_proposal", "multi_proposal_refused",
+              "recovery returned multiple proposals; no write",
+              %*{"ok": false, "refuse_code": "multi_proposal", "wrote": false,
+                 "prior_refuse": "anchor_ambiguous", "targets": multi3.targets})
+            return
+          decision = parseFixDecision(rawText)
+          # Fresh worktree path for recovery apply.
+          let wt2 = if req.worktree.len > 0: req.worktree & "_recovery" else: ""
+          result.apply = applyDecision(sourceRoot, wt2, decision)
+          if not result.apply.ok:
+            refuseNow(result.apply.refuseCode, "apply_failed",
+              "recovery apply: " & result.apply.message, applyToJson(result.apply))
+            return
+          # success — fall through to verify
+        else:
+          refuseNow(result.apply.refuseCode, "apply_failed",
+            result.apply.message, applyToJson(result.apply))
+          return
+      else:
+        refuseNow(result.apply.refuseCode, "apply_failed",
+          result.apply.message, applyToJson(result.apply))
+        return
+
+  # Applied successfully (first or recovery).
   doc.worktree = result.apply.worktree
-  let readable = buildReadableDiff(sourceRoot, result.apply.worktree, result.apply.targetFile)
+  readable = buildReadableDiff(sourceRoot, result.apply.worktree, result.apply.targetFile)
   doc.lastDiff = readable
   discard writeArtifact(req.artifactDir, "last_diff.txt", readable & "\n" &
                         "before_hash=" & result.apply.beforeHash &
                         " after_hash=" & result.apply.afterHash & "\n" &
-                        "source_tree=" & sourceRoot & "\n")
+                        "source_tree=" & sourceRoot & "\n" &
+                        "via_recovery=" & $usedRecovery & "\n")
 
   let recipe = loadProjectRecipe(doc.cwd)
   # Full CSV oracle only on the last pending step of the recipe; earlier
-  # steps must keep list intact but may not yet expose export-csv.
+  # steps must leave a compilable tree (list intact; export may still be absent).
   var otherPending = 0
   for s in doc.steps:
     if s.id != step.id and s.status in {ssPending, ssInterrupted, ssRunning, ssBlocked}:
@@ -768,7 +990,6 @@ proc projectStep*(req: ProjectRequest): ProjectReport =
   let finalStep = otherPending == 0
   result.verify = verifyForRecipe(
     recipe, result.apply.worktree, doc.cwd, finalStep = finalStep)
-  result.report = newJObject()  # filled below
 
   if result.verify.ok:
     let snap = snapshotAcceptedTree(req.artifactDir, step.id, result.apply.worktree)
@@ -787,10 +1008,12 @@ proc projectStep*(req: ProjectRequest): ProjectReport =
           "accepted_diff_path": diffPath,
           "readable_diff": readable,
           "source_tree": sourceRoot,
+          "via_recovery": usedRecovery,
+          "recovery_reason": result.recoveryReason,
           "provider_attempt": {
             "status": "completed",
             "started_at": attemptStarted,
-            "route": req.route,
+            "route": result.provider.route,
             "source_tree": sourceRoot
           }
         }
@@ -810,10 +1033,11 @@ proc projectStep*(req: ProjectRequest): ProjectReport =
           "apply": applyToJson(result.apply),
           "readable_diff": readable,
           "source_tree": sourceRoot,
+          "via_recovery": usedRecovery,
           "provider_attempt": {
             "status": "completed",
             "started_at": attemptStarted,
-            "route": req.route,
+            "route": result.provider.route,
             "source_tree": sourceRoot
           }
         }
@@ -831,6 +1055,7 @@ proc projectStep*(req: ProjectRequest): ProjectReport =
     "worktree": doc.worktree,
     "accepted_tree_ref": doc.acceptedTreeRef,
     "accepted_tree_hash": doc.acceptedTreeHash,
+    "via_recovery": usedRecovery,
     "verify": verifyToJson(result.verify)
   })
   discard writeArtifact(req.artifactDir, "verify.json", pretty(verifyToJson(result.verify)))
@@ -843,6 +1068,16 @@ proc projectStep*(req: ProjectRequest): ProjectReport =
   result.report["mandate_path"] = %manPath
   result.report["source_tree"] = %sourceRoot
   result.report["readable_diff"] = %readable
+  result.report["via_recovery"] = %usedRecovery
+  result.report["recovery_triggered"] = %result.recoveryTriggered
+  result.report["recovery_attempted"] = %result.recoveryAttempted
+  result.report["recovery_reason"] = %result.recoveryReason
+  result.report["provider_calls_this_command"] = %result.providerCallsThisCommand
+  result.report["api_calls_this_command"] = %result.apiCallsThisCommand
+  if result.recoveryAttempted:
+    result.report["recovery_provider"] = providerToJson(result.recoveryProvider)
+  if req.historicalProvenance.len > 0:
+    result.report["historical_provenance"] = %req.historicalProvenance
   if result.untested.len > 0:
     result.report["untested"] = %result.untested
 

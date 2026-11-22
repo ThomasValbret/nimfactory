@@ -43,13 +43,28 @@ Ne code pas. Réponds UNIQUEMENT en JSON avec les clés:
 
   ImplementSystemPrompt* = """
 Tu es l'agent de réalisation NimFactory pour une étape bornée.
-Applique uniquement le mandat fourni. Préfère des edits {oldText,newText}.
-Ne modifie qu'un fichier existant à la fois si possible.
+Contrat plan↔exécution: chaque étape doit laisser un arbre compilable.
+Tant que project step n'applique qu'un seul fichier, retourne UNE seule
+proposition JSON (un target_file). Plusieurs blocs JSON ou plusieurs
+target_file = refus avant toute écriture.
+Si un prérequis hors mandat impose de revoir le plan, retourne:
+  {"revise_plan": true, "decision": "<motif>"}.
+Sinon préfère des edits {oldText,newText} sur un fichier existant.
 Tu choisis librement les noms de fonctions et la structure du code ;
 l'oracle de la recette vérifie le comportement du binaire (list par défaut,
 export CSV opt-in), pas tes identifiants internes.
 Retourne UNIQUEMENT JSON:
   target_file, decision, edits: [{oldText, newText}].
+""".strip()
+
+  ProjectRecoverySystemPrompt* = """
+Tu récupères une proposition d'édition refusée par project step.
+On t'a donné: la proposition exacte, le motif observé, et pour une ancre
+ambiguë les contextes des occurrences.
+Tu choisis le fichier et le correctif. Une seule proposition JSON
+(un target_file). Si le prérequis exige de réviser le plan:
+  {"revise_plan": true, "decision": "<motif>"}.
+Sinon: target_file, decision, edits: [{oldText, newText}].
 """.strip()
 
 proc collectProjectSources*(cwd: string; maxFiles = 12; maxBytes = 80_000): seq[ProjectSource] =
@@ -126,3 +141,23 @@ proc buildImplementContext*(
     (if result.agentsMd.len > 0: result.agentsMd else: "(absent)") &
     "\n\nSources autorisées:\n\n" & renderSources(result.sources) &
     "\n\nProduis les edits JSON maintenant."
+
+proc buildProjectRecoveryContext*(
+    cwd: string; mandate: JsonNode; stepTitle: string;
+    priorTarget, priorDecision, priorProposal, finding: string): PlanContext =
+  ## Bounded recovery: exact prior proposal + observed refuse motif (+ contexts).
+  result.agentsMd = loadAgentsMd(cwd)
+  result.sources = collectProjectSources(cwd)
+  result.sourceIds = result.sources.mapIt(it.relPath)
+  result.ok = true
+  result.systemPrompt = ProjectRecoverySystemPrompt
+  result.userPrompt =
+    "Tour de récupération (un seul autorisé).\n" &
+    "Étape: " & stepTitle & "\n" &
+    "Cible précédente: " & priorTarget & "\n" &
+    "Décision précédente: " & priorDecision & "\n\n" &
+    "Motif observé:\n" & finding & "\n\n" &
+    "Proposition exacte:\n```json\n" & priorProposal & "\n```\n\n" &
+    "Mandat borné (JSON):\n```json\n" & pretty(mandate) & "\n```\n\n" &
+    "Sources autorisées (arbre courant):\n\n" & renderSources(result.sources) &
+    "\n\nProduis UNE proposition JSON (ou revise_plan) maintenant."

@@ -52,6 +52,8 @@ type
     objective: string
     refinement: string
     artifactDir: string
+    replayFirst: string
+    historicalProvenance: string
     positional: seq[string]
 
 proc writeHuman(msg: string) =
@@ -88,6 +90,8 @@ Options:
   --route api|local|inject
   --inject PATH         injected model JSON (non-qualifying)
   --inject-recovery PATH  offline second inject after no-op / functional fail
+  --replay-first PATH   historical first raw for project step (no new bill)
+  --historical-provenance TEXT  provenance note for replayed first attempt
   --local-model NAME    ollama model for local micro-patch route
   --target PATH         local: established file to patch
   --diagnosis TEXT      local: established diagnosis
@@ -171,6 +175,10 @@ proc parseArgs(args: seq[string]): CliOptions =
         result.inject = takeValue(p)
       of "inject-recovery":
         result.injectRecovery = takeValue(p)
+      of "replay-first":
+        result.replayFirst = takeValue(p)
+      of "historical-provenance":
+        result.historicalProvenance = takeValue(p)
       of "local-model":
         result.localModel = takeValue(p)
       of "target":
@@ -339,14 +347,18 @@ proc runCli*(args: seq[string]): int =
       preq.refinement = o.refinement
       preq.route = o.route
       preq.injectPath = o.inject
+      preq.injectRecoveryPath = o.injectRecovery
+      preq.replayFirstPath = o.replayFirst
+      preq.historicalProvenance = o.historicalProvenance
       preq.worktree = o.worktree
       preq.artifactDir = o.artifactDir
       if preq.objective.len == 0 and o.positional.len > 0:
         preq.objective = o.positional.join(" ")
       if preq.refinement.len == 0 and o.sub == "revise" and o.positional.len > 0:
         preq.refinement = o.positional.join(" ")
-      if o.route == "inject" and o.inject.len == 0 and o.sub in ["ask", "revise", "step"]:
-        writeHuman("project " & o.sub & " --route inject requires --inject")
+      if o.route == "inject" and o.inject.len == 0 and o.replayFirst.len == 0 and
+         o.sub in ["ask", "revise", "step"]:
+        writeHuman("project " & o.sub & " --route inject requires --inject (or --replay-first for step)")
         return ExitInvalid
       var prep: ProjectReport
       case o.sub

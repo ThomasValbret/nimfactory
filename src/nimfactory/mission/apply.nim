@@ -43,6 +43,43 @@ type
     ambiguousOldText*: string
     occurrenceContexts*: seq[string] ## lines around each match (ambiguous only)
 
+proc extractBalancedObjectAt*(raw: string; start: int): tuple[ok: bool; stop: int; body: string] =
+  ## First balanced `{...}` starting at or after `start`. Respects JSON strings.
+  result.ok = false
+  result.stop = -1
+  if start < 0 or start >= raw.len:
+    return
+  var depth = 0
+  var inStr = false
+  var escape = false
+  var begun = false
+  for i in start ..< raw.len:
+    let c = raw[i]
+    if inStr:
+      if escape:
+        escape = false
+      elif c == '\\':
+        escape = true
+      elif c == '"':
+        inStr = false
+      continue
+    case c
+    of '"':
+      inStr = true
+    of '{':
+      if not begun:
+        begun = true
+        depth = 1
+      else:
+        inc depth
+    of '}':
+      if not begun: continue
+      dec depth
+      if depth == 0:
+        return (true, i, raw[start .. i])
+    else:
+      discard
+
 proc extractJsonObject*(raw: string): string =
   ## Tolerate fenced markdown; return the first balanced `{...}` object.
   ## Important: do not use rfind('}') — dual ```json fences would span both
@@ -61,35 +98,65 @@ proc extractJsonObject*(raw: string): string =
   let start = t.find('{')
   if start < 0:
     return t
-  var depth = 0
-  var inStr = false
-  var escape = false
-  for i in start ..< t.len:
-    let c = t[i]
-    if inStr:
-      if escape:
-        escape = false
-      elif c == '\\':
-        escape = true
-      elif c == '"':
-        inStr = false
-      continue
-    case c
-    of '"':
-      inStr = true
-    of '{':
-      inc depth
-    of '}':
-      dec depth
-      if depth == 0:
-        return t[start .. i]
-    else:
-      discard
-  # Unbalanced — fall back to legacy span for error messages upstream.
+  let bal = extractBalancedObjectAt(t, start)
+  if bal.ok:
+    return bal.body
   let stop = t.rfind('}')
   if stop > start:
     return t[start .. stop]
   t
+
+proc extractAllBalancedObjects*(raw: string): seq[string] =
+  ## All top-level balanced JSON objects in document order (fences ignored as text).
+  result = @[]
+  var i = 0
+  while i < raw.len:
+    let start = raw.find('{', i)
+    if start < 0: break
+    let bal = extractBalancedObjectAt(raw, start)
+    if not bal.ok:
+      break
+    result.add(bal.body)
+    i = bal.stop + 1
+
+proc countFixProposals*(raw: string): tuple[count: int; targets: seq[string]] =
+  ## Count proposal objects that carry a target_file (multi-file replies).
+  ## Unparseable objects that still mention target_file count: dual fences with a
+  ## broken second JSON must not silently collapse to the first proposal.
+  result.count = 0
+  result.targets = @[]
+  for body in extractAllBalancedObjects(raw):
+    try:
+      let node = parseJson(body)
+      if node.kind != JObject: continue
+      let tf = node{"target_file"}.getStr
+      if tf.len > 0:
+        inc result.count
+        result.targets.add(tf)
+    except CatchableError:
+      if "\"target_file\"" in body:
+        inc result.count
+        # Best-effort target extraction without full parse.
+        let key = "\"target_file\""
+        let k = body.find(key)
+        var tf = "(unparseable)"
+        if k >= 0:
+          let colon = body.find(':', k + key.len)
+          let q1 = if colon >= 0: body.find('"', colon + 1) else: -1
+          let q2 = if q1 >= 0: body.find('"', q1 + 1) else: -1
+          if q1 >= 0 and q2 > q1:
+            tf = body[q1+1 ..< q2]
+        result.targets.add(tf)
+
+proc parseRevisePlan*(raw: string): tuple[hit: bool; decision: string] =
+  ## Model may signal that the step requires a plan revision (prerequisite).
+  try:
+    let node = parseJson(extractJsonObject(raw))
+    if node{"revise_plan"}.getBool(false) or node{"needs_plan_revision"}.getBool(false):
+      return (true, node{"decision"}.getStr("revise_plan"))
+  except CatchableError:
+    discard
+  (false, "")
 
 proc countNonOverlap*(haystack, needle: string): int =
   if needle.len == 0:
@@ -458,3 +525,36 @@ proc buildAmbiguousFinding*(
   parts.add(exactProposal)
   parts.add("```")
   parts.join("\n")
+
+proc buildMultiProposalFinding*(targets: seq[string]; exactProposal: string): string =
+  ## Multi-file / multi-JSON reply: refused before any worktree write.
+  var parts: seq[string] = @[]
+  parts.add("Apply refused with refuse_code=multi_proposal.")
+  parts.add("Response contained " & $targets.len &
+            " proposals with target_file. No file was written.")
+  parts.add("While project step applies a single file, reformulate as one " &
+            "proposal or signal revise_plan if a prerequisite requires it.")
+  parts.add("Targets observed: " & targets.join(", "))
+  parts.add("Your exact first proposal payload:")
+  parts.add("```json")
+  parts.add(exactProposal)
+  parts.add("```")
+  parts.join("\n")
+
+proc exactProposalPayload*(raw: string): string =
+  ## Prefer normalized multi/single proposal JSON for recovery echo.
+  let multi = countFixProposals(raw)
+  if multi.count > 1:
+    var arr = newJArray()
+    for body in extractAllBalancedObjects(raw):
+      try:
+        let node = parseJson(body)
+        if node{"target_file"}.getStr.len > 0:
+          arr.add(node)
+      except CatchableError:
+        discard
+    return pretty(arr)
+  let dec = parseFixDecision(raw)
+  if dec.exactProposalJson.len > 0:
+    return dec.exactProposalJson
+  extractJsonObject(raw)
