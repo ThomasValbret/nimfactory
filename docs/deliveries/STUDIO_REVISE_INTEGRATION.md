@@ -2,7 +2,7 @@
 
 Date : 2026-11-22  
 Branche : `feature/studio-revise-integration`  
-SHA testé : à renseigner après commit (`git rev-parse HEAD`)
+SHA testé : 1caf8f60e92ff9808e601b87a7e61b8af9291991
 
 ## Base inspectée
 
