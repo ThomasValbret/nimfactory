@@ -1,0 +1,18 @@
+{
+  "sha": "e8609ea9044f3c68fb678b054a6db4ed694015cf",
+  "route": "api",
+  "preflight_ok": false,
+  "curl_exit": 6,
+  "http": "000",
+  "roles_untested": [
+    "planner",
+    "reviser",
+    "implementer"
+  ],
+  "how_to_fix": [
+    "SSH onto the VPS host (not Cursor agent shell).",
+    "Confirm: curl -sS https://api.openai.com/v1/models -H \"Authorization: Bearer $OPENAI_API_KEY\" | head",
+    "Then: NF_PROJECT_ROUTE=api bash scripts/e2e_project_cli_journey.sh",
+    "Agent sandbox allowlist denies api.openai.com (CONNECT 403); host eth0 has real egress."
+  ]
+}
