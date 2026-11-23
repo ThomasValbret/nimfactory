@@ -322,6 +322,47 @@ proc lineBoundsAround*(content: string; pos: int): tuple[lineStart, lineEnd: int
     inc stop  # include trailing newline when present
   (start, stop)
 
+proc looksLikeProcHeaderLine*(line: string): bool =
+  ## True for a definition header whose body is on following indented lines.
+  ## Language-agnostic heuristic for Nim/Python-like `proc foo =` / `def foo:`.
+  let t = line.strip()
+  if t.len == 0: return false
+  let low = t.toLowerAscii
+  let endsHeader = t.endsWith("=") or t.endsWith(":")
+  if not endsHeader: return false
+  low.startsWith("proc ") or low.startsWith("func ") or low.startsWith("method ") or
+    low.startsWith("template ") or low.startsWith("macro ") or
+    low.startsWith("iterator ") or low.startsWith("converter ") or
+    low.startsWith("def ") or low.startsWith("class ") or
+    low.startsWith("async def ")
+
+proc insertPointAfterAnchoredLine*(content: string; anchorPos: int): int =
+  ## For insert_line_after: if the anchor is a proc/def header, skip the indented
+  ## body so a new sibling declaration is not glued into the existing one.
+  let bounds = lineBoundsAround(content, anchorPos)
+  var lineText = content[bounds.lineStart ..< bounds.lineEnd]
+  if lineText.endsWith("\n"):
+    lineText = lineText[0 ..< ^1]
+  if not looksLikeProcHeaderLine(lineText):
+    return bounds.lineEnd
+  var i = bounds.lineEnd
+  var lastBodyEnd = bounds.lineEnd
+  while i < content.len:
+    var ls = i
+    var le = i
+    while le < content.len and content[le] != '\n':
+      inc le
+    let raw = content[ls ..< le]
+    let endWithNl = if le < content.len: le + 1 else: le
+    if raw.len == 0:
+      break
+    if raw[0] in {' ', '\t'}:
+      lastBodyEnd = endWithNl
+      i = endWithNl
+    else:
+      break
+  lastBodyEnd
+
 proc normalizeLineInsertion*(text: string): string =
   ## Ensure inserted chunk is at least one line (leading/trailing newlines as needed).
   result = text.replace("\r\n", "\n")
@@ -479,10 +520,12 @@ proc applyEditsToContent*(
       updated = updated[0 ..< bounds.lineStart] & chunk & updated[bounds.lineStart .. ^1]
       details.add("edit_" & $i & ":insert_line_before")
     of "insert_line_after":
-      let bounds = lineBoundsAround(updated, pos + ed.oldText.len - 1)
+      let at = max(pos + ed.oldText.len - 1, pos)
+      let insertAt = insertPointAfterAnchoredLine(updated, at)
       let chunk = normalizeLineInsertion(ed.newText)
-      updated = updated[0 ..< bounds.lineEnd] & chunk & updated[bounds.lineEnd .. ^1]
+      updated = updated[0 ..< insertAt] & chunk & updated[insertAt .. ^1]
       details.add("edit_" & $i & ":insert_line_after")
+
     else:
       updated = updated[0 ..< pos] & ed.newText & updated[pos + ed.oldText.len .. ^1]
       details.add("edit_" & $i & ":applied")

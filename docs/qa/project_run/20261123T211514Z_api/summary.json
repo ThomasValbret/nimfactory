@@ -1,0 +1,137 @@
+{
+  "stamp": "20261123T211514Z",
+  "route": "api",
+  "code_sha": "7f56c42728db4608eeb381e0ceeb32e5e8da7001",
+  "exit_code": 4,
+  "ok": false,
+  "verdict": "verify_failed",
+  "message": "compile failed (exit 1)",
+  "next_action": "revise",
+  "interventions": [
+    {
+      "kind": "ask",
+      "ok": true,
+      "verdict": "plan_ready",
+      "message": "plan v1 persisted",
+      "api_calls": 1,
+      "provider_calls": 1
+    },
+    {
+      "kind": "revise",
+      "ok": true,
+      "verdict": "plan_revised",
+      "message": "plan v2 persisted",
+      "api_calls": 1,
+      "provider_calls": 1
+    },
+    {
+      "kind": "step:1",
+      "ok": false,
+      "verdict": "recovery_exhausted",
+      "message": "recovery still refused (anchor_missing); no write",
+      "api_calls": 2,
+      "provider_calls": 2
+    },
+    {
+      "kind": "revise:auto",
+      "ok": false,
+      "verdict": "revise_equivalent",
+      "message": "revision equivalent; motif preserved: recovery exhausted on step 1: recovery still refused (anchor_missing); no write; propose a different plan or edit (same recovery path refused)",
+      "api_calls": 1,
+      "provider_calls": 1
+    },
+    {
+      "kind": "revise:deterministic",
+      "ok": true,
+      "verdict": "deterministic_treatment",
+      "message": "equivalent revise \u2192 deterministic one-file treatment; motif=recovery exhausted on step 1: recovery still refused (anchor_missing); no write; propose a different plan or edit (same recovery path refused)",
+      "api_calls": 0,
+      "provider_calls": 0
+    },
+    {
+      "kind": "step:1",
+      "ok": false,
+      "verdict": "verify_failed",
+      "message": "compile failed (exit 1)",
+      "api_calls": 2,
+      "provider_calls": 2
+    },
+    {
+      "kind": "revise:auto",
+      "ok": false,
+      "verdict": "revise_equivalent",
+      "message": "revision equivalent; motif preserved: compile failed on step 1: closing \"\"\" expected, but end of file reached; change how the blockage is treated (prefer insertLine* / different split)",
+      "api_calls": 1,
+      "provider_calls": 1
+    },
+    {
+      "kind": "revise:deterministic",
+      "ok": true,
+      "verdict": "deterministic_treatment",
+      "message": "equivalent revise \u2192 deterministic one-file treatment; motif=compile failed on step 1: closing \"\"\" expected, but end of file reached; change how the blockage is treated (prefer insertLine* / different split)",
+      "api_calls": 0,
+      "provider_calls": 0
+    },
+    {
+      "kind": "step:1",
+      "ok": false,
+      "verdict": "verify_failed",
+      "message": "compile failed (exit 1)",
+      "api_calls": 2,
+      "provider_calls": 2
+    }
+  ],
+  "api_calls_this_command": 10,
+  "provider_calls_this_command": 10,
+  "usage_by_role": {
+    "planner": {
+      "prompt_tokens": 747,
+      "completion_tokens": 446,
+      "calls": 1,
+      "estimated_usd": 0.00037965,
+      "model": "gpt-4o-mini"
+    },
+    "implementer": {
+      "prompt_tokens": 4778,
+      "completion_tokens": 733,
+      "calls": 3,
+      "estimated_usd": 0.0011565,
+      "model": "gpt-4o-mini"
+    },
+    "reviser": {
+      "prompt_tokens": 3833,
+      "completion_tokens": 1609,
+      "calls": 3,
+      "estimated_usd": 0.00154035,
+      "model": "gpt-4o-mini"
+    },
+    "implementer_recovery": {
+      "prompt_tokens": 1549,
+      "completion_tokens": 634,
+      "calls": 1,
+      "estimated_usd": 0.00061275,
+      "model": "gpt-4o-mini"
+    },
+    "implementer_compile_repair": {
+      "prompt_tokens": 3804,
+      "completion_tokens": 403,
+      "calls": 2,
+      "estimated_usd": 0.0008124,
+      "model": "gpt-4o-mini"
+    }
+  },
+  "delivered_tree": "",
+  "delivered_hash": "",
+  "binary_behaviour": {},
+  "blocked": {
+    "kind": "verify_failed",
+    "step_id": "1",
+    "next_action": "revise",
+    "message": "compile failed (exit 1)"
+  },
+  "status_verdict": "revise_plan_needed",
+  "first_faulty_decision": "recovery_exhausted",
+  "first_faulty_raw": "```json\n{\n  \"target_file\": \"src/tasks.nim\",\n  \"decision\": \"\",\n  \"edits\": [\n    {\n      \"insertLineAfter\": \"proc formatList*(tasks: openArray[Task]): string =\",\n      \"newText\": \"proc csvQuote*(text: string): string =\\n  if text.contains(','):\\n    result = '\\\"' & text.replace(\\\"'\\\", \\\"'\\\"\\\") & '\\\"'\\n  else:\\n    result = text\"\n    },\n    {\n      \"insertLineAfter\": \"proc csvQuote*(text: string): string =\",\n      \"newText\": \"proc formatCsv*(tasks: openArray[Task]): string =\\n  var lines: seq[string] = @[]\\n  for t in tasks:\\n    lines.add(csvQuote($t.id) & ',' & csvQuote(t.title))\\n  lines.join('\\n')\"\n    }\n  ]\n}\n```",
+  "user_command": "nimfactory project run --store \u2026 --cwd fixtures/demo_tasks_cli --objective 'Je veux pouvoir exporter mes t\u00e2ches.' --refinement '\u2026CSV\u2026' --route api",
+  "estimated_usd_total": 0.00450165
+}

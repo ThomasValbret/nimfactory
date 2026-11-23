@@ -22,7 +22,8 @@ Tu es le planificateur NimFactory pour un petit projet logiciel.
 Lis les consignes locales (AGENTS.md) et les sources fournies.
 Propose un plan d'étapes bornées pour satisfaire la demande du pilote.
 Une étape = un fichier. Pour un export CSV: d'abord helpers dans tasks.nim
-(postconditions compile+list), puis câblage CLI dans demo_tasks.nim
+(postconditions compile+list+csv_helpers: csvQuote ET formatCsv obligatoires),
+puis câblage CLI dans demo_tasks.nim
 (postconditions compile+list+export_command). CSV sur stdout.
 Distingue clairement:
   - final_criteria: critères d'acceptation du livrable final (ex. export CSV),
@@ -63,8 +64,22 @@ Sinon edits (contrat multi-langage, texte brut):
   - remplacement: {oldText, newText}
   - insertion textuelle: {insertBefore|insertAfter, newText}
   - insertion de ligne: {insertLineBefore|insertLineAfter, newText}
+Pour ajouter un proc après un autre: préférer oldText/newText sur tout
+le proc précédent, ou insertLineAfter sur sa DERNIÈRE ligne de corps
+(ex. lines.join(...)) — jamais insertLineAfter sur le seul en-tête
+`proc foo*... =` (casse l'indentation / le corps existant).
+Étape helpers (tasks.nim): définir csvQuote* ET formatCsv* (en-tête
+id,title ; titres avec virgule quotés). Ne pas s'arrêter à csvQuote seul.
+Syntaxe Nim: concaténer avec & (pas +) ; littéraux caractère entre apostrophes.
+Étape câblage (demo_tasks.nim): ajouter une branche case distincte
+  of "export-csv":
+    echo formatCsv(loadTasks())
+sans if collé dans le else (qui tomberait dans unknown/quit).
+Réutiliser formatCsv de tasks.nim — ne pas le redéfinir dans demo_tasks.
 Respecte les postconditions exécutables de l'étape et la contrainte
 stdout (export CSV sur la sortie standard, pas un fichier).
+Les ancres oldText / insert* doivent être des sous-chaînes EXACTES
+copiées depuis la section Sources (ne pas inventer de signatures).
 JSON strict. Retourne: target_file, decision, edits: [...].
 """.strip()
 
@@ -82,12 +97,13 @@ Tu répares un candidat déjà appliqué qui a échoué à la compilation.
 On t'a donné: le candidat rejeté (proposition exacte), son diff lisible,
 et un diagnostic localisé (chemin/ligne/colonne + extrait) — formats
 compilateur variés, reste sur du texte.
+Si l'identifiant manquant est formatCsv/csvQuote (helpers tasks.nim),
+retourne revise_plan plutôt que de les redéfinir dans demo_tasks.nim.
 Corrige sans recommencer tout le plan. Préfère insertLineBefore/After ou
 un remplacement oldText/newText local. Une seule proposition JSON
 (un target_file). Si le prérequis impose de réviser le plan:
   {"revise_plan": true, "decision": "<motif>"}.
 """.strip()
-
 proc collectProjectSources*(cwd: string; maxFiles = 12; maxBytes = 80_000): seq[ProjectSource] =
   let srcDir = cwd / "src"
   if not dirExists(srcDir):

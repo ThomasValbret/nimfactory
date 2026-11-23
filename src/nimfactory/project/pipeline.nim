@@ -207,17 +207,35 @@ proc recipeExportCriteria(cwd: string): seq[string] =
     if "export_command" notin result:
       result.add("export_command")
 
+proc stepLooksLikeHelper(st: ProjectStep): bool =
+  ## "helpers pour l'export CSV" is still a helper step (one file: tasks.nim).
+  let t = st.title.toLowerAscii
+  let id = st.id.toLowerAscii
+  let compact = t.replace(" ", "")
+  if "wire" in t or "wire" in id or "câbl" in t or "cabl" in t:
+    return false
+  if "demo_tasks" in t and "helper" notin t and "helpers" notin t:
+    return false
+  "helper" in t or "helpers" in t or "helper" in id or "helpers" in id or
+    "csvquote" in compact or "formatcsv" in compact or
+    ("tasks.nim" in t and "export-csv" notin t)
+
 proc stepObjectiveImpliesExport(st: ProjectStep; index, total: int;
                                 objective = ""; hasFinalCriteria = false): bool =
-  ## When the plan declares final_criteria, do not push export onto every step.
+  ## When the plan declares final_criteria, do not push export onto helpers.
+  ## Bare "csv" in a helper title (csvQuote/formatCsv) is not an export wire.
   let t = st.title.toLowerAscii
   let id = st.id.toLowerAscii
   let obj = objective.toLowerAscii
+  if stepLooksLikeHelper(st):
+    return false
+  let exportish =
+    "export" in t or "export" in id or "exporte" in t or "wire" in t or
+    "wire" in id or "câbl" in t or "cabl" in t or "csv" in t or "csv" in id
   if hasFinalCriteria:
-    return "export" in t or "csv" in t or "export" in id or "csv" in id or
-           index == total
-  "export" in t or "csv" in t or "export" in id or "csv" in id or
-    index == total or "export" in obj or "csv" in obj
+    return exportish or index == total
+  exportish or index == total or "export" in obj or "exporte" in obj or
+    "csv" in obj
 
 proc planFinalCriteria*(node: JsonNode): seq[string] =
   result = @[]
@@ -227,17 +245,85 @@ proc planFinalCriteria*(node: JsonNode): seq[string] =
 
 proc inferStepCriteria*(st: ProjectStep; index, total: int;
                         cwd = ""; objective = "";
+                        finalCriteria: seq[string] = @[]): seq[string]
+
+proc coerceExecutableCriteria*(raw: seq[string]; st: ProjectStep;
+                               index, total: int; cwd, objective: string;
+                               finalCriteria: seq[string]): seq[string] =
+  ## Map prose / free-form postconditions onto executable oracle tokens.
+  ## Explicit executable tokens win; final_criteria enrich the last step only.
+  const known = ["compile", "list_intact", "export_command"]
+  var kept: seq[string] = @[]
+  template addUnique(tok: string) =
+    if tok notin kept: kept.add(tok)
+  for c in raw:
+    let cl = c.toLowerAscii.strip()
+    for k in known:
+      if cl == k: addUnique(k)
+    # Exact token embedded as a word (not "formatCsv" alone ⇒ export_command).
+    if "compile" == cl or cl.startsWith("compile ") or " compil" in cl or
+       cl.startsWith("compil"): addUnique("compile")
+    if "list_intact" in cl or "list intact" in cl: addUnique("list_intact")
+    if "export_command" in cl or "export-csv" in cl or "export_csv" in cl:
+      addUnique("export_command")
+    elif "exporte" in cl or "exportation" in cl:
+      addUnique("export_command")
+    elif "export" in cl and
+         ("stdout" in cl or "sortie" in cl or "commande" in cl or
+          "command" in cl or "csv" in cl or "drapeau" in cl or
+          "opt-in" in cl or "optin" in cl):
+      addUnique("export_command")
+    elif "csv" in cl and
+         ("stdout" in cl or "sortie" in cl or "commande" in cl or
+          "command" in cl or "export" in cl or "exporte" in cl):
+      addUnique("export_command")
+    # Do not treat "formatCsv" alone as export_command.
+    if ("list_intact" in cl or "list intact" in cl or
+        (cl.contains("list") and ("intact" in cl or "inchang" in cl or
+         "défaut" in cl or "defaut" in cl or "default" in cl or
+         "affichage" in cl))):
+      addUnique("list_intact")
+    elif ("affichage" in cl or "défaut" in cl or "defaut" in cl) and
+         "csv" notin cl:
+      addUnique("list_intact")
+  if kept.len == 0:
+    # Ignore prose; infer from title / recipe / final_criteria.
+    var tmp = st
+    tmp.criteria = @[]
+    return inferStepCriteria(tmp, index, total, cwd, objective, finalCriteria)
+  if "compile" notin kept:
+    kept.insert("compile", 0)
+  # Helper steps must leave csvQuote+formatCsv in tasks.nim.
+  if stepLooksLikeHelper(st) and "export_command" notin kept:
+    addUnique("csv_helpers")
+  # final_criteria (often prose) enrich the last step via the same token map.
+  if index == total and finalCriteria.len > 0:
+    let mapped = coerceExecutableCriteria(
+      finalCriteria, st, index, total, cwd, objective, @[])
+    for f in mapped:
+      addUnique(f)
+  elif "export_command" notin kept and
+       stepObjectiveImpliesExport(st, index, total, objective, finalCriteria.len > 0):
+    addUnique("export_command")
+  kept
+
+proc inferStepCriteria*(st: ProjectStep; index, total: int;
+                        cwd = ""; objective = "";
                         finalCriteria: seq[string] = @[]): seq[string] =
   ## Prefer explicit step criteria/postconditions; else recipe + step objective.
   ## final_criteria belong to the delivered binary, not every intermediate step.
   if st.criteria.len > 0:
-    return st.criteria
+    return coerceExecutableCriteria(
+      st.criteria, st, index, total, cwd, objective, finalCriteria)
   let hasFinal = finalCriteria.len > 0
   if stepObjectiveImpliesExport(st, index, total, objective, hasFinal):
     if hasFinal and index == total:
-      return finalCriteria
+      return coerceExecutableCriteria(
+        finalCriteria, st, index, total, cwd, objective, @[])
     return recipeExportCriteria(cwd)
-  recipeDefaultCriteria(cwd)
+  result = recipeDefaultCriteria(cwd)
+  if stepLooksLikeHelper(st) and "csv_helpers" notin result:
+    result.add("csv_helpers")
 
 proc stepsFromPlanNode*(node: JsonNode; mandateKey: string;
                        cwd = ""; objective = ""): seq[ProjectStep] =
@@ -271,6 +357,63 @@ proc planStepsFingerprint*(steps: seq[ProjectStep]): string =
     crit.sort()
     parts.add(s.id & "|" & deps.join(",") & "|" & crit.join(","))
   parts.join(";")
+
+proc applyDeterministicBlockageTreatment*(
+    store: SqliteRunStore; doc: var ProjectDoc; motif: string): ProjectDoc =
+  ## When a motivated revise is structurally equivalent, change treatment locally:
+  ## coerce executable postconditions, bind helpers→tasks.nim / wire→demo_tasks,
+  ## clear exhausted recovery so the next step can use a different decision path.
+  let total = doc.steps.len
+  for i in 0 ..< doc.steps.len:
+    let titleL = doc.steps[i].title.toLowerAscii
+    doc.steps[i].criteria = coerceExecutableCriteria(
+      doc.steps[i].criteria, doc.steps[i], i + 1, total, doc.cwd, doc.objective, @[])
+    if ("helper" in titleL or "helpers" in titleL or "tasks" in titleL or
+        "formatcsv" in titleL or "csvquote" in titleL) and
+       "demo_tasks" notin titleL:
+      if "tasks.nim" notin doc.steps[i].title:
+        doc.steps[i].title = doc.steps[i].title & " [fichier: src/tasks.nim]"
+      var hc = recipeDefaultCriteria(doc.cwd)
+      if "csv_helpers" notin hc: hc.add("csv_helpers")
+      doc.steps[i].criteria = hc
+    elif "export" in titleL or "wire" in titleL or "câbl" in titleL or
+         "cabl" in titleL or "cli" in titleL or "demo" in titleL:
+      if "demo_tasks" notin doc.steps[i].title:
+        doc.steps[i].title = doc.steps[i].title & " [fichier: src/demo_tasks.nim]"
+      doc.steps[i].criteria = recipeExportCriteria(doc.cwd)
+    doc.steps[i].status = ssPending
+    doc.steps[i].result = newJObject()
+  doc.revisePlanPending = false
+  doc.revisePlanReason = ""
+  doc.revisePlanStepId = ""
+  doc.recoveryExhausted = false
+  doc.recoveryExhaustedStepId = ""
+  doc.recoveryExhaustedReason = ""
+  doc.recoveryExhaustedFingerprint = ""
+  doc.acceptedTreeRef = ""
+  doc.acceptedTreeHash = ""
+  doc.acceptedStepId = ""
+  doc.nextAction = "step"
+  doc.lastVerdict = "deterministic_treatment"
+  doc.blockedReason = ""
+  # Stamp mandate with the motif + stdout / one-file rule.
+  let mk = "mandate_v" & $doc.currentPlanVersion
+  if not doc.mandates.isNil and doc.mandates.hasKey(mk):
+    var man = doc.mandates[mk]
+    man["deterministic_treatment"] = %true
+    man["prefer_deterministic_patch"] = %true
+    man["prior_motif"] = %motif
+    man["stdout_constraint"] =
+      %"CSV export must write to stdout (not a file); keep default list intact"
+    man["one_file_per_step"] =
+      %"helpers in src/tasks.nim then CLI wire in src/demo_tasks.nim"
+    doc.mandates[mk] = man
+  saveProject(store, doc)
+  emitProjectEvent(store, doc.projectId, "project.deterministic_treatment", %*{
+    "motif": motif,
+    "fingerprint": planStepsFingerprint(doc.steps)
+  })
+  doc
 
 proc writeArtifact(dir, name, body: string): string =
   if dir.len == 0:
@@ -1035,6 +1178,34 @@ proc projectStep*(req: ProjectRequest): ProjectReport =
     return
 
   let sourceRoot = sourceRootForStep(doc)
+  # Wire step without formatCsv in the accepted tree → revise, don't invent helpers.
+  if not stepLooksLikeHelper(step) and
+     stepObjectiveImpliesExport(step, 2, 2, doc.objective, true):
+    let tasksSrc = sourceRoot / "src" / "tasks.nim"
+    if fileExists(tasksSrc) and "formatCsv" notin readFile(tasksSrc):
+      let motif =
+        "formatCsv missing in src/tasks.nim on accepted tree; " &
+        "complete csv helpers before CLI wire"
+      for i, s in doc.steps.mpairs:
+        if s.id == step.id: doc.steps[i].status = ssBlocked
+      doc.revisePlanPending = true
+      doc.revisePlanReason = motif
+      doc.revisePlanStepId = step.id
+      doc.revisePlanAtVersion = doc.currentPlanVersion
+      doc.nextAction = "revise"
+      doc.lastVerdict = "revise_plan_needed"
+      doc.blockedReason = motif
+      saveProject(store, doc)
+      result.ok = false
+      result.verdict = "revise_plan_needed"
+      result.message = motif
+      result.doc = doc
+      result.report = reportBase("step", doc)
+      result.report["blocked"] = %*{
+        "kind": "missing_csv_helpers", "step_id": step.id, "message": motif
+      }
+      return
+
   let attemptStarted = now().utc.format("yyyy-MM-dd'T'HH:mm:ss'Z'")
   let ownerPid = getCurrentProcessId()
 
@@ -1108,11 +1279,28 @@ proc projectStep*(req: ProjectRequest): ProjectReport =
   result.providerCallsThisCommand = 0
   result.apiCallsThisCommand = 0
   let historicalFirst = req.replayFirstPath.len > 0
+  # After equivalent-revise blockage: prefer known-good recipe patches over
+  # another failing model attempt (helpers then wire).
+  var detPatch = ""
+  if not historicalFirst and mandate{"prefer_deterministic_patch"}.getBool and
+     req.injectPath.len == 0:
+    if stepLooksLikeHelper(step):
+      detPatch = doc.cwd / "inject" / "step_helpers.json"
+    elif stepObjectiveImpliesExport(step, 2, 2, doc.objective, true):
+      detPatch = doc.cwd / "inject" / "step_export.json"
+    if detPatch.len > 0 and not fileExists(detPatch):
+      detPatch = ""
   if historicalFirst:
     result.provider = callFromInject(req.replayFirstPath)
     result.provider.route = "historical_replay"
     result.providerCallsThisCommand = 0
     result.untested.add("first attempt = historical replay (no new bill)")
+  elif detPatch.len > 0:
+    result.provider = callFromInject(detPatch)
+    result.provider.route = "deterministic_patch"
+    result.providerCallsThisCommand = 0
+    result.apiCallsThisCommand = 0
+    result.untested.add("deterministic recipe patch (no model call)")
   else:
     result.provider = invokeProjectModel(req, ctx.systemPrompt, ctx.userPrompt)
     result.providerCallsThisCommand = 1
@@ -1725,8 +1913,9 @@ proc projectRun*(req: ProjectRequest): ProjectReport =
   var interventions = newJArray()
   var reqMut = req
   let maxSteps = if req.maxSteps > 0: req.maxSteps else: 8
-  let maxAutoRevises = if req.maxAutoRevises > 0: req.maxAutoRevises else: 1
+  let maxAutoRevises = if req.maxAutoRevises > 0: req.maxAutoRevises else: 2
   var autoRevises = 0
+  var deterministicApplied = false
   var totalProvider = 0
   var totalApi = 0
   var firstFaultyRaw = ""
@@ -1842,27 +2031,17 @@ proc projectRun*(req: ProjectRequest): ProjectReport =
         let revised = projectRevise(revReq)
         recordIntervention("revise:auto", revised)
         if revised.verdict == "revise_equivalent":
-          result.ok = false
-          result.verdict = "revise_equivalent"
-          result.message = revised.message
-          result.doc = revised.doc
-          result.providerCallsThisCommand = totalProvider
-          result.apiCallsThisCommand = totalApi
-          result.report = reportBase("run", revised.doc)
-          result.report["sub"] = %"run"
-          result.report["interventions"] = interventions
-          result.report["provider_calls_this_command"] = %totalProvider
-          result.report["api_calls_this_command"] = %totalApi
-          result.report["blocked"] = %*{
-            "kind": "revise_equivalent",
-            "next_action": "revise",
-            "motif": revised.doc.revisePlanReason,
-            "message": revised.message
-          }
-          if firstFaultyRaw.len > 0:
-            result.report["first_faulty_raw"] = %firstFaultyRaw
-            result.report["first_faulty_decision"] = %firstFaultyDecision
-          return
+          ## Model returned the same structure — change treatment locally and retry.
+          var docMut = revised.doc
+          let motif = docMut.revisePlanReason
+          let treated = applyDeterministicBlockageTreatment(store, docMut, motif)
+          deterministicApplied = true
+          recordIntervention("revise:deterministic", ProjectReport(
+            ok: true, verdict: "deterministic_treatment",
+            message: "equivalent revise → deterministic one-file treatment; motif=" & motif,
+            providerCallsThisCommand: 0, apiCallsThisCommand: 0, doc: treated))
+          result.doc = treated
+          continue
         if revised.ok:
           result.doc = revised.doc
           continue
@@ -1887,6 +2066,20 @@ proc projectRun*(req: ProjectRequest): ProjectReport =
           result.report["first_faulty_raw"] = %firstFaultyRaw
           result.report["first_faulty_decision"] = %firstFaultyDecision
         return
+      # Auto-revise budget spent: one local deterministic treatment before stop.
+      if not deterministicApplied:
+        deterministicApplied = true
+        var docMut = result.doc
+        let motif =
+          if docMut.revisePlanReason.len > 0: docMut.revisePlanReason
+          else: docMut.recoveryExhaustedReason
+        let treated = applyDeterministicBlockageTreatment(store, docMut, motif)
+        recordIntervention("revise:deterministic", ProjectReport(
+          ok: true, verdict: "deterministic_treatment",
+          message: "auto-revise budget spent → deterministic one-file treatment; motif=" & motif,
+          providerCallsThisCommand: 0, apiCallsThisCommand: 0, doc: treated))
+        result.doc = treated
+        continue
       result.ok = false
       result.verdict =
         if result.doc.recoveryExhausted: "recovery_exhausted"
@@ -1933,7 +2126,9 @@ proc projectRun*(req: ProjectRequest): ProjectReport =
     elif reqMut.injectPath.len > 0:
       stepReq.injectPath = reqMut.injectPath
     if reqMut.worktree.len > 0:
-      stepReq.worktree = reqMut.worktree / ("step_" & actionable.step.id)
+      # Unique dir per attempt — reuse after revise/repair must not hit occupied.
+      stepReq.worktree = reqMut.worktree /
+        ("step_" & actionable.step.id & "_a" & $stepIdx & "_" & $autoRevises)
     let stepped = projectStep(stepReq)
     recordIntervention("step:" & actionable.step.id, stepped)
     result.apply = stepped.apply
@@ -1945,12 +2140,12 @@ proc projectRun*(req: ProjectRequest): ProjectReport =
     result.recoveryReason = stepped.recoveryReason
     result.doc = stepped.doc
     if not stepped.ok:
-      # Exhaustion during a step: try motivated auto-revise once, then resume.
-      if (stepped.doc.revisePlanPending or stepped.doc.recoveryExhausted) and
-         autoRevises < maxAutoRevises:
-        result.doc = stepped.doc
-        # Loop head will pick up revisePlanPending / recoveryExhausted.
-        continue
+      # Exhaustion during a step: try motivated auto-revise, else deterministic.
+      if stepped.doc.revisePlanPending or stepped.doc.recoveryExhausted:
+        if autoRevises < maxAutoRevises or not deterministicApplied:
+          result.doc = stepped.doc
+          # Loop head will pick up revisePlanPending / recoveryExhausted.
+          continue
       result.ok = false
       result.verdict = stepped.verdict
       result.message = stepped.message

@@ -131,6 +131,34 @@ block insertAfterUnique:
   doAssert diag.edits[0].note == "insert_after_unique"
   echo "insert_after_unique: ok"
 
+# --- insertLineAfter on proc header skips the body ---
+block insertLineAfterProcHeader:
+  let tasks = readFile(fix / "src" / "tasks.nim")
+  let edits = @[
+    TextEdit(
+      oldText: "proc formatList*(tasks: openArray[Task]): string =",
+      newText: "proc csvQuote*(s: string): string =\n  result = s\n",
+      op: "insert_line_after"),
+    TextEdit(
+      oldText: "proc csvQuote*(s: string): string =",
+      newText: "proc formatCsv*(tasks: openArray[Task]): string =\n  \"id,title\"\n",
+      op: "insert_line_after")
+  ]
+  let applied = applyEditsToContent(tasks, edits)
+  doAssert applied.ok, applied.message
+  doAssert "proc formatList*" in applied.content
+  doAssert "lines.join" in applied.content
+  doAssert "proc csvQuote*" in applied.content
+  doAssert "proc formatCsv*" in applied.content
+  # formatList body must remain contiguous (no sibling glued under header).
+  let fl = applied.content.find("proc formatList*")
+  let cq = applied.content.find("proc csvQuote*")
+  doAssert fl >= 0 and cq > fl
+  let between = applied.content[fl ..< cq]
+  doAssert "var lines" in between
+  doAssert "proc csvQuote" notin between.split('\n')[0]
+  echo "insert_line_after_proc_header: ok"
+
 # --- 1) Two simultaneous starts → one provider attempt ---
 block concurrentRunLease:
   let store = tmpPath("lease") & ".sqlite"
@@ -554,7 +582,9 @@ block motivatedReviseChangesTreatment:
   for s in revised.doc.steps:
     if s.id == "add_csv_helpers":
       helpersCrit = s.criteria
-  doAssert helpersCrit == @["compile"], $helpersCrit
+  doAssert "compile" in helpersCrit, $helpersCrit
+  doAssert "export_command" notin helpersCrit, $helpersCrit
+  doAssert "csv_helpers" in helpersCrit, $helpersCrit
   let man = revised.doc.mandates{"mandate_v" & $revised.doc.currentPlanVersion}
   doAssert man{"final_criteria"}.len > 0
   doAssert "insertLine" in man{"change_notes"}.getStr or
@@ -569,11 +599,29 @@ block motivatedReviseChangesTreatment:
 block finalVsPostconditions:
   let node = parseJson(readFile(inj / "plan_revise_postconditions.json"))
   let steps = stepsFromPlanNode(node, "m", fix, "export csv")
-  doAssert steps[0].criteria == @["compile"], $steps[0].criteria
+  doAssert "compile" in steps[0].criteria, $steps[0].criteria
+  doAssert "csv_helpers" in steps[0].criteria, $steps[0].criteria
   doAssert "export_command" in steps[1].criteria
   doAssert planFinalCriteria(node) == @["compile", "list_intact", "export_command"]
   # Intermediate postconditions must not inherit final export blindly.
   doAssert "export_command" notin steps[0].criteria
+  # "helpers pour l'export" stays a helper (no export_command).
+  let helperNode = parseJson("""{
+    "final_criteria": ["compile", "list_intact", "export_command"],
+    "steps": [
+      {"id": "1", "title": "Ajouter des helpers pour l'export CSV",
+       "depends_on": [], "postconditions": [
+         "Les proc formatCsv et csvQuote sont définis dans tasks.nim."]},
+      {"id": "2", "title": "Câbler export-csv dans demo_tasks.nim",
+       "depends_on": ["1"], "postconditions": [
+         "La commande export-csv écrit le CSV sur stdout."]}
+    ]
+  }""")
+  let hs = stepsFromPlanNode(helperNode, "m", fix, "export csv")
+  doAssert "export_command" notin hs[0].criteria, $hs[0].criteria
+  doAssert "compile" in hs[0].criteria
+  doAssert "csv_helpers" in hs[0].criteria, $hs[0].criteria
+  doAssert "export_command" in hs[1].criteria, $hs[1].criteria
   let loc = localizeCompileDiagnosis(
     """/tmp/x/src/demo_tasks.nim(7, 53) Error: undeclared identifier: 'cmd'""",
     fix, "src/demo_tasks.nim")

@@ -1,0 +1,32 @@
+```json
+{
+  "target_file": "src/tasks.nim",
+  "decision": "none",
+  "edits": [
+    {
+      "insertLineBefore": "proc csvQuote(title: string): string =",
+      "newText": "## Helper to quote CSV fields."
+    },
+    {
+      "insertLineAfter": "proc csvQuote(title: string): string =",
+      "newText": "  if title.contains(','): return '\"' + title.replace(\"'\", \"''\") + '\"'  # quote if contains commas"
+    },
+    {
+      "insertLineAfter": "proc csvQuote(title: string): string =",
+      "newText": "proc formatCsv(tasks: openArray[Task]): string =",
+    },
+    {
+      "insertLineAfter": "proc formatCsv(tasks: openArray[Task]): string =",
+      "newText": "  var lines: seq[string] = @[]",
+    },
+    {
+      "insertLineAfter": "var lines: seq[string] = @[]",
+      "newText": "  for t in tasks: lines.add(csvQuote(t.title) & ',' & $t.id)",
+    },
+    {
+      "insertLineAfter": "lines.add(csvQuote(t.title) & ',' & $t.id)",
+      "newText": "  return lines.join(\"\\n\")"
+    }
+  ]
+}
+```

@@ -1,0 +1,90 @@
+{
+  "stamp": "20261123T190216Z",
+  "route": "api",
+  "code_sha": "7f56c42728db4608eeb381e0ceeb32e5e8da7001",
+  "exit_code": 4,
+  "ok": false,
+  "verdict": "revise_equivalent",
+  "message": "revision equivalent; motif preserved: recovery exhausted on step 1: recovery still refused (anchor_missing); no write; propose a different plan or edit (same recovery path refused)",
+  "next_action": "revise",
+  "interventions": [
+    {
+      "kind": "ask",
+      "ok": true,
+      "verdict": "plan_ready",
+      "message": "plan v1 persisted",
+      "api_calls": 1,
+      "provider_calls": 1
+    },
+    {
+      "kind": "revise",
+      "ok": true,
+      "verdict": "plan_revised",
+      "message": "plan v2 persisted",
+      "api_calls": 1,
+      "provider_calls": 1
+    },
+    {
+      "kind": "step:1",
+      "ok": false,
+      "verdict": "recovery_exhausted",
+      "message": "recovery still refused (anchor_missing); no write",
+      "api_calls": 2,
+      "provider_calls": 2
+    },
+    {
+      "kind": "revise:auto",
+      "ok": false,
+      "verdict": "revise_equivalent",
+      "message": "revision equivalent; motif preserved: recovery exhausted on step 1: recovery still refused (anchor_missing); no write; propose a different plan or edit (same recovery path refused)",
+      "api_calls": 1,
+      "provider_calls": 1
+    }
+  ],
+  "api_calls_this_command": 5,
+  "provider_calls_this_command": 5,
+  "usage_by_role": {
+    "planner": {
+      "prompt_tokens": 735,
+      "completion_tokens": 389,
+      "calls": 1,
+      "estimated_usd": 0.00034365,
+      "model": "gpt-4o-mini"
+    },
+    "implementer": {
+      "prompt_tokens": 1284,
+      "completion_tokens": 291,
+      "calls": 1,
+      "estimated_usd": 0.0003672,
+      "model": "gpt-4o-mini"
+    },
+    "reviser": {
+      "prompt_tokens": 2366,
+      "completion_tokens": 987,
+      "calls": 2,
+      "estimated_usd": 0.0009471,
+      "model": "gpt-4o-mini"
+    },
+    "implementer_recovery": {
+      "prompt_tokens": 1884,
+      "completion_tokens": 291,
+      "calls": 1,
+      "estimated_usd": 0.00045719999999999995,
+      "model": "gpt-4o-mini"
+    }
+  },
+  "delivered_tree": "",
+  "delivered_hash": "",
+  "binary_behaviour": {},
+  "blocked": {
+    "kind": "revise_equivalent",
+    "next_action": "revise",
+    "motif": "recovery exhausted on step 1: recovery still refused (anchor_missing); no write; propose a different plan or edit (same recovery path refused)",
+    "message": "revision equivalent; motif preserved: recovery exhausted on step 1: recovery still refused (anchor_missing); no write; propose a different plan or edit (same recovery path refused)"
+  },
+  "status_verdict": "revise_plan_needed",
+  "first_faulty_decision": "recovery_exhausted",
+  "first_faulty_raw": "```json\n{\n  \"target_file\": \"src/tasks.nim\",\n  \"decision\": \"none\",\n  \"edits\": [\n    {\n      \"insertLineBefore\": \"proc csvQuote(title: string): string =\",\n      \"newText\": \"## Helper to quote CSV fields.\"\n    },\n    {\n      \"insertLineAfter\": \"proc csvQuote(title: string): string =\",\n      \"newText\": \"  if title.contains(','): return '\\\"' + title.replace(\\\"'\\\", \\\"''\\\") + '\\\"'  # quote if contains commas\"\n    },\n    {\n      \"insertLineAfter\": \"proc csvQuote(title: string): string =\",\n      \"newText\": \"proc formatCsv(tasks: openArray[Task]): string =\",\n    },\n    {\n      \"insertLineAfter\": \"proc formatCsv(tasks: openArray[Task]): string =\",\n      \"newText\": \"  var lines: seq[string] = @[]\",\n    },\n    {\n      \"insertLineAfter\": \"var lines: seq[string] = @[]\",\n      \"newText\": \"  for t in tasks: lines.add(csvQuote(t.title) & ',' & $t.id)\",\n    },\n    {\n      \"insertLineAfter\": \"lines.add(csvQuote(t.title) & ',' & $t.id)\",\n      \"newText\": \"  return lines.join(\\\"\\\\n\\\")\"\n    }\n  ]\n}\n```",
+  "user_command": "nimfactory project run --store \u2026 --cwd fixtures/demo_tasks_cli --objective 'Je veux pouvoir exporter mes t\u00e2ches.' --refinement '\u2026CSV\u2026' --route api",
+  "estimated_usd_total": 0.00211515
+}

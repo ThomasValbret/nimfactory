@@ -207,6 +207,13 @@ proc loadProjectRecipe*(cwd: string): ProjectRecipe =
   except CatchableError:
     discard
 
+proc csvHelpersPresent*(worktree: string): bool =
+  ## Helper step oracle: both csvQuote and formatCsv must exist in tasks.nim.
+  let p = worktree / "src" / "tasks.nim"
+  if not fileExists(p): return false
+  let body = readFile(p)
+  "csvQuote" in body and "formatCsv" in body
+
 proc verifyCsvJourney*(worktree, repoRoot: string; requireCsv = true): ProjectVerifyResult =
   ## Demo recipe oracle:
   ## - always: compile + no-args/list match fixture baseline
@@ -329,6 +336,15 @@ proc verifyStepCriteria*(
     if result.ok and "export_command" in criteria and not result.csvOk:
       result.ok = false
       result.message = "export_command_missing"
+    if "csv_helpers" in criteria:
+      let helpersOk = csvHelpersPresent(worktree)
+      result.details["csv_helpers"] = %helpersOk
+      if not helpersOk:
+        result.ok = false
+        if result.message.len == 0 or result.message.startsWith("intermediate"):
+          result.message = "csv_helpers_missing"
+        elif "csv_helpers_missing" notin result.message:
+          result.message = result.message & ",csv_helpers_missing"
     result.details["criteria"] = %criteria
   else:
     result = verifyForRecipe(recipe, worktree, repoRoot, finalStep = needCsv)
@@ -350,6 +366,9 @@ proc proofCoversCriteria*(verifyNode: JsonNode; criteria: seq[string]): bool =
         return false
     of "export_command":
       if not verifyNode{"csv_ok"}.getBool:
+        return false
+    of "csv_helpers":
+      if not verifyNode{"details"}{"csv_helpers"}.getBool:
         return false
     else:
       discard
