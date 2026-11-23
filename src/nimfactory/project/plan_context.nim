@@ -21,10 +21,12 @@ const
 Tu es le planificateur NimFactory pour un petit projet logiciel.
 Lis les consignes locales (AGENTS.md) et les sources fournies.
 Propose un plan d'étapes bornées pour satisfaire la demande du pilote.
+Une étape = un fichier. Pour un export CSV: d'abord helpers dans tasks.nim
+(postconditions compile+list), puis câblage CLI dans demo_tasks.nim
+(postconditions compile+list+export_command). CSV sur stdout.
 Distingue clairement:
   - final_criteria: critères d'acceptation du livrable final (ex. export CSV),
-  - postconditions: ce que chaque étape doit laisser vrai (souvent compile +
-    list_intact sans encore exiger l'export).
+  - postconditions: ce que chaque étape doit laisser vrai.
 Tu peux poser une question d'architecture facultative OU annoncer une hypothèse.
 Ne code pas. Réponds UNIQUEMENT en JSON avec les clés:
   summary (string),
@@ -52,29 +54,27 @@ Ne code pas. Réponds UNIQUEMENT en JSON avec les clés:
   ImplementSystemPrompt* = """
 Tu es l'agent de réalisation NimFactory pour une étape bornée.
 Contrat plan↔exécution: chaque étape doit laisser un arbre compilable.
-Tant que project step n'applique qu'un seul fichier, retourne UNE seule
-proposition JSON (un target_file). Plusieurs blocs JSON ou plusieurs
-target_file = refus avant toute écriture.
+UNE seule proposition JSON (un target_file). Toutes les ancres doivent
+appartenir à CE fichier ; si un helper vit ailleurs (ex. tasks.nim),
+traite-le dans une étape dédiée — ne mélange pas les fichiers.
 Si un prérequis hors mandat impose de revoir le plan, retourne:
   {"revise_plan": true, "decision": "<motif>"}.
-Sinon edits sur un fichier existant (contrat multi-langage, texte brut):
+Sinon edits (contrat multi-langage, texte brut):
   - remplacement: {oldText, newText}
   - insertion textuelle: {insertBefore|insertAfter, newText}
-    (colle immédiatement après l'ancre — dangereux en fin de ligne)
   - insertion de ligne: {insertLineBefore|insertLineAfter, newText}
-    (nouvelle(s) ligne(s) autour de la ligne portant l'ancre — préféré
-     pour du code)
-JSON strict uniquement. L'oracle vérifie le comportement du binaire.
-Retourne UNIQUEMENT JSON: target_file, decision, edits: [...].
+Respecte les postconditions exécutables de l'étape et la contrainte
+stdout (export CSV sur la sortie standard, pas un fichier).
+JSON strict. Retourne: target_file, decision, edits: [...].
 """.strip()
 
   ProjectRecoverySystemPrompt* = """
 Tu récupères une proposition d'édition refusée avant écriture.
-On t'a donné: une copie fidèle de ta réponse brute, un diagnostic sans
-écriture (ancres). Une seule proposition JSON (un target_file).
-Si prérequis: {"revise_plan": true, "decision": "<motif>"}.
-Sinon: oldText/newText, insertBefore/After (textuel), ou
-insertLineBefore/After (ligne). Pas de oldText vide.
+Le diagnostic indique pour chaque ancre le fichier où elle a été trouvée
+(found_in_file). Si une ancre est dans un autre fichier que target_file,
+reformule UNE proposition pour ce fichier-là, ou revise_plan pour
+séparer helper et CLI. Une seule proposition JSON (un target_file).
+Sinon: oldText/newText, insertBefore/After, ou insertLineBefore/After.
 """.strip()
 
   ProjectCompileRepairSystemPrompt* = """
@@ -157,19 +157,34 @@ proc buildReviseContext*(
     "\n\nProduis le JSON du plan révisé maintenant."
 
 proc buildImplementContext*(
-    cwd: string; mandate: JsonNode; stepTitle: string): PlanContext =
+    cwd: string; mandate: JsonNode; stepTitle: string;
+    postconditions: seq[string] = @[];
+    stdoutConstraint = ""): PlanContext =
+  ## postconditions = executable step checks; stdoutConstraint = CSV-on-stdout rule.
   result.agentsMd = loadAgentsMd(cwd)
   result.sources = collectProjectSources(cwd)
   result.sourceIds = result.sources.mapIt(it.relPath)
   result.ok = true
   result.systemPrompt = ImplementSystemPrompt
+  var postBlock = ""
+  if postconditions.len > 0:
+    postBlock =
+      "Postconditions exécutables de cette étape (oracle):\n- " &
+      postconditions.join("\n- ") & "\n\n"
+  let stdoutBlock =
+    if stdoutConstraint.len > 0: stdoutConstraint.strip() & "\n\n"
+    else:
+      "Contrainte stdout: si l'étape touche l'export, écrire le CSV sur la " &
+      "sortie standard (pas un fichier). Garder list/défaut intact.\n\n"
   result.userPrompt =
     "Étape: " & stepTitle & "\n\n" &
+    postBlock &
+    stdoutBlock &
     "Mandat borné (JSON):\n```json\n" & pretty(mandate) & "\n```\n\n" &
     "Extraits AGENTS.md utiles:\n" &
     (if result.agentsMd.len > 0: result.agentsMd else: "(absent)") &
     "\n\nSources autorisées:\n\n" & renderSources(result.sources) &
-    "\n\nProduis les edits JSON maintenant."
+    "\n\nProduis les edits JSON maintenant (un seul target_file)."
 
 proc buildProjectRecoveryContext*(
     cwd: string; mandate: JsonNode; stepTitle: string;

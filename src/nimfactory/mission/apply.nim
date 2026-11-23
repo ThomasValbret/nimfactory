@@ -6,7 +6,7 @@
 ## newText string is a valid deletion. Ambiguous anchors refuse without choosing
 ## an occurrence for the model.
 
-import std/[os, json, strutils, times]
+import std/[os, json, strutils, times, algorithm]
 
 type
   TextEdit* = object
@@ -680,7 +680,8 @@ proc exactProposalPayload*(raw: string): string =
 
 type
   EditDiagnosis* = object
-    targetFile*: string
+    targetFile*: string          ## declared target_file of the proposal
+    foundInFile*: string         ## actual file holding the anchor (may differ)
     editIndex*: int
     oldText*: string
     matchCount*: int
@@ -704,9 +705,35 @@ proc editFieldFromNode(item: JsonNode; names: openArray[string]): string =
       return item[n].getStr.replace("\r\n", "\n")
   ""
 
+proc listSourceRelPaths(sourceRoot: string): seq[string] =
+  ## Language-agnostic text sources under src/ (and root *.ext common cases).
+  result = @[]
+  let srcDir = sourceRoot / "src"
+  if dirExists(srcDir):
+    for path in walkDirRec(srcDir):
+      if fileExists(path):
+        let rel = relativePath(path, sourceRoot).replace('\\', '/')
+        result.add(rel)
+  result.sort(system.cmp)
+
+proc findAnchorAcrossTree*(
+    sourceRoot, anchor, skipRel: string): seq[tuple[rel: string; count: int]] =
+  ## Locate an anchor in other tree files when missing from the declared target.
+  result = @[]
+  if anchor.len == 0: return
+  for rel in listSourceRelPaths(sourceRoot):
+    if rel == skipRel: continue
+    let absPath = sourceRoot / rel
+    let body = readFile(absPath).replace("\r\n", "\n")
+    let n = findNonOverlapPositions(body, anchor).len
+    if n > 0:
+      result.add((rel, n))
+
 proc diagnoseEditItem(
-    item: JsonNode; tf, content: string; fileExists: bool; ei: int): EditDiagnosis =
-  result = EditDiagnosis(targetFile: tf, editIndex: ei, parseOk: item.kind == JObject)
+    item: JsonNode; tf, content: string; fileExists: bool; ei: int;
+    sourceRoot = ""): EditDiagnosis =
+  result = EditDiagnosis(
+    targetFile: tf, foundInFile: tf, editIndex: ei, parseOk: item.kind == JObject)
   if item.kind != JObject:
     result.note = "malformed_edit_element"
     return
@@ -724,6 +751,19 @@ proc diagnoseEditItem(
   if not fileExists:
     result.note = "target_missing"
     result.matchCount = 0
+    # Still search the tree so the model learns the real file.
+    if sourceRoot.len > 0:
+      let hits = findAnchorAcrossTree(sourceRoot, result.oldText, tf)
+      if hits.len == 1:
+        result.foundInFile = hits[0].rel
+        result.matchCount = hits[0].count
+        result.note = "anchor_wrong_file"
+        result.contexts.add("anchor found in " & hits[0].rel &
+                            " (declared target_file was " & tf & ")")
+      elif hits.len > 1:
+        result.note = "anchor_wrong_file"
+        for h in hits:
+          result.contexts.add("also in " & h.rel & " (" & $h.count & " match(es))")
     return
   let positions = findNonOverlapPositions(content, result.oldText)
   result.matchCount = positions.len
@@ -737,7 +777,20 @@ proc diagnoseEditItem(
     result.note = "anchor_ambiguous"
   elif positions.len == 0:
     result.note = "anchor_missing"
+    result.foundInFile = ""
+    if sourceRoot.len > 0:
+      let hits = findAnchorAcrossTree(sourceRoot, result.oldText, tf)
+      if hits.len >= 1:
+        result.note = "anchor_wrong_file"
+        result.foundInFile = hits[0].rel
+        result.matchCount = hits[0].count
+        result.contexts.add(
+          "anchor NOT in declared target_file=" & tf &
+          "; found in " & hits[0].rel & " (" & $hits[0].count & " match(es))")
+        for h in hits[1 .. ^1]:
+          result.contexts.add("also in " & h.rel & " (" & $h.count & " match(es))")
   else:
+    result.foundInFile = tf
     let op = if one.edit.op.len > 0: one.edit.op else: "replace"
     result.note =
       case op
@@ -772,16 +825,18 @@ proc diagnoseRawAgainstTree*(sourceRoot, raw: string): ProposalDiagnosis =
         var ei = 0
         for item in editsNode:
           inc ei
-          result.edits.add(diagnoseEditItem(item, tf, content, fileExists, ei))
+          result.edits.add(
+            diagnoseEditItem(item, tf, content, fileExists, ei, sourceRoot))
       elif node.hasKey("patched_content"):
         var ed = EditDiagnosis(
-          targetFile: tf, editIndex: 1, parseOk: true,
+          targetFile: tf, foundInFile: tf, editIndex: 1, parseOk: true,
           note: if fileExists: "patched_content_mode" else: "target_missing",
           matchCount: if fileExists: 1 else: 0)
         result.edits.add(ed)
       else:
         var ed = EditDiagnosis(
-          targetFile: tf, editIndex: 0, parseOk: true, note: "missing_edits")
+          targetFile: tf, foundInFile: tf, editIndex: 0, parseOk: true,
+          note: "missing_edits")
         result.edits.add(ed)
     except CatchableError:
       if "\"target_file\"" in body:
@@ -819,12 +874,15 @@ proc diagnoseRawAgainstTree*(sourceRoot, raw: string): ProposalDiagnosis =
     result.refuseCode = "multi_proposal"
   else:
     for ed in result.edits:
-      if ed.note in ["anchor_ambiguous", "anchor_missing", "target_missing",
-                     "empty_or_missing_oldText", "malformed_edit_element",
-                     "missing_edits", "malformed_json_block"]:
+      if ed.note in ["anchor_ambiguous", "anchor_missing", "anchor_wrong_file",
+                     "target_missing", "empty_or_missing_oldText",
+                     "malformed_edit_element", "missing_edits",
+                     "malformed_json_block"]:
         result.needsRefuse = true
         if ed.note == "anchor_ambiguous":
           result.refuseCode = "anchor_ambiguous"
+        elif ed.note == "anchor_wrong_file":
+          if result.refuseCode.len == 0: result.refuseCode = "anchor_wrong_file"
         elif ed.note == "malformed_json_block":
           if result.refuseCode.len == 0: result.refuseCode = "parse_error"
         elif result.refuseCode.len == 0:
@@ -840,14 +898,24 @@ proc diagnoseRawAgainstTree*(sourceRoot, raw: string): ProposalDiagnosis =
     parts.add("JSON illisible ou non extractible. Reformule en JSON strict, " &
               "ou utilise insertBefore/insertAfter sur une ancre unique " &
               "vérifiée dans l'arbre courant (pas de \"\"\" hors chaîne JSON).")
+  if result.refuseCode == "anchor_wrong_file":
+    parts.add("Une ou plusieurs ancres appartiennent à un autre fichier que " &
+              "target_file. Une étape = un seul target_file. Reformule: " &
+              "soit une proposition pour le fichier où l'ancre a été trouvée, " &
+              "soit revise_plan pour séparer helper (tasks) et CLI (demo_tasks).")
   if result.targets.len > 0:
     parts.add("Targets: " & result.targets.join(", "))
   if result.proposalCount > 1:
     parts.add("While project step applies a single file, reformulate as one " &
               "proposal or signal revise_plan if a prerequisite requires it.")
   for ed in result.edits:
-    parts.add("Edit " & $ed.editIndex & " on " & ed.targetFile &
-              ": note=" & ed.note & " match_count=" & $ed.matchCount)
+    var line = "Edit " & $ed.editIndex & " declared_target=" & ed.targetFile &
+               ": note=" & ed.note & " match_count=" & $ed.matchCount
+    if ed.foundInFile.len > 0 and ed.foundInFile != ed.targetFile:
+      line.add(" found_in_file=" & ed.foundInFile)
+    elif ed.foundInFile.len > 0:
+      line.add(" found_in_file=" & ed.foundInFile)
+    parts.add(line)
     if ed.oldText.len > 0:
       parts.add("oldText/anchor:")
       parts.add("```")

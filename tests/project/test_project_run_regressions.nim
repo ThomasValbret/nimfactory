@@ -2,7 +2,7 @@
 ## No OpenAI calls (inject / historical replay only).
 
 import std/[os, json, strutils, times, osproc]
-import nimfactory/project/[pipeline, store, verify, types]
+import nimfactory/project/[pipeline, store, verify, types, plan_context]
 import nimfactory/mission/apply
 
 let root = getCurrentDir()
@@ -586,5 +586,70 @@ block finalVsPostconditions:
     "", "src/main.rs")
   doAssert loc2.hit and loc2.line == 10
   echo "final_vs_postconditions_and_localize: ok"
+
+# --- Archived multi-file anchors: 3 in demo_tasks, 1 in tasks.nim ---
+block archiveMultiFileAnchorFiles:
+  let raw = readFile(inj / "archive_api_multi_file_anchors.json")
+  let d = diagnoseRawAgainstTree(fix, raw)
+  doAssert d.needsRefuse
+  doAssert d.refuseCode == "anchor_wrong_file", d.refuseCode
+  doAssert d.edits.len == 4
+  var inDemo = 0
+  var inTasks = 0
+  for ed in d.edits:
+    if ed.note.endsWith("_unique") and ed.foundInFile == "src/demo_tasks.nim":
+      inc inDemo
+    if ed.note == "anchor_wrong_file" and ed.foundInFile == "src/tasks.nim":
+      inc inTasks
+  doAssert inDemo == 3, "expected 3 anchors in demo_tasks got " & $inDemo
+  doAssert inTasks == 1, "expected formatList anchor in tasks.nim"
+  doAssert "found_in_file=src/tasks.nim" in d.finding
+  doAssert "src/tasks.nim" in d.finding
+  echo "archive_multi_file_anchor_files: ok"
+
+# --- Helper then wire on accepted tree after wrong-file recovery ---
+block helperThenWireAcceptedTree:
+  let store = tmpPath("hw") & ".sqlite"
+  let art = tmpPath("hw_art")
+  createDir(art)
+  seedPlan(store, art, "hw_demo")
+  var req = defaultProjectRequest()
+  req.storePath = store
+  req.projectId = "hw_demo"
+  req.cwd = fix
+  req.route = "inject"
+  req.replayFirstPath = inj / "archive_api_multi_file_anchors.json"
+  req.injectRecoveryPath = inj / "step_recovery_helper_tasks_only.json"
+  req.worktree = tmpPath("hw_help")
+  req.artifactDir = art
+  let h = projectStep(req)
+  doAssert h.recoveryTriggered, "wrong-file anchors must trigger recovery"
+  doAssert h.recoveryReason == "anchor_wrong_file", h.recoveryReason
+  doAssert h.ok, h.verdict & " " & h.message
+  doAssert h.doc.acceptedTreeRef.len > 0
+  # Wire CLI on the accepted tree (sourceRootForStep uses accepted tree).
+  var w = req
+  w.replayFirstPath = ""
+  w.injectRecoveryPath = ""
+  w.injectPath = inj / "step_export.json"
+  w.worktree = tmpPath("hw_wire")
+  let wired = projectStep(w)
+  doAssert wired.ok, wired.verdict & " " & wired.message
+  doAssert wired.doc.acceptedTreeRef.len > 0
+  let v = verifyCsvJourney(wired.doc.acceptedTreeRef, fix, requireCsv = true)
+  doAssert v.ok, v.message
+  echo "helper_then_wire_accepted_tree: ok"
+
+# --- Implement context carries postconditions + stdout ---
+block implementContextPostconditions:
+  let ctx = buildImplementContext(
+    fix, %*{"goal": "export"}, "wire export",
+    @["compile", "list_intact", "export_command"],
+    "CSV must go to stdout")
+  doAssert "Postconditions exécutables" in ctx.userPrompt
+  doAssert "export_command" in ctx.userPrompt
+  doAssert "CSV must go to stdout" in ctx.userPrompt
+  doAssert "un seul target_file" in ctx.userPrompt
+  echo "implement_context_postconditions: ok"
 
 echo "ALL project run regression tests passed"

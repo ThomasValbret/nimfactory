@@ -1081,8 +1081,15 @@ proc projectStep*(req: ProjectRequest): ProjectReport =
   mandate["step_id"] = %step.id
   mandate["step_title"] = %step.title
   mandate["source_tree"] = %sourceRoot
+  var postArr = newJArray()
+  for c in step.criteria: postArr.add(%c)
+  mandate["postconditions"] = postArr
+  if not mandate.hasKey("stdout_constraint"):
+    mandate["stdout_constraint"] =
+      %"CSV export must write to stdout (not a file); keep default list intact"
   if doc.acceptedStepId.len > 0:
     mandate["prior_accepted_step"] = %doc.acceptedStepId
+    mandate["prior_accepted_tree"] = %doc.acceptedTreeRef
 
   let manPath = writeArtifact(
     if req.artifactDir.len > 0: req.artifactDir else: doc.cwd / ".nimfactory",
@@ -1095,7 +1102,9 @@ proc projectStep*(req: ProjectRequest): ProjectReport =
   })
 
   # Context from the accepted tree (or original cwd), not a stale pristine copy.
-  let ctx = buildImplementContext(sourceRoot, mandate, step.title)
+  let stdoutConstraint = mandate{"stdout_constraint"}.getStr
+  let ctx = buildImplementContext(
+    sourceRoot, mandate, step.title, step.criteria, stdoutConstraint)
   result.providerCallsThisCommand = 0
   result.apiCallsThisCommand = 0
   let historicalFirst = req.replayFirstPath.len > 0
