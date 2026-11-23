@@ -3,7 +3,7 @@
 Petit carnet de prêts local.
 
 ## Consignes
-- Le squelette fournit uniquement le démarrage technique (HTTP + SQLite).
-- Le builder réalise les fonctions métier demandées depuis Studio.
-- L’oracle pilote le navigateur, redémarre le serveur et vérifie la modification.
-- Préférer des changements localisés sous `skeleton/` puis `app/`.
+- Le squelette fournit uniquement le démarrage technique (HTTP + SQLite), sans restitution.
+- Le builder réalise les fonctions métier demandées depuis Studio / NimFactory.
+- L’oracle contrôle l’arbre accepté : échec sur le squelette, succès après production, même base.
+- Préférer des changements localisés sous `skeleton/`.

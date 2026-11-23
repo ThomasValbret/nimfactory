@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
-"""Oracle — démarre/redémarre le squelette et vérifie une modification Studio.
+"""Oracle carnet de prêts — avant/après sur l'arbre NimFactory.
 
-Rôles :
-  skeleton : démarrage technique (app.py + schema.sql)
-  builder  : fonctions métier (ex. POST /loans/{id}/return)
-  oracle   : ce script (+ optionnellement le navigateur Studio)
+Avant  : squelette initial → la fonction demandée (/return) échoue.
+         Crée un prêt identifiable ; conserve la même base SQLite.
+Après  : démarre l'app depuis l'arbre accepté NimFactory (même LOAN_DB)
+         → retrouve le prêt sans le recréer ; /return réussit.
+
+Variables :
+  LOAN_APP   chemin de l'app (défaut : skeleton/app.py)
+  LOAN_DB    fichier SQLite partagé (conservé entre redémarrages)
+  LOAN_PORT  port HTTP
+  TREE_SHA   hash d'arbre servi (renseigné dans le rapport)
 """
 from __future__ import annotations
 
@@ -19,12 +25,13 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SKELETON = ROOT / "skeleton" / "app.py"
+DEFAULT_SKELETON = ROOT / "skeleton" / "app.py"
 PORT = int(os.environ.get("LOAN_PORT", "18181"))
 BASE = f"http://127.0.0.1:{PORT}"
 PID_FILE = Path(os.environ.get("LOAN_PID", ROOT / "data" / "server.pid"))
 DB_PATH = Path(os.environ.get("LOAN_DB", ROOT / "data" / "loans.sqlite"))
-STUDIO_URL = os.environ.get("STUDIO_URL", "").rstrip("/")
+LOAN_NOTE = os.environ.get("LOAN_NOTE", "oracle-ident-20261123T1958Z")
+TREE_SHA = os.environ.get("TREE_SHA", "")
 
 
 def http_json(method: str, path: str, payload=None):
@@ -50,17 +57,20 @@ def stop_server() -> None:
         PID_FILE.unlink(missing_ok=True)
 
 
-def start_server() -> subprocess.Popen:
+def start_server(app: Path, *, wipe_db: bool) -> subprocess.Popen:
+    """Start HTTP app. wipe_db=False keeps the identifiable loan across restarts."""
     stop_server()
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    if DB_PATH.exists():
+    if wipe_db and DB_PATH.exists():
         DB_PATH.unlink()
+    if not app.is_file():
+        raise FileNotFoundError(f"app not found: {app}")
     env = os.environ.copy()
     env["LOAN_PORT"] = str(PORT)
     env["LOAN_DB"] = str(DB_PATH)
     proc = subprocess.Popen(
-        [sys.executable, str(SKELETON)],
-        cwd=str(SKELETON.parent),
+        [sys.executable, str(app)],
+        cwd=str(app.parent),
         env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -75,125 +85,171 @@ def start_server() -> subprocess.Popen:
                 return proc
         except Exception:
             time.sleep(0.1)
-    raise RuntimeError("server failed to start")
+    raise RuntimeError(f"server failed to start from {app}")
 
 
-def studio_snapshot() -> dict | None:
-    if not STUDIO_URL:
-        return None
-    req = urllib.request.Request(STUDIO_URL + "/api/snapshot")
-    with urllib.request.urlopen(req, timeout=5) as resp:
-        return json.loads(resp.read().decode("utf-8"))
-
-
-def main() -> int:
-    report: dict = {"ok": False, "checks": [], "role": "oracle", "studio": None}
-    proc = None
+def try_return(loan_id: int) -> tuple[bool, object]:
     try:
-        proc = start_server()
-        report["checks"].append({"name": "server_starts", "ok": True})
-
-        code, created = http_json(
-            "POST",
-            "/loans",
-            {
-                "borrower": "Ada",
-                "amount_cents": 1500,
-                "lent_on": "2026-11-22",
-                "note": "book",
-            },
-        )
-        loan_id = created.get("id")
-        report["checks"].append({"name": "create_loan", "ok": code == 201 and loan_id})
-
-        code, listed = http_json("GET", "/loans")
-        report["checks"].append(
-            {
-                "name": "list_loan",
-                "ok": code == 200
-                and any(l.get("borrower") == "Ada" for l in listed.get("loans", [])),
-            }
-        )
-
-        # Optional Studio observation (Nouveau projet / aperçu).
+        code, body = http_json("POST", f"/loans/{loan_id}/return", {})
+        return code == 200 and body.get("ok") is True, body
+    except urllib.error.HTTPError as exc:
         try:
-            snap = studio_snapshot()
-            if snap is not None:
-                report["studio"] = {
-                    "project_id": snap.get("project_id"),
-                    "plan_version": snap.get("current_plan_version"),
-                    "bootstrap": snap.get("bootstrap", False),
-                    "next_action": snap.get("next_action"),
-                    "last_verdict": snap.get("last_verdict"),
-                }
-                report["checks"].append(
-                    {
-                        "name": "studio_reachable",
-                        "ok": snap.get("schema") == "nimfactory.studio/v1",
-                    }
-                )
-        except Exception as exc:
-            report["checks"].append(
-                {"name": "studio_reachable", "ok": False, "detail": str(exc)}
-            )
+            detail = json.loads(exc.read().decode("utf-8"))
+        except Exception:
+            detail = {"http": exc.code}
+        return False, detail
+    except Exception as exc:
+        return False, {"error": str(exc)}
 
-        # Restart then verify Studio-requested builder change: mark returned.
+
+def find_loan_by_note(note: str) -> dict | None:
+    code, listed = http_json("GET", "/loans")
+    if code != 200:
+        return None
+    for loan in listed.get("loans", []):
+        if loan.get("note") == note:
+            return loan
+    return None
+
+
+def probe(phase: str, app: Path, *, wipe_db: bool, expect_return: bool,
+          loan_id: int | None = None, create: bool = False) -> dict:
+    """Run one phase; returns check dict + optional loan_id."""
+    out: dict = {
+        "phase": phase,
+        "app": str(app),
+        "tree_sha": TREE_SHA if phase.startswith("after") else "",
+        "expect_return": expect_return,
+        "checks": [],
+    }
+    proc = start_server(app, wipe_db=wipe_db)
+    out["checks"].append({"name": "server_starts", "ok": True})
+    try:
+        if create:
+            code, created = http_json(
+                "POST",
+                "/loans",
+                {
+                    "borrower": "Ada Lovelace",
+                    "amount_cents": 4200,
+                    "lent_on": "2026-11-23",
+                    "note": LOAN_NOTE,
+                },
+            )
+            loan_id = created.get("id")
+            out["checks"].append(
+                {
+                    "name": "create_identifiable_loan",
+                    "ok": code == 201 and bool(loan_id),
+                    "loan_id": loan_id,
+                    "note": LOAN_NOTE,
+                }
+            )
+        else:
+            found = find_loan_by_note(LOAN_NOTE)
+            ok = found is not None and (
+                loan_id is None or found.get("id") == loan_id
+            )
+            out["checks"].append(
+                {
+                    "name": "find_loan_without_recreate",
+                    "ok": ok,
+                    "found": found,
+                    "expected_note": LOAN_NOTE,
+                    "expected_id": loan_id,
+                }
+            )
+            if found is not None:
+                loan_id = found.get("id")
+
+        if loan_id is None:
+            out["checks"].append(
+                {"name": "mark_returned_control", "ok": False, "detail": "no loan id"}
+            )
+        else:
+            ok, detail = try_return(int(loan_id))
+            # Control: fail on skeleton (expect_return=False), succeed on tree.
+            control_ok = ok if expect_return else (not ok)
+            out["checks"].append(
+                {
+                    "name": "mark_returned_control",
+                    "ok": control_ok,
+                    "return_succeeded": ok,
+                    "expected_success": expect_return,
+                    "detail": detail,
+                    "loan_id": loan_id,
+                }
+            )
+        out["loan_id"] = loan_id
+        out["ok"] = all(c["ok"] for c in out["checks"])
+    finally:
         stop_server()
         if proc.poll() is None:
             try:
                 proc.wait(timeout=2)
             except Exception:
                 proc.kill()
-        proc = start_server()
-        report["checks"].append({"name": "server_restart", "ok": True})
+    return out
 
-        # Recreate loan after DB wipe on restart.
-        code, created = http_json(
-            "POST",
-            "/loans",
-            {
-                "borrower": "Ada",
-                "amount_cents": 1500,
-                "lent_on": "2026-11-22",
-                "note": "book",
-            },
-        )
-        loan_id = created.get("id")
-        try:
-            code, body = http_json("POST", f"/loans/{loan_id}/return", {})
-            ok = code == 200 and body.get("ok") is True
-            report["checks"].append(
-                {
-                    "name": "studio_change_mark_returned",
-                    "ok": ok,
-                    "detail": body if ok else "missing /return — apply builder step from Studio",
-                }
-            )
-        except urllib.error.HTTPError as exc:
-            report["checks"].append(
-                {
-                    "name": "studio_change_mark_returned",
-                    "ok": False,
-                    "detail": f"HTTP {exc.code} — modification Studio absente",
-                }
-            )
 
-        require = os.environ.get("LOAN_REQUIRE_RETURN", "1") == "1"
-        if require:
-            report["ok"] = all(c["ok"] for c in report["checks"])
-        else:
-            report["ok"] = all(
-                c["ok"]
-                for c in report["checks"]
-                if c["name"] != "studio_change_mark_returned"
+def main() -> int:
+    before_app = Path(os.environ.get("LOAN_APP_BEFORE", str(DEFAULT_SKELETON)))
+    after_app = Path(os.environ.get("LOAN_APP_AFTER", ""))
+    mode = os.environ.get("LOAN_ORACLE_MODE", "full")  # before | after | full
+
+    report: dict = {
+        "ok": False,
+        "role": "oracle",
+        "loan_note": LOAN_NOTE,
+        "db": str(DB_PATH),
+        "tree_sha": TREE_SHA,
+        "before": None,
+        "after": None,
+    }
+
+    try:
+        loan_id = None
+        if mode in ("before", "full"):
+            before = probe(
+                "before_skeleton",
+                before_app,
+                wipe_db=True,
+                expect_return=False,
+                create=True,
             )
+            report["before"] = before
+            loan_id = before.get("loan_id")
+            if mode == "before":
+                report["ok"] = before.get("ok", False)
+                print(json.dumps(report, ensure_ascii=False, indent=2))
+                return 0 if report["ok"] else 1
+
+        if mode in ("after", "full"):
+            if not after_app or not after_app.is_file():
+                raise FileNotFoundError(
+                    "LOAN_APP_AFTER must point to skeleton/app.py in the accepted tree"
+                )
+            # Same DB: wipe_db=False — must find the loan without recreating.
+            after = probe(
+                "after_accepted_tree",
+                after_app,
+                wipe_db=False,
+                expect_return=True,
+                loan_id=loan_id if mode == "full" else None,
+                create=False,
+            )
+            report["after"] = after
+            report["tree_sha"] = TREE_SHA or after.get("tree_sha", "")
+            if mode == "full":
+                report["ok"] = bool(report["before"].get("ok")) and bool(after.get("ok"))
+            else:
+                report["ok"] = after.get("ok", False)
     except Exception as exc:
         report["error"] = str(exc)
         report["ok"] = False
     finally:
         stop_server()
-        if proc is not None and proc.poll() is None:
-            proc.terminate()
+
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0 if report.get("ok") else 1
 

@@ -3,8 +3,8 @@
   "decision": "add_mark_returned_endpoint",
   "edits": [
     {
-      "insertAfter": "if path == \"/loans\":",
-      "newText": "        if path.startswith(\"/loans/\") and path.endswith(\"/return\"):\n            try:\n                loan_id = int(path.split(\"/\")[2])\n            except (IndexError, ValueError):\n                self._json(400, {\"ok\": False, \"message\": \"bad id\"})\n                return\n            with connect() as conn:\n                cur = conn.execute(\n                    \"UPDATE loans SET returned_on = date('now') WHERE id = ? AND returned_on IS NULL\",\n                    (loan_id,),\n                )\n                conn.commit()\n                if cur.rowcount == 0:\n                    self._json(404, {\"ok\": False, \"message\": \"loan not open\"})\n                    return\n                self._json(200, {\"ok\": True, \"id\": loan_id})\n            return\n        if path == \"/loans\":"
+      "insertAfter": "self._json(400, {\"ok\": False, \"message\": \"invalid json\"})\n            return\n",
+      "newText": "        if path.startswith(\"/loans/\") and path.endswith(\"/return\"):\n            try:\n                loan_id = int(path.split(\"/\")[2])\n            except (IndexError, ValueError):\n                self._json(400, {\"ok\": False, \"message\": \"bad id\"})\n                return\n            with connect() as conn:\n                cur = conn.execute(\n                    \"UPDATE loans SET returned_on = date('now') WHERE id = ? AND returned_on IS NULL\",\n                    (loan_id,),\n                )\n                conn.commit()\n                if cur.rowcount == 0:\n                    self._json(404, {\"ok\": False, \"message\": \"loan not open\"})\n                    return\n                self._json(200, {\"ok\": True, \"id\": loan_id})\n            return\n"
     }
   ]
 }

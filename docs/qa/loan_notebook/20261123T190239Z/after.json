@@ -1,0 +1,48 @@
+{
+  "ok": true,
+  "role": "oracle",
+  "loan_note": "oracle-ident-20261123T1958Z",
+  "db": "/tmp/loan_nf_demo/loans.sqlite",
+  "tree_sha": "A08595B857D1E260",
+  "before": null,
+  "after": {
+    "phase": "after_accepted_tree",
+    "app": "/tmp/loan_nf_demo/artifacts/trees/mark_returned/skeleton/app.py",
+    "tree_sha": "",
+    "expect_return": true,
+    "checks": [
+      {
+        "name": "server_starts",
+        "ok": true
+      },
+      {
+        "name": "find_loan_without_recreate",
+        "ok": true,
+        "found": {
+          "id": 1,
+          "borrower": "Ada Lovelace",
+          "amount_cents": 4200,
+          "lent_on": "2026-11-23",
+          "due_on": null,
+          "returned_on": null,
+          "note": "oracle-ident-20261123T1958Z"
+        },
+        "expected_note": "oracle-ident-20261123T1958Z",
+        "expected_id": null
+      },
+      {
+        "name": "mark_returned_control",
+        "ok": true,
+        "return_succeeded": true,
+        "expected_success": true,
+        "detail": {
+          "ok": true,
+          "id": 1
+        },
+        "loan_id": 1
+      }
+    ],
+    "loan_id": 1,
+    "ok": true
+  }
+}

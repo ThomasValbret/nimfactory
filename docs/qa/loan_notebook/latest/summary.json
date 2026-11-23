@@ -1,0 +1,19 @@
+{
+  "stamp": "20261123T190239Z",
+  "branch": "feature/studio-run-merge",
+  "git_sha": "1344632bac673679cb1c4c008e7f3d213e7df7a3",
+  "integrated": "9c14b0c",
+  "from": "261d273",
+  "delivered_tree": "/tmp/loan_nf_demo/artifacts/trees/mark_returned",
+  "delivered_hash": "A08595B857D1E260",
+  "verdict": "done",
+  "before_ok": true,
+  "before_return_succeeded": false,
+  "loan_note": "oracle-ident-20261123T1958Z",
+  "loan_id": 1,
+  "after_ok": true,
+  "after_return_succeeded": true,
+  "find_without_recreate": true,
+  "tree_sha": "A08595B857D1E260",
+  "db": "/tmp/loan_nf_demo/loans.sqlite"
+}

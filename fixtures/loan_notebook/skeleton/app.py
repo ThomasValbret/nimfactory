@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Skeleton technique — démarrage local du carnet de prêts (SQLite)."""
+"""Skeleton technique — démarrage local du carnet de prêts (SQLite).
+
+Le squelette fournit HTTP + schéma. La restitution (/loans/{id}/return)
+est une fonction métier demandée : elle doit manquer ici et apparaître
+dans l'arbre produit par NimFactory / Studio.
+"""
 from __future__ import annotations
 
 import json
@@ -7,7 +12,7 @@ import os
 import sqlite3
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import urlparse
 
 ROOT = Path(__file__).resolve().parent.parent
 DB = Path(os.environ.get("LOAN_DB", ROOT / "data" / "loans.sqlite"))
@@ -59,24 +64,6 @@ class Handler(BaseHTTPRequestHandler):
             data = json.loads(raw.decode("utf-8") or "{}")
         except json.JSONDecodeError:
             self._json(400, {"ok": False, "message": "invalid json"})
-            return
-        # Builder métier : restitution demandée depuis Studio.
-        if path.startswith("/loans/") and path.endswith("/return"):
-            try:
-                loan_id = int(path.split("/")[2])
-            except (IndexError, ValueError):
-                self._json(400, {"ok": False, "message": "bad id"})
-                return
-            with connect() as conn:
-                cur = conn.execute(
-                    "UPDATE loans SET returned_on = date('now') WHERE id = ? AND returned_on IS NULL",
-                    (loan_id,),
-                )
-                conn.commit()
-                if cur.rowcount == 0:
-                    self._json(404, {"ok": False, "message": "loan not open"})
-                    return
-                self._json(200, {"ok": True, "id": loan_id})
             return
         if path == "/loans":
             # Builder will supply business validation; skeleton accepts minimal insert.

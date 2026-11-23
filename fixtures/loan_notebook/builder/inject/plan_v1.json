@@ -1,28 +1,22 @@
 {
-  "summary": "Carnet de prêts local : créer un prêt et le marquer remboursé.",
-  "hypothesis": "Le squelette HTTP/SQLite existe ; il manque le parcours métier complet vérifiable.",
+  "summary": "Ajouter la restitution d'un prêt sur le squelette HTTP/SQLite.",
+  "hypothesis": "Le squelette démarre et crée des prêts ; POST /loans/{id}/return manque encore.",
   "optional_question": "",
   "steps": [
     {
-      "id": "wire_loan_create",
-      "title": "Exposer la création de prêt sur POST /loans",
+      "id": "mark_returned",
+      "title": "Ajouter POST /loans/{id}/return pour marquer un prêt rendu",
       "depends_on": [],
-      "criteria": ["server_starts", "schema_ok"]
-    },
-    {
-      "id": "wire_loan_repay",
-      "title": "Permettre de marquer un prêt remboursé",
-      "depends_on": ["wire_loan_create"],
-      "criteria": ["server_starts", "schema_ok", "loan_roundtrip"]
+      "criteria": ["server_starts", "schema_ok", "mark_returned"]
     }
   ],
   "mandate_sketch": {
-    "goal": "Carnet de prêts Python/SQLite avec création et remboursement",
+    "goal": "Carnet de prêts avec restitution",
     "constraints": [
       "Conserver le squelette technique",
       "SQLite local uniquement",
-      "Oracle navigateur + redémarrage serveur"
+      "Contrôle runtime sur l'arbre accepté NimFactory"
     ],
-    "files_likely": ["skeleton/server.py", "skeleton/schema.sql"]
+    "files_likely": ["skeleton/app.py", "skeleton/schema.sql"]
   }
 }

@@ -278,6 +278,45 @@ proc verifyCsvJourney*(worktree, repoRoot: string; requireCsv = true): ProjectVe
     if not result.quoteOk: parts.add("comma_not_quoted")
     result.message = parts.join(",")
 
+proc verifyLoanNotebook*(
+    worktree, repoRoot: string; criteria: seq[string]): ProjectVerifyResult =
+  ## Loan notebook: schema + app present; mark_returned requires /return in app.
+  result.kind = "loan_notebook"
+  result.details = newJObject()
+  result.details["criteria"] = %criteria
+  let app = worktree / "skeleton" / "app.py"
+  let schema = worktree / "skeleton" / "schema.sql"
+  let schemaOk = fileExists(schema)
+  let appOk = fileExists(app)
+  result.details["schema_ok"] = %schemaOk
+  result.details["app_ok"] = %appOk
+  if not schemaOk or not appOk:
+    result.ok = false
+    result.message =
+      if not schemaOk: "schema_missing"
+      else: "app_missing"
+    return
+  let body = readFile(app)
+  let hasReturn =
+    "endswith(\"/return\")" in body or
+    "endswith('/return')" in body or
+    "/loans/{id}/return" in body or
+    ".endswith(\"/return\")" in body
+  result.details["mark_returned_present"] = %hasReturn
+  result.details["server_starts"] = %true  ## static gate; runtime oracle restarts
+  if "mark_returned" in criteria and not hasReturn:
+    result.ok = false
+    result.message = "mark_returned_missing"
+    return
+  if "schema_ok" in criteria and not schemaOk:
+    result.ok = false
+    result.message = "schema_missing"
+    return
+  result.ok = true
+  result.message =
+    if "mark_returned" in criteria: "loan app has mark_returned endpoint"
+    else: "loan skeleton schema+app present"
+
 proc verifyForRecipe*(
     recipe: ProjectRecipe; worktree, repoRoot: string;
     finalStep = true): ProjectVerifyResult =
@@ -286,6 +325,11 @@ proc verifyForRecipe*(
   case recipe.verify
   of "csv_journey":
     result = verifyCsvJourney(worktree, repoRoot, requireCsv = finalStep)
+  of "loan_notebook":
+    let crit =
+      if finalStep: @["server_starts", "schema_ok", "mark_returned"]
+      else: @["server_starts", "schema_ok"]
+    result = verifyLoanNotebook(worktree, repoRoot, crit)
   of "":
     result.kind = "none"
     result.ok = false
@@ -302,6 +346,9 @@ proc verifyStepCriteria*(
     criteria: seq[string]; finalStep = false): ProjectVerifyResult =
   ## Verify against criteria attached to the step (not only "last step" heuristic).
   ## export_command forces CSV/opt-in command checks — a comment-only edit fails.
+  if recipe.verify == "loan_notebook":
+    result = verifyLoanNotebook(worktree, repoRoot, criteria)
+    return
   var needCsv = finalStep or ("export_command" in criteria)
   var needCompile = criteria.len == 0 or "compile" in criteria or
                     "list_intact" in criteria or "export_command" in criteria

@@ -1,0 +1,39 @@
+{
+  "ok": true,
+  "role": "oracle",
+  "loan_note": "oracle-ident-20261123T1958Z",
+  "db": "/tmp/loan_nf_demo/loans.sqlite",
+  "tree_sha": "",
+  "before": {
+    "phase": "before_skeleton",
+    "app": "/opt/nimFactory-studio-merge/fixtures/loan_notebook/skeleton/app.py",
+    "tree_sha": "",
+    "expect_return": false,
+    "checks": [
+      {
+        "name": "server_starts",
+        "ok": true
+      },
+      {
+        "name": "create_identifiable_loan",
+        "ok": true,
+        "loan_id": 1,
+        "note": "oracle-ident-20261123T1958Z"
+      },
+      {
+        "name": "mark_returned_control",
+        "ok": true,
+        "return_succeeded": false,
+        "expected_success": false,
+        "detail": {
+          "ok": false,
+          "message": "not found"
+        },
+        "loan_id": 1
+      }
+    ],
+    "loan_id": 1,
+    "ok": true
+  },
+  "after": null
+}

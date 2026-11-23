@@ -1,6 +1,6 @@
 # Livraison — merge Studio workflow + auto-revise
 
-Date : 2026-11-22  
+Date : 2026-11-23  
 Branche dédiée : `feature/studio-run-merge`  
 Worktree : `/opt/nimFactory-studio-merge`
 
@@ -8,7 +8,9 @@ Worktree : `/opt/nimFactory-studio-merge`
 | --- | --- |
 | Studio workflow ops | `fe5b28d` |
 | Project-run auto-revise + QA | `dedbe62` |
-| **Merge testé** | `6995e8eafc05878bd7425d8b0dd705363d4149d3` |
+| Base avant intégration | `261d273` |
+| Intégré | `9c14b0c` |
+| **HEAD testé** | `1344632bac673679cb1c4c008e7f3d213e7df7a3` |
 
 ## Préservé
 
@@ -41,15 +43,25 @@ Démo observée : projet `carnet_prets`, plan 2 étapes (`wire_loan_create`, `wi
 
 ## Recette carnet de prêts (Python/SQLite)
 
-`fixtures/loan_notebook/`
+`fixtures/loan_notebook/` — contrôle sur l’**arbre accepté** NimFactory (`verify=loan_notebook`).
 
 | Rôle | Artefact |
 | --- | --- |
-| Squelette | `skeleton/app.py` + `schema.sql` |
-| Builder | `builder/inject/` (+ `mark_returned` appliqué pour oracle) |
-| Oracle | `oracle/verify_studio_change.py` — redémarre serveur, vérifie `/loans/{id}/return`, lit Studio |
+| Squelette | `skeleton/app.py` + `schema.sql` — **sans** `/return` |
+| Builder | `builder/inject/step_mark_returned.json` |
+| Oracle | `oracle/verify_studio_change.py` — avant (échec) / après (succès, même `LOAN_DB`) |
 
-Oracle : **ok** (server_starts, create/list, studio_reachable, restart, mark_returned).
+Archive : `docs/qa/loan_notebook/20261123T190239Z`
+
+| | Avant (squelette) | Après (arbre servi) |
+| --- | --- | --- |
+| App | `fixtures/.../skeleton/app.py` | `…/artifacts/trees/mark_returned/skeleton/app.py` |
+| Prêt | créé `id=1` note `oracle-ident-20261123T1958Z` | retrouvé **sans** recréation |
+| `POST /return` | échoue (`not found`) | réussit |
+| Oracle | **ok** (contrôle d’échec) | **ok** |
+| **SHA arbre** | — | **`A08595B857D1E260`** |
+
+Verdict run inject : `done` · interventions `ask` → `step:mark_returned` · API 0.
 
 ## Routes — résultats séparés
 

@@ -1919,8 +1919,11 @@ proc projectRun*(req: ProjectRequest): ProjectReport =
     var stepReq = reqMut
     let helpers = resolveInject(reqMut, "step_helpers.json")
     let exportInj = resolveInject(reqMut, "step_export.json")
+    let markRet = resolveInject(reqMut, "step_mark_returned.json")
     if actionable.step.id == "add_csv_helpers" and helpers.len > 0:
       stepReq.injectPath = helpers
+    elif actionable.step.id == "mark_returned" and markRet.len > 0:
+      stepReq.injectPath = markRet
     elif ("export" in actionable.step.id.toLowerAscii or
           "export" in actionable.step.title.toLowerAscii) and exportInj.len > 0:
       stepReq.injectPath = exportInj
@@ -1928,6 +1931,8 @@ proc projectRun*(req: ProjectRequest): ProjectReport =
       stepReq.injectPath = helpers
     elif exportInj.len > 0:
       stepReq.injectPath = exportInj
+    elif markRet.len > 0 and "return" in actionable.step.id.toLowerAscii:
+      stepReq.injectPath = markRet
     elif reqMut.injectPath.len > 0:
       stepReq.injectPath = reqMut.injectPath
     if reqMut.worktree.len > 0:
