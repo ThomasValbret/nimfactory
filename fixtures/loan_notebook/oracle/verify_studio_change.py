@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import os
 import signal
+import sqlite3
 import subprocess
 import sys
 import time
@@ -161,6 +162,10 @@ def probe(phase: str, app: Path, *, wipe_db: bool, expect_return: bool,
             )
             if found is not None:
                 loan_id = found.get("id")
+                out["checks"].append({
+                    "name": "loan_initially_open",
+                    "ok": "returned_on" in found and found["returned_on"] is None,
+                })
 
         if loan_id is None:
             out["checks"].append(
@@ -189,6 +194,35 @@ def probe(phase: str, app: Path, *, wipe_db: bool, expect_return: bool,
                 proc.wait(timeout=2)
             except Exception:
                 proc.kill()
+    return out
+
+
+def verify_persistence(app: Path, loan_id: int | None) -> dict:
+    """Read the same loan after a fresh process opens the same database."""
+    out = {"phase": "after_restart", "loan_id": loan_id, "checks": []}
+    proc = start_server(app, wipe_db=False)
+    try:
+        loan = find_loan_by_note(LOAN_NOTE)
+        returned = loan.get("returned_on") if loan else None
+        out["checks"].append({
+            "name": "http_same_loan_returned_after_restart",
+            "ok": bool(loan and loan["id"] == loan_id and returned),
+            "returned_on": returned,
+        })
+        with sqlite3.connect(DB_PATH.resolve().as_uri() + "?mode=ro", uri=True) as conn:
+            row = conn.execute(
+                "SELECT returned_on FROM loans WHERE id = ? AND note = ?",
+                (loan_id, LOAN_NOTE),
+            ).fetchone()
+        out["checks"].append({
+            "name": "sqlite_same_loan_returned",
+            "ok": bool(row and row[0] and row[0] == returned),
+            "returned_on": row[0] if row else None,
+        })
+        out["ok"] = all(check["ok"] for check in out["checks"])
+    finally:
+        stop_server()
+        proc.wait(timeout=3)
     return out
 
 
@@ -240,10 +274,9 @@ def main() -> int:
             )
             report["after"] = after
             report["tree_sha"] = TREE_SHA or after.get("tree_sha", "")
-            if mode == "full":
-                report["ok"] = bool(report["before"].get("ok")) and bool(after.get("ok"))
-            else:
-                report["ok"] = after.get("ok", False)
+            if after["ok"]:
+                report["restart"] = verify_persistence(after_app, after["loan_id"])
+                report["ok"] = report["restart"]["ok"] and (mode == "after" or report["before"]["ok"])
     except Exception as exc:
         report["error"] = str(exc)
         report["ok"] = False
