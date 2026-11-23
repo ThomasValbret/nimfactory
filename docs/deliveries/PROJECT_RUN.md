@@ -1,8 +1,8 @@
-# Project run — line insert, compile repair, final vs postconditions
+# Project run — multi-file anchors, postconditions, API delivery
 
-Date : 2026-11-22  
-**SHA exécuté** : `8f91314de9a40fe6c339dc9e46ecd527ac3fc7e8`  
-Branche : `feature/project-run` (depuis `dedbe62`)
+Date : 2026-11-23  
+**Base** : `9c14b0c` → `7f56c42` + ce lot (pipeline / apply / plan_context / verify)  
+Branche : `feature/project-run`
 
 ## Commande unique
 
@@ -15,30 +15,41 @@ nimfactory project run \
   --route api
 ```
 
-## Hors API
+Script : `NF_PROJECT_ROUTE=api bash scripts/e2e_project_run.sh`
 
-- Reproduction : `insertAfter` textuel colle `"list"if` (`archive_api_glue_list_if_first.json`)
-- Contrat : `insertBefore`/`insertAfter` (textuel, legacy) vs `insertLineBefore`/`insertLineAfter` (nouvelle ligne)
-- Réparation post-compile : candidat rejeté + diff + diagnostic localisé (Nim / gcc-like)
-- Plan : `final_criteria` vs `postconditions` par étape
-- Révision motivée : fingerprint/postconditions changent le traitement du blocage
+## Hors API (régressions)
 
 ```bash
 nim c -r --path:src --path:vendor/NimAgentLibrary/src \
   tests/project/test_project_run_regressions.nim
 ```
 
-## Campagne API (`docs/qa/project_run/20261122T230713Z_api`)
+Couvert : archive 3 ancres `demo_tasks` + 1 `tasks.nim` (`found_in_file`), postconditions exécutables + contrainte stdout, helper puis wire sur arbre accepté, `insertLineAfter` hors corps de proc, coercition prose→tokens, traitement déterministe après `revise_equivalent`.
 
-**Pas de binaire livré.** Première décision bloquante : `revise_plan_needed`.
+## Campagne API (`docs/qa/project_run/20261123T212127Z_api`)
+
+**Livré.** `verdict=done`, arbre `artifacts/trees/step2`, hash `9949DED594E700B2`.
 
 | Rôle | Appels | USD |
 | --- | --- | --- |
-| planner | 1 | 0.000422 |
-| reviser | 2 | 0.001206 |
-| implementer | 2 | 0.000610 |
-| implementer_recovery | 2 | 0.000538 |
-| **total** | **7** | **~$0.0028** |
+| planner | 1 | ~0.00035 |
+| reviser | 2 | ~0.00100 |
+| implementer (1er tour API + recovery) | 1+1 | ~0.00069 |
+| deterministic_patch (helpers + wire) | 0 API | 0 |
+| **total API** | **5** | **~$0.0020** |
 
-Parcours : ask → revise → step(`revise_plan`, recovery) → `revise:auto` → step(`revise_plan` encore).  
-`maxAutoRevises=1` → arrêt. Première sortie fautive : `first_faulty.txt` (déjà `insertLine*`).
+Parcours : ask → revise → step(recovery_exhausted) → revise:equivalent → revise:deterministic → step(helpers patch) → step(wire patch) → done.
+
+### Binaire — trois usages
+
+Exécuté avec `cwd` = arbre livré :
+
+| Usage | Exit | Sortie (extrait) |
+| --- | --- | --- |
+| (sans argument) | 0 | list inchangé |
+| `list` | 0 | list inchangé |
+| `export-csv` | 0 | `id,title` + `"Appeler Alice, Bob"` quoté |
+
+## Limites
+
+- Après blocage `revise_equivalent`, les étapes helpers/wire utilisent les patches de recette (`inject/step_helpers.json`, `inject/step_export.json`) plutôt qu’un nouvel appel modèle.

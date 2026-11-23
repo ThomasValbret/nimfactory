@@ -69,14 +69,19 @@ if tree:
 for p in sorted((out / "worktrees").glob("*/build/demo_tasks"), reverse=True):
     bin_candidates.append(p)
 for binp in bin_candidates:
-    if not binp.exists():
+    if not binp.is_file():
         continue
-    cwd = str(binp.parent.parent)
-    for args, key in [([], "no_args"), (["list"], "list"), (["export-csv"], "export_csv")]:
-        r = subprocess.run([str(binp), *args], cwd=cwd, capture_output=True, text=True)
-        bin_out[key] = {"exit": r.returncode, "out": r.stdout.strip()[:500]}
-    summary_tree = cwd
-    break
+    cwd = str(binp.parent.parent.resolve())
+    exe = str(binp.resolve())
+    try:
+        for args, key in [([], "no_args"), (["list"], "list"), (["export-csv"], "export_csv")]:
+            r = subprocess.run([exe, *args], cwd=cwd, capture_output=True, text=True)
+            bin_out[key] = {"exit": r.returncode, "out": r.stdout.strip()[:500]}
+        summary_tree = cwd
+        break
+    except (FileNotFoundError, OSError) as e:
+        bin_out.setdefault("_errors", []).append(f"{exe}: {e}")
+        continue
 else:
     summary_tree = tree
 summary = {

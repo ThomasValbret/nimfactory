@@ -1,0 +1,98 @@
+{
+  "stamp": "20261123T210152Z",
+  "route": "api",
+  "code_sha": "7f56c42728db4608eeb381e0ceeb32e5e8da7001",
+  "exit_code": 4,
+  "ok": false,
+  "verdict": "apply_failed",
+  "message": "worktree already occupied; refuse to delete or reuse: docs/qa/project_run/20261123T210152Z_api/worktrees/step_1",
+  "next_action": "step",
+  "interventions": [
+    {
+      "kind": "ask",
+      "ok": true,
+      "verdict": "plan_ready",
+      "message": "plan v1 persisted",
+      "api_calls": 1,
+      "provider_calls": 1
+    },
+    {
+      "kind": "revise",
+      "ok": true,
+      "verdict": "plan_revised",
+      "message": "plan v2 persisted",
+      "api_calls": 1,
+      "provider_calls": 1
+    },
+    {
+      "kind": "step:1",
+      "ok": false,
+      "verdict": "revise_plan_needed",
+      "message": "Correction de l'erreur de compilation \u00e0 la ligne 23 o\u00f9 une apostrophe \u00e9tait manquante pour le litt\u00e9ral de caract\u00e8re.",
+      "api_calls": 2,
+      "provider_calls": 2
+    },
+    {
+      "kind": "revise:auto",
+      "ok": true,
+      "verdict": "plan_revised",
+      "message": "plan v3 persisted",
+      "api_calls": 1,
+      "provider_calls": 1
+    },
+    {
+      "kind": "step:1",
+      "ok": false,
+      "verdict": "apply_failed",
+      "message": "worktree already occupied; refuse to delete or reuse: docs/qa/project_run/20261123T210152Z_api/worktrees/step_1",
+      "api_calls": 1,
+      "provider_calls": 1
+    }
+  ],
+  "api_calls_this_command": 6,
+  "provider_calls_this_command": 6,
+  "usage_by_role": {
+    "planner": {
+      "prompt_tokens": 747,
+      "completion_tokens": 402,
+      "calls": 1,
+      "estimated_usd": 0.00035325,
+      "model": "gpt-4o-mini"
+    },
+    "implementer": {
+      "prompt_tokens": 2993,
+      "completion_tokens": 350,
+      "calls": 2,
+      "estimated_usd": 0.0006589499999999999,
+      "model": "gpt-4o-mini"
+    },
+    "reviser": {
+      "prompt_tokens": 2348,
+      "completion_tokens": 902,
+      "calls": 2,
+      "estimated_usd": 0.0008933999999999999,
+      "model": "gpt-4o-mini"
+    },
+    "implementer_compile_repair": {
+      "prompt_tokens": 1521,
+      "completion_tokens": 46,
+      "calls": 1,
+      "estimated_usd": 0.00025575,
+      "model": "gpt-4o-mini"
+    }
+  },
+  "delivered_tree": "",
+  "delivered_hash": "",
+  "binary_behaviour": {},
+  "blocked": {
+    "kind": "apply_failed",
+    "step_id": "1",
+    "next_action": "step",
+    "message": "worktree already occupied; refuse to delete or reuse: docs/qa/project_run/20261123T210152Z_api/worktrees/step_1"
+  },
+  "status_verdict": "apply_failed",
+  "first_faulty_decision": "revise_plan_needed",
+  "first_faulty_raw": "```json\n{\n  \"target_file\": \"src/tasks.nim\",\n  \"decision\": \"\",\n  \"edits\": [\n    {\n      \"insertLineAfter\": \"proc formatList*(tasks: openArray[Task]): string =\",\n      \"newText\": \"proc csvQuote*(s: string): string =\\n  result = '\\\"' + s.replace(\\\"'\\\", \\\"' '\\\").replace('\\\"', '\\\"\\\"') + '\\\"'\\n\\nproc formatCsv*(tasks: openArray[Task]): string =\\n  var lines: seq[string] = @[\\n    \\\"id,title\\\"\\n  ]\\n  for t in tasks:\\n    lines.add($t.id & \\\",\\\" & csvQuote(t.title))\\n  lines.join(\\\"\\\\n\\\")\"\n    }\n  ]\n}\n```",
+  "user_command": "nimfactory project run --store \u2026 --cwd fixtures/demo_tasks_cli --objective 'Je veux pouvoir exporter mes t\u00e2ches.' --refinement '\u2026CSV\u2026' --route api",
+  "estimated_usd_total": 0.00216135
+}

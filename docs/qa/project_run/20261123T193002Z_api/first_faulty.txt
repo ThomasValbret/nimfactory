@@ -1,0 +1,16 @@
+```json
+{
+  "target_file": "src/tasks.nim",
+  "decision": "Ajout de helpers pour l'export CSV sans affecter le comportement existant.",
+  "edits": [
+    {
+      "insertLineAfter": "proc formatList*(tasks: openArray[Task]): string =",
+      "newText": "proc csvQuote(title: string): string =\n  if title.find(',') >= 0:\n    result = '\"' & title & '\"'\n  else:\n    result = title"
+    },
+    {
+      "insertLineAfter": "proc csvQuote(title: string): string =",
+      "newText": "proc formatCsv(tasks: openArray[Task]): string =\n  var lines: seq[string] = @[]\n  for t in tasks:\n    lines.add($t.id & ',' & csvQuote(t.title))\n  lines.join(\"\\n\")"
+    }
+  ]
+}
+```

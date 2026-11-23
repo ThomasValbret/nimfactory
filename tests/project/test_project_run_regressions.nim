@@ -2,7 +2,7 @@
 ## No OpenAI calls (inject / historical replay only).
 
 import std/[os, json, strutils, times, osproc]
-import nimfactory/project/[pipeline, store, verify, types]
+import nimfactory/project/[pipeline, store, verify, types, plan_context]
 import nimfactory/mission/apply
 
 let root = getCurrentDir()
@@ -130,6 +130,34 @@ block insertAfterUnique:
   doAssert not diag.needsRefuse, diag.refuseCode
   doAssert diag.edits[0].note == "insert_after_unique"
   echo "insert_after_unique: ok"
+
+# --- insertLineAfter on proc header skips the body ---
+block insertLineAfterProcHeader:
+  let tasks = readFile(fix / "src" / "tasks.nim")
+  let edits = @[
+    TextEdit(
+      oldText: "proc formatList*(tasks: openArray[Task]): string =",
+      newText: "proc csvQuote*(s: string): string =\n  result = s\n",
+      op: "insert_line_after"),
+    TextEdit(
+      oldText: "proc csvQuote*(s: string): string =",
+      newText: "proc formatCsv*(tasks: openArray[Task]): string =\n  \"id,title\"\n",
+      op: "insert_line_after")
+  ]
+  let applied = applyEditsToContent(tasks, edits)
+  doAssert applied.ok, applied.message
+  doAssert "proc formatList*" in applied.content
+  doAssert "lines.join" in applied.content
+  doAssert "proc csvQuote*" in applied.content
+  doAssert "proc formatCsv*" in applied.content
+  # formatList body must remain contiguous (no sibling glued under header).
+  let fl = applied.content.find("proc formatList*")
+  let cq = applied.content.find("proc csvQuote*")
+  doAssert fl >= 0 and cq > fl
+  let between = applied.content[fl ..< cq]
+  doAssert "var lines" in between
+  doAssert "proc csvQuote" notin between.split('\n')[0]
+  echo "insert_line_after_proc_header: ok"
 
 # --- 1) Two simultaneous starts → one provider attempt ---
 block concurrentRunLease:
@@ -554,7 +582,9 @@ block motivatedReviseChangesTreatment:
   for s in revised.doc.steps:
     if s.id == "add_csv_helpers":
       helpersCrit = s.criteria
-  doAssert helpersCrit == @["compile"], $helpersCrit
+  doAssert "compile" in helpersCrit, $helpersCrit
+  doAssert "export_command" notin helpersCrit, $helpersCrit
+  doAssert "csv_helpers" in helpersCrit, $helpersCrit
   let man = revised.doc.mandates{"mandate_v" & $revised.doc.currentPlanVersion}
   doAssert man{"final_criteria"}.len > 0
   doAssert "insertLine" in man{"change_notes"}.getStr or
@@ -569,11 +599,29 @@ block motivatedReviseChangesTreatment:
 block finalVsPostconditions:
   let node = parseJson(readFile(inj / "plan_revise_postconditions.json"))
   let steps = stepsFromPlanNode(node, "m", fix, "export csv")
-  doAssert steps[0].criteria == @["compile"], $steps[0].criteria
+  doAssert "compile" in steps[0].criteria, $steps[0].criteria
+  doAssert "csv_helpers" in steps[0].criteria, $steps[0].criteria
   doAssert "export_command" in steps[1].criteria
   doAssert planFinalCriteria(node) == @["compile", "list_intact", "export_command"]
   # Intermediate postconditions must not inherit final export blindly.
   doAssert "export_command" notin steps[0].criteria
+  # "helpers pour l'export" stays a helper (no export_command).
+  let helperNode = parseJson("""{
+    "final_criteria": ["compile", "list_intact", "export_command"],
+    "steps": [
+      {"id": "1", "title": "Ajouter des helpers pour l'export CSV",
+       "depends_on": [], "postconditions": [
+         "Les proc formatCsv et csvQuote sont définis dans tasks.nim."]},
+      {"id": "2", "title": "Câbler export-csv dans demo_tasks.nim",
+       "depends_on": ["1"], "postconditions": [
+         "La commande export-csv écrit le CSV sur stdout."]}
+    ]
+  }""")
+  let hs = stepsFromPlanNode(helperNode, "m", fix, "export csv")
+  doAssert "export_command" notin hs[0].criteria, $hs[0].criteria
+  doAssert "compile" in hs[0].criteria
+  doAssert "csv_helpers" in hs[0].criteria, $hs[0].criteria
+  doAssert "export_command" in hs[1].criteria, $hs[1].criteria
   let loc = localizeCompileDiagnosis(
     """/tmp/x/src/demo_tasks.nim(7, 53) Error: undeclared identifier: 'cmd'""",
     fix, "src/demo_tasks.nim")
@@ -586,5 +634,70 @@ block finalVsPostconditions:
     "", "src/main.rs")
   doAssert loc2.hit and loc2.line == 10
   echo "final_vs_postconditions_and_localize: ok"
+
+# --- Archived multi-file anchors: 3 in demo_tasks, 1 in tasks.nim ---
+block archiveMultiFileAnchorFiles:
+  let raw = readFile(inj / "archive_api_multi_file_anchors.json")
+  let d = diagnoseRawAgainstTree(fix, raw)
+  doAssert d.needsRefuse
+  doAssert d.refuseCode == "anchor_wrong_file", d.refuseCode
+  doAssert d.edits.len == 4
+  var inDemo = 0
+  var inTasks = 0
+  for ed in d.edits:
+    if ed.note.endsWith("_unique") and ed.foundInFile == "src/demo_tasks.nim":
+      inc inDemo
+    if ed.note == "anchor_wrong_file" and ed.foundInFile == "src/tasks.nim":
+      inc inTasks
+  doAssert inDemo == 3, "expected 3 anchors in demo_tasks got " & $inDemo
+  doAssert inTasks == 1, "expected formatList anchor in tasks.nim"
+  doAssert "found_in_file=src/tasks.nim" in d.finding
+  doAssert "src/tasks.nim" in d.finding
+  echo "archive_multi_file_anchor_files: ok"
+
+# --- Helper then wire on accepted tree after wrong-file recovery ---
+block helperThenWireAcceptedTree:
+  let store = tmpPath("hw") & ".sqlite"
+  let art = tmpPath("hw_art")
+  createDir(art)
+  seedPlan(store, art, "hw_demo")
+  var req = defaultProjectRequest()
+  req.storePath = store
+  req.projectId = "hw_demo"
+  req.cwd = fix
+  req.route = "inject"
+  req.replayFirstPath = inj / "archive_api_multi_file_anchors.json"
+  req.injectRecoveryPath = inj / "step_recovery_helper_tasks_only.json"
+  req.worktree = tmpPath("hw_help")
+  req.artifactDir = art
+  let h = projectStep(req)
+  doAssert h.recoveryTriggered, "wrong-file anchors must trigger recovery"
+  doAssert h.recoveryReason == "anchor_wrong_file", h.recoveryReason
+  doAssert h.ok, h.verdict & " " & h.message
+  doAssert h.doc.acceptedTreeRef.len > 0
+  # Wire CLI on the accepted tree (sourceRootForStep uses accepted tree).
+  var w = req
+  w.replayFirstPath = ""
+  w.injectRecoveryPath = ""
+  w.injectPath = inj / "step_export.json"
+  w.worktree = tmpPath("hw_wire")
+  let wired = projectStep(w)
+  doAssert wired.ok, wired.verdict & " " & wired.message
+  doAssert wired.doc.acceptedTreeRef.len > 0
+  let v = verifyCsvJourney(wired.doc.acceptedTreeRef, fix, requireCsv = true)
+  doAssert v.ok, v.message
+  echo "helper_then_wire_accepted_tree: ok"
+
+# --- Implement context carries postconditions + stdout ---
+block implementContextPostconditions:
+  let ctx = buildImplementContext(
+    fix, %*{"goal": "export"}, "wire export",
+    @["compile", "list_intact", "export_command"],
+    "CSV must go to stdout")
+  doAssert "Postconditions exécutables" in ctx.userPrompt
+  doAssert "export_command" in ctx.userPrompt
+  doAssert "CSV must go to stdout" in ctx.userPrompt
+  doAssert "un seul target_file" in ctx.userPrompt
+  echo "implement_context_postconditions: ok"
 
 echo "ALL project run regression tests passed"

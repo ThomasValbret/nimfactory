@@ -1,0 +1,16 @@
+```json
+{
+  "target_file": "src/tasks.nim",
+  "decision": "",
+  "edits": [
+    {
+      "insertLineAfter": "proc formatList*(tasks: openArray[Task]): string =",
+      "newText": "proc csvQuote*(s: string): string =\n  result = \"\\\"\" & s.replace(\"\\\"\", \"\\\\\\\"\") & \"\\\"\""
+    },
+    {
+      "insertLineAfter": "proc csvQuote*(s: string): string =",
+      "newText": "proc formatCsv*(tasks: openArray[Task]) =\n  let csvLines = newSeq[string](tasks.len)\n  for i, t in tasks:\n    csvLines[i] = $t.id & \",\" & csvQuote(t.title)\n  echo csvLines.join(\"\\n\")"
+    }
+  ]
+}
+```
