@@ -55,41 +55,26 @@ set -e
 
 "$BIN" project status --store "$STORE" --project-id demo_tasks_cli >"$OUT/status.json" || true
 
-python3 - <<PY
-import json, os, subprocess
+python3 -B - <<PY
+import json, sys
 from pathlib import Path
+sys.path.insert(0, "scripts")
+from check_project_run_delivery import check_delivery
 out = Path("$OUT")
 run = json.loads((out/"run.json").read_text())
 status = json.loads((out/"status.json").read_text()) if (out/"status.json").exists() else {}
-tree = run.get("delivered_tree") or run.get("accepted_tree_ref") or ""
-bin_out = {}
-bin_candidates = []
-if tree:
-    bin_candidates.append(Path(tree) / "build" / "demo_tasks")
-for p in sorted((out / "worktrees").glob("*/build/demo_tasks"), reverse=True):
-    bin_candidates.append(p)
-for binp in bin_candidates:
-    if not binp.is_file():
-        continue
-    cwd = str(binp.parent.parent.resolve())
-    exe = str(binp.resolve())
-    try:
-        for args, key in [([], "no_args"), (["list"], "list"), (["export-csv"], "export_csv")]:
-            r = subprocess.run([exe, *args], cwd=cwd, capture_output=True, text=True)
-            bin_out[key] = {"exit": r.returncode, "out": r.stdout.strip()[:500]}
-        summary_tree = cwd
-        break
-    except (FileNotFoundError, OSError) as e:
-        bin_out.setdefault("_errors", []).append(f"{exe}: {e}")
-        continue
-else:
-    summary_tree = tree
+tree = run.get("delivered_tree") or ""
+expected_hash = run.get("delivered_hash") or ""
+engine_done = run.get("ok") is True and run.get("verdict") == "done"
+proof = check_delivery(tree, expected_hash, Path("$FIX")) if engine_done else None
+qualified = bool(engine_done and proof["ok"] and $EC == 0)
 summary = {
   "stamp": "$STAMP",
   "route": "$ROUTE",
   "code_sha": "$SHA",
   "exit_code": $EC,
-  "ok": run.get("ok"),
+  "ok": qualified,
+  "engine_ok": run.get("ok"),
   "verdict": run.get("verdict"),
   "message": run.get("message"),
   "next_action": run.get("next_action"),
@@ -97,9 +82,10 @@ summary = {
   "api_calls_this_command": run.get("api_calls_this_command"),
   "provider_calls_this_command": run.get("provider_calls_this_command"),
   "usage_by_role": run.get("usage_by_role"),
-  "delivered_tree": tree or summary_tree,
-  "delivered_hash": run.get("delivered_hash") or run.get("accepted_tree_hash"),
-  "binary_behaviour": bin_out,
+  "delivered_tree": tree,
+  "delivered_hash": expected_hash,
+  "delivery_check": proof,
+  "binary_behaviour": proof["behaviour"] if proof else {},
   "blocked": run.get("blocked"),
   "status_verdict": status.get("verdict"),
   "first_faulty_decision": run.get("first_faulty_decision"),
@@ -114,6 +100,8 @@ summary["estimated_usd_total"] = usd
 if run.get("first_faulty_raw"):
     (out/"first_faulty.txt").write_text(run.get("first_faulty_raw"))
 print(json.dumps({k: summary[k] for k in ["ok","verdict","api_calls_this_command","estimated_usd_total","binary_behaviour"]}, indent=2))
+if $EC == 0 and not qualified:
+    sys.exit(1)
 PY
 
 echo "e2e_project_run: route=$ROUTE out=$OUT exit=$EC sha=$SHA"
