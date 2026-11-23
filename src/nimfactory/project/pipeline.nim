@@ -29,6 +29,7 @@ type
     route*: string              ## api | inject
     injectPath*: string
     injectRecoveryPath*: string ## offline second inject (one recovery turn)
+    injectCompileRepairPath*: string ## offline post-compile repair inject
     injectDir*: string          ## ask/revise/step injects for project run
     replayFirstPath*: string    ## historical first raw; no new ask/revise/step bill
     historicalProvenance*: string ## note / path preserved in report
@@ -53,6 +54,10 @@ type
     recoveryTriggered*: bool
     recoveryAttempted*: bool
     recoveryReason*: string
+    repairProvider*: ProviderCallResult
+    repairTriggered*: bool
+    repairAttempted*: bool
+    repairReason*: string
     providerCallsThisCommand*: int
     apiCallsThisCommand*: int
     verify*: ProjectVerifyResult
@@ -127,6 +132,29 @@ proc invokeProjectRecovery(req: ProjectRequest; systemPrompt, userPrompt: string
   result.message = "no recovery provider configured"
   result.status = "failed"
 
+proc invokeCompileRepair(req: ProjectRequest; systemPrompt, userPrompt: string): ProviderCallResult =
+  ## Prefer explicit compile-repair inject; else API; else fall back to recovery inject.
+  if req.injectCompileRepairPath.len > 0:
+    return callFromInject(req.injectCompileRepairPath)
+  if req.injectRecoveryPath.len > 0:
+    return callFromInject(req.injectRecoveryPath)
+  if req.route == "api":
+    var ctx = MissionContext(
+      route: "api",
+      systemPrompt: systemPrompt,
+      userPrompt: userPrompt,
+      ok: true
+    )
+    return callPlannedApi(ctx)
+  result.ok = false
+  result.available = false
+  result.message = "no compile-repair provider configured"
+  result.status = "failed"
+
+proc canCompileRepair(req: ProjectRequest): bool =
+  req.injectCompileRepairPath.len > 0 or req.injectRecoveryPath.len > 0 or
+  req.route == "api"
+
 proc parsePlanPayload(raw: string): tuple[ok: bool; node: JsonNode; err: string] =
   try:
     let extracted = extractJsonObject(raw)
@@ -181,28 +209,44 @@ proc recipeExportCriteria(cwd: string): seq[string] =
       result.add("export_command")
 
 proc stepObjectiveImpliesExport(st: ProjectStep; index, total: int;
-                                objective = ""): bool =
+                                objective = ""; hasFinalCriteria = false): bool =
+  ## When the plan declares final_criteria, do not push export onto every step.
   let t = st.title.toLowerAscii
   let id = st.id.toLowerAscii
   let obj = objective.toLowerAscii
+  if hasFinalCriteria:
+    return "export" in t or "csv" in t or "export" in id or "csv" in id or
+           index == total
   "export" in t or "csv" in t or "export" in id or "csv" in id or
     index == total or "export" in obj or "csv" in obj
 
+proc planFinalCriteria*(node: JsonNode): seq[string] =
+  result = @[]
+  let arr = node{"final_criteria"}
+  if arr != nil and arr.kind == JArray:
+    for c in arr: result.add(c.getStr)
+
 proc inferStepCriteria*(st: ProjectStep; index, total: int;
-                        cwd = ""; objective = ""): seq[string] =
-  ## Attach criteria from the step, else recipe + step objective.
+                        cwd = ""; objective = "";
+                        finalCriteria: seq[string] = @[]): seq[string] =
+  ## Prefer explicit step criteria/postconditions; else recipe + step objective.
+  ## final_criteria belong to the delivered binary, not every intermediate step.
   if st.criteria.len > 0:
     return st.criteria
-  if stepObjectiveImpliesExport(st, index, total, objective):
+  let hasFinal = finalCriteria.len > 0
+  if stepObjectiveImpliesExport(st, index, total, objective, hasFinal):
+    if hasFinal and index == total:
+      return finalCriteria
     return recipeExportCriteria(cwd)
   recipeDefaultCriteria(cwd)
 
-proc stepsFromPlanNode(node: JsonNode; mandateKey: string;
+proc stepsFromPlanNode*(node: JsonNode; mandateKey: string;
                        cwd = ""; objective = ""): seq[ProjectStep] =
   result = @[]
   let arr = node{"steps"}
   if arr.isNil or arr.kind != JArray:
     return
+  let finalCrit = planFinalCriteria(node)
   var i = 0
   let total = arr.len
   for s in arr:
@@ -214,11 +258,11 @@ proc stepsFromPlanNode(node: JsonNode; mandateKey: string;
       st.title = st.id
     st.status = ssPending
     st.mandateKey = mandateKey
-    st.criteria = inferStepCriteria(st, i, total, cwd, objective)
+    st.criteria = inferStepCriteria(st, i, total, cwd, objective, finalCrit)
     if st.result.isNil: st.result = newJObject()
     result.add(st)
 
-proc planStepsFingerprint(steps: seq[ProjectStep]): string =
+proc planStepsFingerprint*(steps: seq[ProjectStep]): string =
   ## Structural identity for "equivalent revision" (id, deps, criteria).
   var parts: seq[string] = @[]
   for s in steps:
@@ -608,6 +652,11 @@ proc projectAsk*(req: ProjectRequest): ProjectReport =
   mandate["plan_version"] = %1
   mandate["agents_md_excerpt"] = %ctx.agentsMd
   mandate["source_ids"] = %ctx.sourceIds
+  let fc1 = planFinalCriteria(parsed.node)
+  if fc1.len > 0:
+    var arr = newJArray()
+    for c in fc1: arr.add(%c)
+    mandate["final_criteria"] = arr
   doc.mandates = newJObject()
   doc.mandates[mandateKey] = mandate
   recordUsage(doc, "planner", result.provider)
@@ -819,6 +868,11 @@ proc projectRevise*(req: ProjectRequest): ProjectReport =
   mandate["refinement"] = %refinement
   if implementerReason.len > 0:
     mandate["implementer_revise_reason"] = %implementerReason
+  let fcR = planFinalCriteria(parsed.node)
+  if fcR.len > 0:
+    var arr = newJArray()
+    for c in fcR: arr.add(%c)
+    mandate["final_criteria"] = arr
   if doc.mandates.isNil: doc.mandates = newJObject()
   doc.mandates[mandateKey] = mandate
   recordUsage(doc, "reviser", result.provider)
@@ -1220,6 +1274,97 @@ proc projectStep*(req: ProjectRequest): ProjectReport =
   result.verify = verifyStepCriteria(
     recipe, result.apply.worktree, doc.cwd, stepCriteria, finalStep = finalStep)
 
+  var usedCompileRepair = false
+  var compileRepairRound = 0
+
+  if result.verify.ok:
+    discard
+  else:
+    # Post-compile repair: rejected candidate + diff + localized diagnosis.
+    let compileOut =
+      if result.verify.details.isNil: ""
+      else: result.verify.details{"compile_out"}.getStr
+    let loc = localizeCompileDiagnosis(
+      compileOut, result.apply.worktree, result.apply.targetFile)
+    if loc.hit and compileRepairRound < 1 and canCompileRepair(req):
+      inc compileRepairRound
+      result.repairTriggered = true
+      result.repairReason = "compile_failed"
+      let rejectedCandidate =
+        if decision.exactProposalJson.len > 0: decision.exactProposalJson
+        else: rawText
+      let repairCtx = buildCompileRepairContext(
+        result.apply.worktree, mandate, step.title,
+        rejectedCandidate, readable, loc.finding)
+      result.repairProvider = invokeCompileRepair(
+        req, repairCtx.systemPrompt, repairCtx.userPrompt)
+      result.repairAttempted = true
+      inc result.providerCallsThisCommand
+      if result.repairProvider.route == "api" or req.route == "api":
+        inc result.apiCallsThisCommand
+        recordUsage(doc, "implementer_compile_repair", result.repairProvider)
+      else:
+        result.untested.add("compile repair via inject")
+      if result.repairProvider.ok:
+        let sigR = gateSignals(result.repairProvider.rawText)
+        if sigR.reviseHit:
+          doc.revisePlanPending = true
+          doc.revisePlanReason = sigR.reviseDecision
+          doc.revisePlanStepId = step.id
+          doc.revisePlanAtVersion = doc.currentPlanVersion
+          doc.nextAction = "revise"
+          doc.lastVerdict = "revise_plan_needed"
+          for i, s in doc.steps.mpairs:
+            if s.id == step.id:
+              doc.steps[i].status = ssPending
+              doc.steps[i].result = %*{
+                "verify": verifyToJson(result.verify),
+                "apply": applyToJson(result.apply),
+                "readable_diff": readable,
+                "compile_diagnosis": loc.finding,
+                "repair_revise_plan": sigR.reviseDecision,
+                "provider_attempt": {
+                  "status": "completed",
+                  "started_at": attemptStarted,
+                  "route": result.provider.route
+                }
+              }
+          saveProject(store, doc)
+          result.ok = false
+          result.verdict = "revise_plan_needed"
+          result.message = sigR.reviseDecision
+          result.doc = doc
+          result.report = reportBase("step", doc)
+          result.report["provider"] = providerToJson(result.provider)
+          result.report["repair_provider"] = providerToJson(result.repairProvider)
+          result.report["verify"] = verifyToJson(result.verify)
+          result.report["compile_diagnosis"] = %loc.finding
+          result.report["readable_diff"] = %readable
+          result.report["rejected_candidate"] = %rejectedCandidate
+          result.report["repair_triggered"] = %true
+          result.report["repair_attempted"] = %true
+          result.report["provider_calls_this_command"] = %result.providerCallsThisCommand
+          result.report["api_calls_this_command"] = %result.apiCallsThisCommand
+          return
+        let repairDec = parseFixDecision(result.repairProvider.rawText)
+        let repairWt =
+          if req.worktree.len > 0: req.worktree & "_repair"
+          else: ""
+        # Repair edits the rejected candidate tree (not pristine source).
+        let repaired = applyDecision(result.apply.worktree, repairWt, repairDec)
+        if repaired.ok:
+          usedCompileRepair = true
+          result.apply = repaired
+          doc.worktree = repaired.worktree
+          readable = buildReadableDiff(
+            sourceRoot, repaired.worktree, repaired.targetFile)
+          doc.lastDiff = readable
+          result.verify = verifyStepCriteria(
+            recipe, repaired.worktree, doc.cwd, stepCriteria,
+            finalStep = finalStep)
+          discard writeArtifact(req.artifactDir, "compile_repair_diff.txt",
+            readable & "\n" & loc.finding & "\n")
+
   if result.verify.ok:
     let snap = snapshotAcceptedTree(req.artifactDir, step.id, result.apply.worktree)
     doc.acceptedTreeRef = snap.path
@@ -1240,6 +1385,7 @@ proc projectStep*(req: ProjectRequest): ProjectReport =
           "readable_diff": readable,
           "source_tree": sourceRoot,
           "via_recovery": usedRecovery,
+          "via_compile_repair": usedCompileRepair,
           "recovery_reason": result.recoveryReason,
           "provider_attempt": {
             "status": "completed",
@@ -1260,6 +1406,11 @@ proc projectStep*(req: ProjectRequest): ProjectReport =
     result.verdict = "pass"
     result.message = result.verify.message
   else:
+    let compileOut =
+      if result.verify.details.isNil: ""
+      else: result.verify.details{"compile_out"}.getStr
+    let loc = localizeCompileDiagnosis(
+      compileOut, result.apply.worktree, result.apply.targetFile)
     for i, s in doc.steps.mpairs:
       if s.id == step.id:
         doc.steps[i].status = ssPending
@@ -1269,6 +1420,8 @@ proc projectStep*(req: ProjectRequest): ProjectReport =
           "readable_diff": readable,
           "source_tree": sourceRoot,
           "via_recovery": usedRecovery,
+          "via_compile_repair": usedCompileRepair,
+          "compile_diagnosis": loc.finding,
           "provider_attempt": {
             "status": "completed",
             "started_at": attemptStarted,
@@ -1276,8 +1429,18 @@ proc projectStep*(req: ProjectRequest): ProjectReport =
             "source_tree": sourceRoot
           }
         }
+    # Motivated revise: compile still broken after repair → change treatment.
+    if loc.hit and (result.repairAttempted or not canCompileRepair(req)):
+      doc.revisePlanPending = true
+      doc.revisePlanReason =
+        "compile failed on step " & step.id & ": " & loc.message &
+        "; change how the blockage is treated (prefer insertLine* / different split)"
+      doc.revisePlanStepId = step.id
+      doc.revisePlanAtVersion = doc.currentPlanVersion
+      doc.nextAction = "revise"
+    else:
+      doc.nextAction = "step"
     doc.lastVerdict = "verify_failed"
-    doc.nextAction = "step"
     doc.blockedReason = result.verify.message
     result.ok = false
     result.verdict = "verify_failed"
@@ -1291,6 +1454,7 @@ proc projectStep*(req: ProjectRequest): ProjectReport =
     "accepted_tree_ref": doc.acceptedTreeRef,
     "accepted_tree_hash": doc.acceptedTreeHash,
     "via_recovery": usedRecovery,
+    "via_compile_repair": usedCompileRepair,
     "verify": verifyToJson(result.verify)
   })
   discard writeArtifact(req.artifactDir, "verify.json", pretty(verifyToJson(result.verify)))
@@ -1304,13 +1468,19 @@ proc projectStep*(req: ProjectRequest): ProjectReport =
   result.report["source_tree"] = %sourceRoot
   result.report["readable_diff"] = %readable
   result.report["via_recovery"] = %usedRecovery
+  result.report["via_compile_repair"] = %usedCompileRepair
   result.report["recovery_triggered"] = %result.recoveryTriggered
   result.report["recovery_attempted"] = %result.recoveryAttempted
   result.report["recovery_reason"] = %result.recoveryReason
+  result.report["repair_triggered"] = %result.repairTriggered
+  result.report["repair_attempted"] = %result.repairAttempted
+  result.report["repair_reason"] = %result.repairReason
   result.report["provider_calls_this_command"] = %result.providerCallsThisCommand
   result.report["api_calls_this_command"] = %result.apiCallsThisCommand
   if result.recoveryAttempted:
     result.report["recovery_provider"] = providerToJson(result.recoveryProvider)
+  if result.repairAttempted:
+    result.report["repair_provider"] = providerToJson(result.repairProvider)
   if req.historicalProvenance.len > 0:
     result.report["historical_provenance"] = %req.historicalProvenance
   if result.untested.len > 0:
@@ -1662,8 +1832,10 @@ proc projectRun*(req: ProjectRequest): ProjectReport =
         inc autoRevises
         var revReq = reqMut
         revReq.refinement = ""  # motif implémenteur suffit
+        let postInj = resolveInject(reqMut, "plan_revise_postconditions.json")
         let autoInj = resolveInject(reqMut, "plan_v3_after_revise.json")
-        if autoInj.len > 0: revReq.injectPath = autoInj
+        if postInj.len > 0: revReq.injectPath = postInj
+        elif autoInj.len > 0: revReq.injectPath = autoInj
         elif reqMut.injectPath.len > 0: revReq.injectPath = reqMut.injectPath
         let revised = projectRevise(revReq)
         recordIntervention("revise:auto", revised)

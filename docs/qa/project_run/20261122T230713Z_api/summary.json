@@ -1,0 +1,109 @@
+{
+  "stamp": "20261122T230713Z",
+  "route": "api",
+  "code_sha": "8f91314de9a40fe6c339dc9e46ecd527ac3fc7e8",
+  "exit_code": 4,
+  "ok": false,
+  "verdict": "revise_plan_needed",
+  "message": "Le plan doit \u00eatre ajust\u00e9 afin d'inclure explicitement les v\u00e9rifications de l'option d'exportation CSV sans alt\u00e9rer le comportement existant de la liste.",
+  "next_action": "revise",
+  "interventions": [
+    {
+      "kind": "ask",
+      "ok": true,
+      "verdict": "plan_ready",
+      "message": "plan v1 persisted",
+      "api_calls": 1,
+      "provider_calls": 1
+    },
+    {
+      "kind": "revise",
+      "ok": true,
+      "verdict": "plan_revised",
+      "message": "plan v2 persisted",
+      "api_calls": 1,
+      "provider_calls": 1
+    },
+    {
+      "kind": "step:1",
+      "ok": false,
+      "verdict": "revise_plan_needed",
+      "message": "Le plan doit \u00eatre ajust\u00e9 afin d'inclure explicitement les v\u00e9rifications de l'option d'exportation CSV sans alt\u00e9rer le comportement existant de la liste.",
+      "api_calls": 2,
+      "provider_calls": 2
+    },
+    {
+      "kind": "revise:auto",
+      "ok": true,
+      "verdict": "plan_revised",
+      "message": "plan v3 persisted",
+      "api_calls": 1,
+      "provider_calls": 1
+    },
+    {
+      "kind": "step:1",
+      "ok": false,
+      "verdict": "revise_plan_needed",
+      "message": "Le plan doit \u00eatre ajust\u00e9 afin d'inclure explicitement les v\u00e9rifications de l'option d'exportation CSV sans alt\u00e9rer le comportement existant de la liste.",
+      "api_calls": 2,
+      "provider_calls": 2
+    }
+  ],
+  "api_calls_this_command": 7,
+  "provider_calls_this_command": 7,
+  "usage_by_role": {
+    "planner": {
+      "prompt_tokens": 631,
+      "completion_tokens": 546,
+      "calls": 1,
+      "estimated_usd": 0.00042225,
+      "model": "gpt-4o-mini"
+    },
+    "implementer": {
+      "prompt_tokens": 2338,
+      "completion_tokens": 432,
+      "calls": 2,
+      "estimated_usd": 0.0006099,
+      "model": "gpt-4o-mini"
+    },
+    "reviser": {
+      "prompt_tokens": 2582,
+      "completion_tokens": 1364,
+      "calls": 2,
+      "estimated_usd": 0.0012056999999999999,
+      "model": "gpt-4o-mini"
+    },
+    "implementer_recovery": {
+      "prompt_tokens": 3148,
+      "completion_tokens": 110,
+      "calls": 2,
+      "estimated_usd": 0.0005382,
+      "model": "gpt-4o-mini"
+    }
+  },
+  "delivered_tree": "",
+  "delivered_hash": "",
+  "binary_behaviour": {},
+  "blocked": {
+    "kind": "revise_plan_needed",
+    "step_id": "1",
+    "next_action": "revise",
+    "message": "Le plan doit \u00eatre ajust\u00e9 afin d'inclure explicitement les v\u00e9rifications de l'option d'exportation CSV sans alt\u00e9rer le comportement existant de la liste."
+  },
+  "status_verdict": "revise_plan_needed",
+  "first_faulty_decision": "revise_plan_needed",
+  "first_faulty_raw": "```json\n{\n  \"edits\": [\n    {\n      \"insertLineAfter\": \"  let cmd = if args.len > 0: args[0] else: \\\"list\\\"\",\n      \"newText\": \"  var exportCsv = false\"\n    },\n    {\n      \"insertLineAfter\": \"  case cmd\",\n      \"newText\": \"  of \\\"export-csv\\\":\\n    exportCsv = true\"\n    },\n    {\n      \"insertLineBefore\": \"    echo formatList(loadTasks())\",\n      \"newText\": \"    if exportCsv:\\n      echo formatCsv(loadTasks())\"\n    },\n    {\n      \"insertLineAfter\": \"proc formatList*(tasks: openArray[Task]): string =\",\n      \"newText\": \"proc formatCsv*(tasks: openArray[Task]): string =\\n  var lines: seq[string] = @[]\\n  for t in tasks:\\n    let title = if contains(t.title, '\\\"'): \\\"\\\\\\\"\\\" & t.title.replace(\\\"\\\\\\\"\\\", \\\"\\\\\\\"\\\\\\\"\\\") & '\\\\\\\"' else: t.title\\n    lines.add($t.id & \\\", \\\" & title)\\n  lines.join(\\\"\\\\n\\\")\"\n    }\n  ],\n  \"target_file\": \"src/demo_tasks.nim\"\n}\n```",
+  "user_command": "nimfactory project run --store \u2026 --cwd fixtures/demo_tasks_cli --objective 'Je veux pouvoir exporter mes t\u00e2ches.' --refinement '\u2026CSV\u2026' --route api",
+  "estimated_usd_total": 0.00277605,
+  "engine_decision": {
+    "blocked": {
+      "kind": "revise_plan_needed",
+      "step_id": "1",
+      "next_action": "revise",
+      "message": "Le plan doit \u00eatre ajust\u00e9 afin d'inclure explicitement les v\u00e9rifications de l'option d'exportation CSV sans alt\u00e9rer le comportement existant de la liste."
+    },
+    "auto_revise_once": true,
+    "second_block": "revise_plan_needed again after motivated revise",
+    "note": "Model used insertLine* but still signaled revise_plan; maxAutoRevises=1 exhausted"
+  }
+}

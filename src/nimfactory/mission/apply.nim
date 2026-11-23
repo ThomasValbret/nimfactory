@@ -12,7 +12,9 @@ type
   TextEdit* = object
     oldText*: string             ## replace search text, or unique insert anchor
     newText*: string             ## replacement body, or text to insert
-    op*: string                  ## "replace" | "insert_before" | "insert_after"
+    op*: string                  ## replace | insert_before | insert_after |
+                                 ## insert_line_before | insert_line_after
+                                 ## (textual insert* preserved; line* = new line(s))
 
   FixDecision* = object
     targetFile*: string
@@ -217,16 +219,48 @@ proc requireEditStringField(
       return (true, n.getStr, "", "")
   (false, "", "missing required string field among " & names.join("/"), missingCode)
 
+const
+  SupportedEditOps = [
+    "replace", "insert_before", "insert_after",
+    "insert_line_before", "insert_line_after"
+  ]
+
 proc parseOneTextEdit(item: JsonNode): tuple[ok: bool; edit: TextEdit; err: string; code: string] =
-  ## replace {oldText,newText} or insertBefore/insertAfter + newText on a unique anchor.
+  ## replace {oldText,newText}; textual insertBefore/After (legacy); or
+  ## insertLineBefore/After (new line(s) around the line holding the anchor).
   if item.kind != JObject:
     return (false, TextEdit(), "malformed edits element (not a JSON object)", "malformed_edit")
   let newF = requireEditStringField(
     item, ["newText", "new_text", "replace", "text"], "newText_missing", "newText_type")
   if not newF.ok:
     return (false, TextEdit(), "edit newText: " & newF.err, newF.code)
+  # Line insertion keys take precedence over textual ones when both appear.
+  let hasLineBefore = item.hasKey("insertLineBefore") or item.hasKey("insert_line_before")
+  let hasLineAfter = item.hasKey("insertLineAfter") or item.hasKey("insert_line_after")
   let hasBefore = item.hasKey("insertBefore") or item.hasKey("insert_before")
   let hasAfter = item.hasKey("insertAfter") or item.hasKey("insert_after")
+  if hasLineBefore:
+    let before = requireEditStringField(
+      item, ["insertLineBefore", "insert_line_before"], "insert_missing", "insert_type")
+    if not before.ok:
+      return (false, TextEdit(), "edit insertLineBefore: " & before.err, before.code)
+    if before.value.len == 0:
+      return (false, TextEdit(), "insertLineBefore anchor is empty", "empty_or_missing_oldText")
+    return (true, TextEdit(
+      oldText: before.value.replace("\r\n", "\n"),
+      newText: newF.value.replace("\r\n", "\n"),
+      op: "insert_line_before"), "", "")
+  if hasLineAfter:
+    let after = requireEditStringField(
+      item, ["insertLineAfter", "insert_line_after"], "insert_missing", "insert_type")
+    if not after.ok:
+      return (false, TextEdit(), "edit insertLineAfter: " & after.err, after.code)
+    if after.value.len == 0:
+      return (false, TextEdit(), "insertLineAfter anchor is empty", "empty_or_missing_oldText")
+    return (true, TextEdit(
+      oldText: after.value.replace("\r\n", "\n"),
+      newText: newF.value.replace("\r\n", "\n"),
+      op: "insert_line_after"), "", "")
   if hasBefore:
     let before = requireEditStringField(
       item, ["insertBefore", "insert_before"], "insert_missing", "insert_type")
@@ -255,7 +289,7 @@ proc parseOneTextEdit(item: JsonNode): tuple[ok: bool; edit: TextEdit; err: stri
     return (false, TextEdit(), "edit oldText: " & oldF.err, oldF.code)
   var op = item{"op"}.getStr
   if op.len == 0: op = "replace"
-  if op notin ["replace", "insert_before", "insert_after"]:
+  if op notin SupportedEditOps:
     return (false, TextEdit(), "unsupported edit op: " & op, "malformed_edit")
   (true, TextEdit(
     oldText: oldF.value.replace("\r\n", "\n"),
@@ -268,8 +302,33 @@ proc editToProposalJson(e: TextEdit): JsonNode =
     %*{"insertBefore": e.oldText, "newText": e.newText}
   of "insert_after":
     %*{"insertAfter": e.oldText, "newText": e.newText}
+  of "insert_line_before":
+    %*{"insertLineBefore": e.oldText, "newText": e.newText}
+  of "insert_line_after":
+    %*{"insertLineAfter": e.oldText, "newText": e.newText}
   else:
     %*{"oldText": e.oldText, "newText": e.newText}
+
+proc lineBoundsAround*(content: string; pos: int): tuple[lineStart, lineEnd: int] =
+  ## Byte range of the line containing `pos` (lineEnd exclusive; may equal len).
+  ## Language-agnostic: newline-delimited text only.
+  var start = pos
+  while start > 0 and content[start - 1] != '\n':
+    dec start
+  var stop = pos
+  while stop < content.len and content[stop] != '\n':
+    inc stop
+  if stop < content.len and content[stop] == '\n':
+    inc stop  # include trailing newline when present
+  (start, stop)
+
+proc normalizeLineInsertion*(text: string): string =
+  ## Ensure inserted chunk is at least one line (leading/trailing newlines as needed).
+  result = text.replace("\r\n", "\n")
+  if result.len == 0:
+    return "\n"
+  if not result.endsWith("\n"):
+    result.add('\n')
 
 proc parseFixDecision*(raw: string): FixDecision =
   result.rawExcerpt = if raw.len > 400: raw[0 .. 399] else: raw
@@ -376,7 +435,7 @@ proc applyEditsToContent*(
     contexts: seq[string]] =
   ## Validate every anchor against the evolving buffer, then apply. On any
   ## missing/ambiguous/empty oldText, refuse with zero mutations to `original`.
-  ## insert_before / insert_after require a unique anchor on the current buffer.
+  ## insert_before / insert_after = textual (legacy). insert_line_* = new line(s).
   var updated = original.replace("\r\n", "\n")
   let baseline = updated
   var details: seq[string] = @[]
@@ -414,6 +473,16 @@ proc applyEditsToContent*(
       let at = pos + ed.oldText.len
       updated = updated[0 ..< at] & ed.newText & updated[at .. ^1]
       details.add("edit_" & $i & ":insert_after")
+    of "insert_line_before":
+      let bounds = lineBoundsAround(updated, pos)
+      let chunk = normalizeLineInsertion(ed.newText)
+      updated = updated[0 ..< bounds.lineStart] & chunk & updated[bounds.lineStart .. ^1]
+      details.add("edit_" & $i & ":insert_line_before")
+    of "insert_line_after":
+      let bounds = lineBoundsAround(updated, pos + ed.oldText.len - 1)
+      let chunk = normalizeLineInsertion(ed.newText)
+      updated = updated[0 ..< bounds.lineEnd] & chunk & updated[bounds.lineEnd .. ^1]
+      details.add("edit_" & $i & ":insert_line_after")
     else:
       updated = updated[0 ..< pos] & ed.newText & updated[pos + ed.oldText.len .. ^1]
       details.add("edit_" & $i & ":applied")
@@ -671,8 +740,11 @@ proc diagnoseEditItem(
   else:
     let op = if one.edit.op.len > 0: one.edit.op else: "replace"
     result.note =
-      if op == "insert_before": "insert_before_unique"
-      elif op == "insert_after": "insert_after_unique"
+      case op
+      of "insert_before": "insert_before_unique"
+      of "insert_after": "insert_after_unique"
+      of "insert_line_before": "insert_line_before_unique"
+      of "insert_line_after": "insert_line_after_unique"
       else: "anchor_unique"
 
 proc diagnoseRawAgainstTree*(sourceRoot, raw: string): ProposalDiagnosis =

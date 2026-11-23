@@ -1,0 +1,86 @@
+{
+  "blocked": {
+    "kind": "revise_plan_needed",
+    "step_id": "1",
+    "next_action": "revise",
+    "message": "Le plan doit \u00eatre ajust\u00e9 afin d'inclure explicitement les v\u00e9rifications de l'option d'exportation CSV sans alt\u00e9rer le comportement existant de la liste."
+  },
+  "auto_revise_once": true,
+  "second_block": "revise_plan_needed again after motivated revise",
+  "note": "Model used insertLine* but still signaled revise_plan; maxAutoRevises=1 exhausted",
+  "verdict": "revise_plan_needed",
+  "message": "Le plan doit \u00eatre ajust\u00e9 afin d'inclure explicitement les v\u00e9rifications de l'option d'exportation CSV sans alt\u00e9rer le comportement existant de la liste.",
+  "usage_by_role": {
+    "planner": {
+      "prompt_tokens": 631,
+      "completion_tokens": 546,
+      "calls": 1,
+      "estimated_usd": 0.00042225,
+      "model": "gpt-4o-mini"
+    },
+    "implementer": {
+      "prompt_tokens": 2338,
+      "completion_tokens": 432,
+      "calls": 2,
+      "estimated_usd": 0.0006099,
+      "model": "gpt-4o-mini"
+    },
+    "reviser": {
+      "prompt_tokens": 2582,
+      "completion_tokens": 1364,
+      "calls": 2,
+      "estimated_usd": 0.0012056999999999999,
+      "model": "gpt-4o-mini"
+    },
+    "implementer_recovery": {
+      "prompt_tokens": 3148,
+      "completion_tokens": 110,
+      "calls": 2,
+      "estimated_usd": 0.0005382,
+      "model": "gpt-4o-mini"
+    }
+  },
+  "estimated_usd_total": 0.00277605,
+  "interventions": [
+    {
+      "kind": "ask",
+      "ok": true,
+      "verdict": "plan_ready",
+      "message": "plan v1 persisted",
+      "api_calls": 1,
+      "provider_calls": 1
+    },
+    {
+      "kind": "revise",
+      "ok": true,
+      "verdict": "plan_revised",
+      "message": "plan v2 persisted",
+      "api_calls": 1,
+      "provider_calls": 1
+    },
+    {
+      "kind": "step:1",
+      "ok": false,
+      "verdict": "revise_plan_needed",
+      "message": "Le plan doit \u00eatre ajust\u00e9 afin d'inclure explicitement les v\u00e9rifications de l'option d'exportation CSV sans alt\u00e9rer le comportement existant de la liste.",
+      "api_calls": 2,
+      "provider_calls": 2
+    },
+    {
+      "kind": "revise:auto",
+      "ok": true,
+      "verdict": "plan_revised",
+      "message": "plan v3 persisted",
+      "api_calls": 1,
+      "provider_calls": 1
+    },
+    {
+      "kind": "step:1",
+      "ok": false,
+      "verdict": "revise_plan_needed",
+      "message": "Le plan doit \u00eatre ajust\u00e9 afin d'inclure explicitement les v\u00e9rifications de l'option d'exportation CSV sans alt\u00e9rer le comportement existant de la liste.",
+      "api_calls": 2,
+      "provider_calls": 2
+    }
+  ]
+}

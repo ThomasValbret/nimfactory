@@ -143,6 +143,11 @@ proc stepFromJson*(j: JsonNode): ProjectStep =
   let crit = j{"criteria"}
   if crit != nil and crit.kind == JArray:
     for c in crit: result.criteria.add(c.getStr)
+  # Planner postconditions map onto step criteria when criteria omitted.
+  if result.criteria.len == 0:
+    let post = j{"postconditions"}
+    if post != nil and post.kind == JArray:
+      for c in post: result.criteria.add(c.getStr)
 
 proc planToJson*(p: PlanVersion): JsonNode =
   var steps = newJArray()
