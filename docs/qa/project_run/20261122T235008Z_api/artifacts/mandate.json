@@ -1,0 +1,22 @@
+{
+  "goal": "Implémenter une fonctionnalité pour exporter les tâches sous forme de fichier CSV sur la sortie standard tout en conservant le comportement d'affichage standard.",
+  "constraints": [
+    "L'exportation doit être activée par un drapeau clairement documenté.",
+    "Les titres doivent être correctement quotés pour les virgules dans le CSV."
+  ],
+  "files_likely": [
+    "src/demo_tasks.nim",
+    "src/tasks.nim"
+  ],
+  "plan_version": 2,
+  "change_notes": "La précision change le plan en spécifiant que l'exportation doit se faire sur la sortie standard au format CSV, tout en préservant l'affichage actuel par défaut sans le modifier.",
+  "agents_md_excerpt": "# Agents — demo_tasks_cli\n\nPetit CLI Nim de liste de tâches.\n\n## Consignes\n- Préserver le comportement d'affichage par défaut (`list`) sauf demande explicite.\n- Les changements d'export doivent être opt-in (drapeau CLI), pas remplacer `list`.\n- Les titres peuvent contenir des virgules ; un export CSV doit les quotter correctement.\n- Préférer de petites modifications localisées sous `src/`.\n",
+  "source_ids": [
+    "src/demo_tasks.nim",
+    "src/tasks.nim"
+  ],
+  "refinement": "Je veux du CSV sur la sortie standard et je veux garder l'affichage actuel par défaut.",
+  "step_id": "1",
+  "step_title": "Ajouter un drapeau CLI pour l'exportation CSV",
+  "source_tree": "/opt/nimFactory-studio-merge/fixtures/demo_tasks_cli"
+}
