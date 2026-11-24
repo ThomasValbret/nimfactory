@@ -1,0 +1,25 @@
+{
+  "summary": "NOTICE documentaire puis programme bonjour.",
+  "hypothesis": "Chaque étape contrôle seulement sa cible.",
+  "optional_question": "",
+  "final_criteria": ["file_exists", "program_runs", "stdout_exact:bonjour"],
+  "steps": [
+    {
+      "id": "create_notice",
+      "title": "Créer NOTICE.txt",
+      "depends_on": [],
+      "criteria": ["file_exists"]
+    },
+    {
+      "id": "create_hello",
+      "title": "Créer hello.py qui affiche exactement bonjour",
+      "depends_on": ["create_notice"],
+      "criteria": ["file_exists", "program_runs", "stdout_exact:bonjour"]
+    }
+  ],
+  "mandate_sketch": {
+    "goal": "NOTICE.txt puis hello.py affiche exactement bonjour",
+    "constraints": ["Python", "stdout exact"],
+    "files_likely": ["NOTICE.txt", "hello.py"]
+  }
+}

@@ -618,36 +618,124 @@ proc stdoutRuleFromCriterion*(c: string): tuple[kind, expected, name: string] =
     return ("contains", "", "run_stdout")
   ("none", "", c)
 
+proc fileTargetFromCriterion*(c: string): tuple[kind, path, name: string] =
+  ## kind: exists | created | none — path is relative when bound to a plan target.
+  let cl = c.strip()
+  let low = cl.toLowerAscii
+  if low.startsWith("file_exists:"):
+    return ("exists", cl[cl.find(':')+1 .. ^1].strip().replace('\\', '/'), cl)
+  if low.startsWith("file_created:"):
+    return ("created", cl[cl.find(':')+1 .. ^1].strip().replace('\\', '/'), cl)
+  if low == "file_exists":
+    return ("exists", "", "file_exists")
+  if low == "file_created":
+    return ("created", "", "file_created")
+  ("none", "", c)
+
+proc extractLikelyFilename*(text: string): string =
+  ## Pull a relative file path mentioned in a step title / objective.
+  const exts = ["txt", "py", "nim", "md", "json", "sql", "yml", "yaml",
+                "toml", "cfg", "ini", "csv", "sh"]
+  for raw in text.split({' ', '\t', '\n', '\r', ',', ';', '"', '\'', '`',
+                         '(', ')', '[', ']', '{', '}'}):
+    var w = raw.strip(chars = {'.', ':', '!', '?'})
+    if w.len < 3 or w.startsWith(".") or ".." in w or w.startsWith("/") or
+       w.startsWith("\\"):
+      continue
+    w = w.replace('\\', '/')
+    let dot = w.rfind('.')
+    if dot <= 0 or dot >= w.high: continue
+    let ext = w[dot+1 .. ^1].toLowerAscii
+    if ext in exts:
+      return w
+  ""
+
+proc resolvePathInTree*(worktree, expected: string): string =
+  ## Exact relative hit, else first basename match under the examined tree.
+  if expected.len == 0 or worktree.len == 0: return ""
+  let want = expected.replace('\\', '/')
+  if fileExists(worktree / want): return want
+  let base = extractFilename(want)
+  if base.len == 0: return ""
+  for path in walkDirRec(worktree):
+    if fileExists(path) and extractFilename(path) == base:
+      return relativePath(path, worktree).replace('\\', '/')
+  ""
+
 proc verifyGenericProgram*(
-    worktree, repoRoot: string; criteria: seq[string]): ProjectVerifyResult =
+    worktree, repoRoot: string; criteria: seq[string];
+    expectedPath = ""): ProjectVerifyResult =
   ## Empty / novel projects: file presence, program exit, and stdout rules.
-  ## program_runs = exit 0; stdout_exact/contains carry expected vs observed.
+  ## file_exists binds to the plan target when provided; program_runs only when asked.
   result.kind = "generic_program"
   result.details = newJObject()
   result.details["criteria"] = %criteria
+  result.details["examined_tree"] = %worktree
   var controls = newJArray()
-  let attempt = %*{"kind": "generic_program", "worktree": worktree}
+  let attempt = %*{"kind": "generic_program", "worktree": worktree,
+                   "examined_tree": worktree}
 
-  proc findEntry(): string =
+  proc findEntry(prefer = ""): string =
+    if prefer.len > 0:
+      let hit = resolvePathInTree(worktree, prefer)
+      if hit.len > 0: return hit
     for name in ["hello.py", "main.py", "app.py", "salut.py"]:
-      if fileExists(worktree / name): return name
-    for prefer in ["main.py", "hello.py", "app.py", "salut.py"]:
-      for path in walkDirRec(worktree):
-        if fileExists(path) and extractFilename(path) == prefer:
-          return relativePath(path, worktree).replace('\\', '/')
+      let hit = resolvePathInTree(worktree, name)
+      if hit.len > 0: return hit
     for path in walkDirRec(worktree):
       if path.endsWith(".py") and fileExists(path):
         return relativePath(path, worktree).replace('\\', '/')
     for name in ["hello.nim", "main.nim"]:
-      if fileExists(worktree / name): return name
+      let hit = resolvePathInTree(worktree, name)
+      if hit.len > 0: return hit
     ""
 
-  let entry = findEntry()
+  var boundTarget = expectedPath.replace('\\', '/')
+  var fileCritName = "file_exists"
+  var wantFile = false
+  for c in criteria:
+    let ft = fileTargetFromCriterion(c)
+    if ft.kind != "none":
+      wantFile = true
+      fileCritName = ft.name
+      if ft.path.len > 0 and boundTarget.len == 0:
+        boundTarget = ft.path
+  if boundTarget.len == 0:
+    for c in criteria:
+      let guess = extractLikelyFilename(c)
+      if guess.len > 0:
+        boundTarget = guess
+        break
+
+  var needStdout = false
+  for c in criteria:
+    if stdoutRuleFromCriterion(c).kind != "none" or c == "run_stdout":
+      needStdout = true
+  let needRun = "program_runs" in criteria or needStdout
+  if criteria.len == 0:
+    wantFile = true
+
+  let entryPrefer =
+    if boundTarget.len > 0 and (boundTarget.endsWith(".py") or
+       boundTarget.endsWith(".nim")): boundTarget
+    elif needRun: "main.py"
+    else: ""
+  # Documentary file gates must not require a program entry.
+  let entry = if needRun: findEntry(entryPrefer) else: ""
   let entryAbs = if entry.len > 0: worktree / entry else: ""
+
   var fp = newJObject()
+  proc noteFingerprint(rel: string) =
+    if rel.len == 0: return
+    let absPath = worktree / rel
+    if fileExists(absPath):
+      fp[rel] = %fileContentFingerprint(absPath)
+  if boundTarget.len > 0:
+    let resolved = resolvePathInTree(worktree, boundTarget)
+    if resolved.len > 0: noteFingerprint(resolved)
+    else: noteFingerprint(boundTarget)
+  if entry.len > 0: noteFingerprint(entry)
   if entry.len > 0:
-    fp[entry] = %fileContentFingerprint(entryAbs)
-    # Fingerprint sibling sources so a linked-file mutation invalidates proof.
     let siblingDir =
       if '/' in entry or '\\' in entry: parentDir(entryAbs) else: worktree
     if dirExists(siblingDir):
@@ -656,34 +744,55 @@ proc verifyGenericProgram*(
           let rel = relativePath(path, worktree).replace('\\', '/')
           fp[rel] = %fileContentFingerprint(path)
 
-  var needStdout = false
-  for c in criteria:
-    if stdoutRuleFromCriterion(c).kind != "none" or c == "run_stdout":
-      needStdout = true
-  let needFile =
-    criteria.len == 0 or "file_exists" in criteria or "file_created" in criteria or
-    "program_runs" in criteria or needStdout
-  if needFile or "file_exists" in criteria or "file_created" in criteria:
-    let ok = entry.len > 0 and fileExists(entryAbs)
-    controls.add(controlNode(
-      if "file_created" in criteria: "file_created" else: "file_exists",
-      ok, if ok: "passed" else: "failed",
-      if ok: "created file present: " & entry else: "no entry script found",
-      fp, attempt))
+  if wantFile or "file_exists" in criteria or "file_created" in criteria or
+     criteria.anyIt(fileTargetFromCriterion(it).kind != "none"):
+    let expected = boundTarget
+    var observed = ""
+    var ok = false
+    if expected.len > 0:
+      observed = resolvePathInTree(worktree, expected)
+      ok = observed.len > 0
+    else:
+      # Unbound legacy: any entry still accepted, but surface what was seen.
+      observed = findEntry()
+      ok = observed.len > 0 and fileExists(worktree / observed)
+    var other = ""
+    if not ok:
+      other = findEntry()
+    var node = controlNode(
+      fileCritName, ok, if ok: "passed" else: "failed",
+      if ok: "target present: " & observed
+      elif expected.len > 0: "expected target missing: " & expected &
+           (if other.len > 0: " (found other: " & other & ")" else: "")
+      else: "no entry script found",
+      fp, attempt)
+    node["expected_path"] = %expected
+    node["observed_path"] = %observed
+    node["examined_tree"] = %worktree
+    controls.add(node)
+    result.details["expected_path"] = %expected
+    result.details["observed_path"] = %observed
 
-  let needRun = "program_runs" in criteria or needStdout
   var exitCode = -1
-  var observed = ""
+  var observedOut = ""
   var ran = false
   if needRun:
     if entry.len == 0 or not fileExists(entryAbs):
       if "program_runs" in criteria:
-        controls.add(controlNode("program_runs", false, "absent",
-          "program_runs absent — no file to execute", fp, attempt))
+        var n = controlNode("program_runs", false, "absent",
+          "program_runs absent — no file to execute", fp, attempt)
+        n["expected_path"] = %entryPrefer
+        n["observed_path"] = %entry
+        n["examined_tree"] = %worktree
+        controls.add(n)
     elif not entry.endsWith(".py"):
       if "program_runs" in criteria:
-        controls.add(controlNode("program_runs", false, "failed",
-          "unsupported entry language for generic run: " & entry, fp, attempt))
+        var n = controlNode("program_runs", false, "failed",
+          "unsupported entry language for generic run: " & entry, fp, attempt)
+        n["expected_path"] = %entryPrefer
+        n["observed_path"] = %entry
+        n["examined_tree"] = %worktree
+        controls.add(n)
     else:
       let py = findExe("python3")
       if py.len == 0:
@@ -696,16 +805,20 @@ proc verifyGenericProgram*(
         let script = extractFilename(entry)
         let r = runCmd(workDir, py, @[script])
         exitCode = r.exit
-        observed = r.outp.replace("\r\n", "\n")
+        observedOut = r.outp.replace("\r\n", "\n")
         ran = true
-        result.details["stdout"] = %observed
+        result.details["stdout"] = %observedOut
         result.details["exit"] = %exitCode
         if "program_runs" in criteria:
           let ok = exitCode == 0
-          controls.add(controlNode(
+          var n = controlNode(
             "program_runs", ok, if ok: "passed" else: "failed",
-            "exit=" & $exitCode & " stdout=" & observed.strip(),
-            fp, attempt))
+            "exit=" & $exitCode & " stdout=" & observedOut.strip(),
+            fp, attempt)
+          n["expected_path"] = %(if entryPrefer.len > 0: entryPrefer else: entry)
+          n["observed_path"] = %entry
+          n["examined_tree"] = %worktree
+          controls.add(n)
 
   for c in criteria:
     let rule = stdoutRuleFromCriterion(c)
@@ -718,7 +831,7 @@ proc verifyGenericProgram*(
       status = "absent"
       obs = "stdout not observed — program did not run"
     else:
-      let got = observed.strip()
+      let got = observedOut.strip()
       let cmp =
         if rule.kind == "exact":
           if got == expected: "exact_match" else: "exact_mismatch"
@@ -733,20 +846,27 @@ proc verifyGenericProgram*(
       obs = "rule=" & rule.kind & " expected=" & expected &
             " observed=" & got & " comparison=" & cmp
       if exitCode != 0 and rule.kind != "none":
-        # Exit failure is separate from stdout rule; still record observed.
         obs = obs & " exit=" & $exitCode
     var node = controlNode(rule.name, ok, status, obs, fp, attempt)
     node["expected"] = %expected
-    node["observed"] = %observed.strip()
+    node["observed"] = %observedOut.strip()
     node["comparison_rule"] = %rule.kind
+    node["expected_path"] = %(if entryPrefer.len > 0: entryPrefer else: entry)
+    node["observed_path"] = %entry
+    node["examined_tree"] = %worktree
     controls.add(node)
 
   for c in criteria:
     var found = false
+    let ft = fileTargetFromCriterion(c)
     for n in controls:
-      if n{"name"}.getStr == c: found = true
-      if c == "file_created" and n{"name"}.getStr == "file_exists": found = true
-      if stdoutRuleFromCriterion(c).name == n{"name"}.getStr: found = true
+      let nm = n{"name"}.getStr
+      if nm == c: found = true
+      if ft.kind != "none" and (nm == ft.name or
+         nm == "file_exists" or nm == "file_created" or
+         nm.startsWith("file_exists:") or nm.startsWith("file_created:")):
+        found = true
+      if stdoutRuleFromCriterion(c).name == nm: found = true
     if not found:
       controls.add(controlNode(c, false, "unexecuted",
         "control " & c & " requested but not executed", newJObject(), attempt))
@@ -798,12 +918,18 @@ proc verifyStepCriteria*(
     "file_exists" in criteria or "file_created" in criteria or
     "program_runs" in criteria or "stdout_bonjour" in criteria or
     "run_stdout" in criteria
+  var expectedPath = ""
   for c in criteria:
     if c.startsWith("stdout_exact:") or c.startsWith("stdout_contains:"):
       genericTok = true
+    let ft = fileTargetFromCriterion(c)
+    if ft.kind != "none":
+      genericTok = true
+      if ft.path.len > 0 and expectedPath.len == 0:
+        expectedPath = ft.path
   if recipe.verify in ["generic_program", "run_stdout"] or
      (recipe.verify == "" and genericTok):
-    result = verifyGenericProgram(worktree, repoRoot, criteria)
+    result = verifyGenericProgram(worktree, repoRoot, criteria, expectedPath)
     return
   if recipe.verify == "" and not genericTok:
     # No recipe and no generic tokens: do not fall into CSV by accident.
@@ -815,7 +941,8 @@ proc verifyStepCriteria*(
       result.details = %*{"criteria": criteria}
       return
     result = verifyGenericProgram(worktree, repoRoot,
-      if criteria.len > 0: criteria else: @["file_exists", "program_runs"])
+      if criteria.len > 0: criteria else: @["file_exists", "program_runs"],
+      expectedPath)
     return
   var needCsv = finalStep or ("export_command" in criteria)
   var needCompile = criteria.len == 0 or "compile" in criteria or
@@ -903,16 +1030,26 @@ proc proofCoversCriteria*(verifyNode: JsonNode; criteria: seq[string]): bool =
       if controls == nil: return false
       var hit = false
       for n in controls:
-        if n{"name"}.getStr == c or (c == "file_created" and n{"name"}.getStr == "file_exists"):
+        let nm = n{"name"}.getStr
+        if nm == c or (c == "file_created" and nm == "file_exists") or
+           (c == "file_exists" and (nm == "file_exists" or
+            nm.startsWith("file_exists:"))) or
+           (c == "file_created" and nm.startsWith("file_created:")):
           hit = true
           if not n{"ok"}.getBool: return false
       if not hit: return false
     else:
-      if c.startsWith("stdout_exact:") or c.startsWith("stdout_contains:"):
+      if c.startsWith("stdout_exact:") or c.startsWith("stdout_contains:") or
+         c.startsWith("file_exists:") or c.startsWith("file_created:"):
         if controls == nil: return false
         var hit = false
         for n in controls:
-          if n{"name"}.getStr == c:
+          let nm = n{"name"}.getStr
+          if nm == c or
+             (c.startsWith("file_exists:") and
+              (nm == c or nm == "file_exists" or nm.startsWith("file_exists:"))) or
+             (c.startsWith("file_created:") and
+              (nm == c or nm == "file_created" or nm.startsWith("file_created:"))):
             hit = true
             if not n{"ok"}.getBool: return false
         if not hit: return false

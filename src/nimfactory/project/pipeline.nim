@@ -309,9 +309,14 @@ proc coerceExecutableCriteria*(raw: seq[string]; st: ProjectStep;
       addUnique("stdout_exact:" & rawStrip[rawStrip.find(':')+1 .. ^1].strip())
     elif cl.startsWith("stdout_contains:"):
       addUnique("stdout_contains:" & rawStrip[rawStrip.find(':')+1 .. ^1].strip())
-    if "file_exists" in cl or ("fichier" in cl and "cré" in cl):
+    if cl.startsWith("file_exists:"):
+      addUnique("file_exists:" & rawStrip[rawStrip.find(':')+1 .. ^1].strip())
+    elif cl.startsWith("file_created:"):
+      addUnique("file_created:" & rawStrip[rawStrip.find(':')+1 .. ^1].strip())
+    if cl == "file_exists" or ("fichier" in cl and "cré" in cl):
       addUnique("file_exists")
-    if "file_created" in cl or "crée" in cl or "creer" in cl or "create" in cl:
+    if cl == "file_created" or "crée" in cl or "creer" in cl or "create" in cl or
+       "créer" in cl:
       addUnique("file_exists")
     if "program_runs" in cl or "exécut" in cl or "execut" in cl:
       addUnique("program_runs")
@@ -372,6 +377,42 @@ proc coerceExecutableCriteria*(raw: seq[string]; st: ProjectStep;
        stepObjectiveImpliesExport(st, index, total, objective,
                                   finalCriteria.len > 0, cwd):
     addUnique("export_command")
+  # Bind bare file_exists / file_created to the path named by the step/plan.
+  # Never invent a file gate when the step did not request one.
+  if not csvBound and recipe.verify != "loan_notebook":
+    var wantsFile = false
+    for c in kept:
+      if c == "file_exists" or c == "file_created" or
+         c.startsWith("file_exists:") or c.startsWith("file_created:"):
+        wantsFile = true
+    if wantsFile:
+      var target = extractLikelyFilename(st.title)
+      if target.len == 0: target = extractLikelyFilename(objective)
+      if target.len == 0:
+        for c in raw:
+          let g = extractLikelyFilename(c)
+          if g.len > 0: target = g; break
+      if target.len == 0:
+        for c in kept:
+          if c.startsWith("file_exists:"):
+            target = c[c.find(':')+1 .. ^1].strip(); break
+          if c.startsWith("file_created:"):
+            target = c[c.find(':')+1 .. ^1].strip(); break
+      if target.len > 0:
+        var next: seq[string] = @[]
+        var sawBound = false
+        for c in kept:
+          if c == "file_exists" or c == "file_created":
+            continue
+          if c.startsWith("file_exists:") or c.startsWith("file_created:"):
+            if sawBound: continue
+            next.add(c)
+            sawBound = true
+          else:
+            next.add(c)
+        if not sawBound:
+          next.add("file_exists:" & target)
+        kept = next
   kept
 
 proc inferStepCriteria*(st: ProjectStep; index, total: int;

@@ -1,0 +1,5 @@
+{
+  "target_file": "OTHER.txt",
+  "decision": "wrong_file",
+  "patched_content": "pas la notice\n"
+}

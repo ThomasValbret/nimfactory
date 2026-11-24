@@ -1126,4 +1126,68 @@ block exactStdoutThreePrograms:
   doAssert not vMerciFail.ok
   echo "exact_stdout_three_programs: ok"
 
+# --- NOTICE.txt: plan target binds file_exists; wrong file + preexisting script fail ---
+block noticeTargetBinding:
+  let noticeOk = root / "fixtures" / "notice_then_hello"
+  let store = tmpPath("notice_ok") & ".sqlite"
+  let art = tmpPath("notice_ok_art")
+  createDir(art)
+  var req = defaultProjectRequest()
+  req.storePath = store
+  req.projectId = "notice_ok"
+  req.cwd = tmpPath("notice_ok_cwd")
+  createDir(req.cwd)
+  req.objective = "Créer NOTICE.txt puis hello.py qui affiche exactement bonjour"
+  req.route = "inject"
+  req.injectDir = noticeOk / "inject"
+  req.artifactDir = art
+  req.worktree = tmpPath("notice_ok_wt")
+  req.commandId = "cmd-notice-ok-1"
+  let first = executeProjectCommand(RunCommand, req)
+  doAssert first.ok and first.verdict == "done", first.verdict & " " & first.message
+  doAssert fileExists(first.doc.acceptedTreeRef / "NOTICE.txt")
+  doAssert fileExists(first.doc.acceptedTreeRef / "hello.py")
+  var sawNotice = false
+  for c in first.report{"controls_executed"}:
+    if c{"expected_path"}.getStr == "NOTICE.txt":
+      sawNotice = true
+      doAssert c{"ok"}.getBool
+      doAssert c{"observed_path"}.getStr == "NOTICE.txt"
+      doAssert c{"examined_tree"}.getStr.len > 0
+  doAssert sawNotice, $first.report{"controls_executed"}
+
+  let wrongFix = root / "fixtures" / "notice_wrong_target"
+  let cwdWrong = tmpPath("notice_wrong_cwd")
+  createDir(cwdWrong)
+  copyFile(wrongFix / "seed" / "hello.py", cwdWrong / "hello.py")
+  var bad = defaultProjectRequest()
+  bad.storePath = tmpPath("notice_bad") & ".sqlite"
+  bad.projectId = "notice_bad"
+  bad.cwd = cwdWrong
+  bad.objective = "Créer NOTICE.txt"
+  bad.route = "inject"
+  bad.injectDir = wrongFix / "inject"
+  bad.artifactDir = tmpPath("notice_bad_art")
+  createDir(bad.artifactDir)
+  bad.worktree = tmpPath("notice_bad_wt")
+  bad.commandId = "cmd-notice-bad-1"
+  let failed = executeProjectCommand(RunCommand, bad)
+  doAssert not failed.ok, $failed.report
+  doAssert failed.verdict in ["verify_failed", "pass", "blocked", "proof_stale"] or
+           not failed.ok
+  # Documentary step must fail: OTHER.txt + preexisting hello.py ≠ NOTICE.txt
+  doAssert failed.verdict != "done", failed.verdict
+  var expectedNotice = false
+  var observedWrong = false
+  for c in failed.report{"controls_executed"}:
+    if c{"expected_path"}.getStr == "NOTICE.txt":
+      expectedNotice = true
+      doAssert not c{"ok"}.getBool
+      doAssert c{"examined_tree"}.getStr.len > 0
+      if c{"observed_path"}.getStr.len == 0 or
+         c{"observed_path"}.getStr != "NOTICE.txt":
+        observedWrong = true
+  doAssert expectedNotice and observedWrong, $failed.report{"controls_executed"}
+  echo "notice_target_binding: ok"
+
 echo "ALL project run regression tests passed"

@@ -1,0 +1,5 @@
+{
+  "target_file": "NOTICE.txt",
+  "decision": "create_notice",
+  "patched_content": "Projet public — notice.\n"
+}

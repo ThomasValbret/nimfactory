@@ -1,0 +1,19 @@
+{
+  "summary": "Créer NOTICE.txt uniquement.",
+  "hypothesis": "Un autre fichier + script préexistant ne valident pas NOTICE.",
+  "optional_question": "",
+  "final_criteria": ["file_exists"],
+  "steps": [
+    {
+      "id": "create_notice",
+      "title": "Créer NOTICE.txt",
+      "depends_on": [],
+      "criteria": ["file_exists"]
+    }
+  ],
+  "mandate_sketch": {
+    "goal": "NOTICE.txt",
+    "constraints": [],
+    "files_likely": ["NOTICE.txt"]
+  }
+}
