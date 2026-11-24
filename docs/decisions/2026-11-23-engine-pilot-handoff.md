@@ -2,7 +2,7 @@
 
 Date : 2026-11-24  
 Branche : `feature/engine-pilot`  
-**SHA publié** : tip `f9e1c9742fded03c0099bae75aa3d0981e9475e3` (PR #9 + loan persistence + engine pilot).  
+**SHA publié** : tip `d519d49ac8c149186d873fa9d6470ce8d0974c04` (PR #9 + loan persistence + engine pilot).  
 Lire `git rev-parse origin/feature/engine-pilot` et `docs/deliveries/ENGINE_PILOT.md`.
 
 

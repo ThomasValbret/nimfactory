@@ -1,99 +1,105 @@
-# Livraison — Engine pilot
+# Livraison — Engine pilot (intégré Studio)
 
 Date : 2026-11-24  
 Branche : `feature/engine-pilot`  
-Worktree : `/opt/nimFactory-engine-pilot`
+**SHA publié** : `d519d49ac8c149186d873fa9d6470ce8d0974c04`
 
-## Gel (avant missions réservées Studio)
+## Sources
 
-Ce reçu fige le candidat **avant** que Studio ne révèle ses deux missions
-réservées (dossier vide ; dépôt inconnu). Les unitaires de découverte /
-création de fichier existent ; les missions réservées ne sont pas jouées ici.
-
-| | |
+| | SHA |
 | --- | --- |
-| **SHA publié** | `f9e1c9742fded03c0099bae75aa3d0981e9475e3` |
-| Empreinte binaire | `6a962ad02f7edfc4264e1f574cc8c663abfc0e02e561ccd69a35d760c50ea423` |
+| Base précédente | `51564219c8534c0b16cfcd1396619cc0ed206c7e` |
+| Studio proof adapter | `4aca8654f7b34ef15334b09218ba790bb2a9d71b` (`feature/studio-proof`) |
+| Tip intégré | `d519d49ac8c149186d873fa9d6470ce8d0974c04` |
 
-| Nim | 2.4.0 (`~/.choosenim/toolchains/nim-2.4.0`) |
-| SDK | NimAgentLibrary via `vendor/NimAgentLibrary` |
+## Empreintes binaires
 
-## Base d’intégration
-
-| Étape | SHA / arbre |
+| Binaire | sha256 |
 | --- | --- |
-| Parents `464e6ad` | `aad1a9b` + `42593ca` |
-| Arbre de contrôle | `ad47da0c8e45f2e3bf997cb034e6cf7dad51c5fd` (identique) |
-| PR #9 | `67b4a27` |
-| Adaptateur Studio loan persistence | `05ea3b7` |
+| `build/nimfactory` | `58e92444ba99a4aede714f8ac64a2c9035a50c4a6ffe442af8475603fdeaf665` |
+| `build/nimfactory-studio` | `f20aff2eaf59c818601b4422ce01fd9426aaab48fd0140cf482c7291a2aafc62` |
 
-## Périmètre réalisé
+## Périmètre
 
-- Découverte sous budget (AGENTS / recipe / src|skeleton|…, cwd vide OK)
-- Création de fichier absent via `patched_content`
-- Prompts génériques (CSV/loan hors prompts communs ; inject API silencieux déjà coupé par PR #9)
-- Verify loan durci : commentaires ignorés ; `returned_on = date('now')` exigé
-- `proofCoversCriteria` strict + contrôles loan
-- Reçu commun : `diff_origin`, `attempt`, `controls_requested` / `controls_executed`, `observations`
-- Gate `done` : contrôles sur l’arbre accepté livré
-- Trois témoins carnet (statique + oracle runtime + project run inject)
+1. **Création de projet** — `patched_content` sur fichier absent = `create_file` (plus de refuse `target_missing` au diagnostic). Parcours ask→run→exécution pour « crée hello.py qui affiche bonjour » (dossier vide). Plus d’héritage CSV sans `recipe.verify=csv_journey`. Verify `generic_program`. Exemple 2 fichiers liés (`fixtures/linked_two_files`).
+2. **done sur observations** — contrôles avec `status` / `observations` / `file_fingerprints` / `attempt`. Motifs absent/failed/not_run/stale. Rejeu `command_id` → reçu historique (`historical_receipt`, `new_provider_calls=0`). Status distingue `proof_freshness` vs fichiers courants.
+3. **Studio** — adaptateur oracle runtime (cancel / CURRENT_DATE / persist), `served_tree`, projection observations.
 
-## Handoff Studio
+Missions réservées Studio (dossier vide / dépôt inconnu) **non jouées**.
 
-Voir [docs/decisions/2026-11-23-engine-pilot-handoff.md](../decisions/2026-11-23-engine-pilot-handoff.md) — SHA + exemple `nimfactory.project_command/v1`.
-
-## Commandes exécutées
+## Commandes
 
 ```bash
 export PATH="/root/.nimble/bin:/root/.choosenim/toolchains/nim-2.4.0/bin:$PATH"
 nim c -r --path:src --path:vendor/NimAgentLibrary/src \
   tests/project/test_project_run_regressions.nim
-# → ALL project run regression tests passed
-
+nim c -r --path:src --path:vendor/NimAgentLibrary/src \
+  tests/project/test_loan_adapter.nim
 python3 -m unittest tests.project.test_loan_oracle -v
-# → OK (comment / no_change / correct)
 
 nim c -d:release -d:ssl --path:src --path:vendor/NimAgentLibrary/src \
   -o:build/nimfactory src/nimfactory_cli.nim
+nim e scripts/build_studio.nims
 
-FIX=fixtures/loan_notebook
-DEMO=/tmp/loan_nf_demo_pilot
+# Hello vide
 ./build/nimfactory project run \
-  --store "$DEMO/project.sqlite" --project-id loan_notebook \
-  --cwd "$FIX" \
-  --objective "Je veux un carnet de prêts local avec restitution." \
-  --route inject --inject-dir "$FIX/builder/inject" \
-  --artifact-dir "$DEMO/artifacts" --worktree "$DEMO/worktrees" \
-  --json > "$DEMO/run.json"
+  --store /tmp/engine_pilot_freeze/project.sqlite --project-id hello_empty \
+  --cwd /tmp/engine_pilot_freeze/cwd \
+  --objective "crée hello.py qui affiche bonjour" \
+  --route inject --inject-dir fixtures/hello_empty/inject \
+  --artifact-dir /tmp/engine_pilot_freeze/artifacts \
+  --worktree /tmp/engine_pilot_freeze/worktrees \
+  --command-id cmd-freeze-hello-1 --json
 
-# Oracle runtime (chemins absolus) — witness 3
-LOAN_ORACLE_MODE=full \
-  LOAN_APP_BEFORE="$PWD/$FIX/skeleton/app.py" \
-  LOAN_APP_AFTER="$(python3 -c "import json;print(json.load(open('$DEMO/run.json'))['delivered_tree'])")/skeleton/app.py" \
-  LOAN_DB="$DEMO/loans_oracle.sqlite" LOAN_PORT=18282 \
-  TREE_SHA="$(python3 -c "import json;print(json.load(open('$DEMO/run.json'))['delivered_hash'])")" \
-  python3 "$FIX/oracle/verify_studio_change.py"
+# Loan
+./build/nimfactory project run \
+  --store /tmp/engine_pilot_freeze/loan.sqlite --project-id loan_notebook \
+  --cwd fixtures/loan_notebook \
+  --objective "Je veux un carnet de prêts local avec restitution." \
+  --route inject --inject-dir fixtures/loan_notebook/builder/inject \
+  --artifact-dir /tmp/engine_pilot_freeze/loan_art \
+  --worktree /tmp/engine_pilot_freeze/loan_wt \
+  --command-id cmd-freeze-loan-1 --json
 ```
 
-## Résultats observés
+## Résultats (avant → après)
 
-| Contrôle | Résultat |
-| --- | --- |
-| Régressions project run | ALL passed |
-| Oracle unittest 3 témoins | OK |
-| `project run` loan inject | `verdict=done` · `diff_origin=inject` · contrôles sur arbre accepté |
-| Arbre livré | `/tmp/loan_nf_demo_pilot/artifacts/trees/mark_returned` |
-| Hash arbre | `FF71E55701495148` |
-| Oracle full (absolu) | `ok=true` · restart `ok=true` |
-| Doublures | inject (API 0) |
-| Coût | 0 appel payant |
+| Cas | Avant (5156421) | Après (d519d49) |
+| --- | --- | --- |
+| hello `patched_content` | refuse `target_missing` au diagnostic | `create_file` → apply → `done` · stdout `bonjour` |
+| critères sans recipe | héritage `compile/list/export_command` | `file_exists` / `program_runs` / `stdout_bonjour` |
+| loan comment-only | static string match faible | oracle adapter `mark_returned_effect=failed` |
+| loan cancel / CURRENT_DATE | — | fail / pass (`test_loan_adapter`) |
+| preuve mutée | — | `proof_freshness=stale` · motif exploitable |
+| rejeu `command_id` | — | `historical_receipt` · `new_provider_calls=0` |
 
-## Premier échec éventuel
+## Exemple de reçu CLI (réel)
 
-Oracle lancé avec `LOAN_APP_BEFORE=fixtures/loan_notebook/skeleton/app.py` (chemin relatif) → `server failed to start` (`ok=false`). Relance avec chemin absolu → succès. Documenté pour Studio / lanceurs.
+```json
+{
+  "schema": "nimfactory.project_command/v1",
+  "command": "run",
+  "project_id": "hello_empty",
+  "ok": true,
+  "verdict": "done",
+  "diff_origin": "inject",
+  "attempt": {
+    "kind": "run",
+    "plan_version": 1,
+    "accepted_tree_hash": "71D4BD5344CF49FF"
+  },
+  "controls_executed": [
+    {"name": "file_exists", "status": "passed", "ok": true},
+    {"name": "stdout_bonjour", "status": "passed", "ok": true},
+    {"name": "program_runs", "status": "passed", "ok": true}
+  ],
+  "provider_calls": 2,
+  "api_calls": 0
+}
+```
 
-## Limites
+Loan tip : `verdict=done` · contrôles `schema_ok` / `mark_returned_effect` / `persistence_after_restart` = passed · API 0.
 
-- Missions réservées Studio (cwd vide réel, dépôt inconnu) **non jouées** (gel).
-- Usage `model: injected` non encore normalisé dans `usage_by_role` pour inject.
-- Intégration Studio UI : adapter loan persistence déjà mergé ; rejouer snapshot sur ce tip.
+## Gel commun pour Studio
+
+Candidat : tip `d519d49` + binaires ci-dessus. Handoff reçu : ce fichier + `docs/decisions/2026-11-23-engine-pilot-handoff.md` + `docs/decisions/2026-11-24-proof-receipt.md`.
