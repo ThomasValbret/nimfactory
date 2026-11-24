@@ -47,4 +47,8 @@ TREE_SHA="$SHA" LOAN_PORT=18181 \
 
 ### Preuve de restitution persistante
 
-L’oracle de réception vérifie que le prêt est ouvert avant le POST. Après la réponse HTTP, il redémarre le candidat sur la même base, relit le prêt par HTTP puis compare sa date de restitution à la ligne SQLite portant le même ID et la même note. Le champ `restart.checks` porte les observations. Un HTTP 200 qui laisse `returned_on` nul fait échouer la qualification. `TREE_SHA` est encore une valeur fournie par le lanceur.
+L’oracle de réception vérifie que le prêt est ouvert avant le POST. Après la réponse HTTP, il redémarre le candidat sur la même base, relit le prêt par HTTP puis compare sa date de restitution à la ligne SQLite portant le même ID et la même note. Le champ `restart.checks` et `controls[]` portent les observations. Un HTTP 200 qui laisse `returned_on` nul fait échouer la qualification.
+
+L’identité de l’arbre servi est **recalculée** sur le répertoire ouvert (`served_tree.hash`, FNV-1a aligné sur `tree_id.nim`). `TREE_SHA` éventuel du lanceur n’est qu’une revendication (`claimed_tree_sha`) ; il ne prouve pas l’identité.
+
+Adaptateur Nim : `verifyLoanNotebook` invoque `LOAN_ORACLE_MODE=adapter` et refuse commentaire seul / 200 sans effet.

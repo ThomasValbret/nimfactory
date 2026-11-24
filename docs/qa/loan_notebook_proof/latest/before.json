@@ -1,0 +1,89 @@
+{
+  "ok": true,
+  "role": "oracle",
+  "loan_note": "proof-loan-20261124",
+  "db": "/tmp/loan_proof_demo2/loans.sqlite",
+  "tree_sha": "",
+  "claimed_tree_sha": "",
+  "served_tree": null,
+  "before": {
+    "phase": "before_skeleton",
+    "app": "/opt/nimFactory-studio-proof/fixtures/loan_notebook/skeleton/app.py",
+    "tree_sha": "",
+    "served_tree": {},
+    "expect_return": false,
+    "checks": [
+      {
+        "name": "server_starts",
+        "ok": true
+      },
+      {
+        "name": "create_identifiable_loan",
+        "ok": true,
+        "loan_id": 1,
+        "note": "proof-loan-20261124"
+      },
+      {
+        "name": "mark_returned_control",
+        "ok": true,
+        "return_succeeded": false,
+        "expected_success": false,
+        "detail": {
+          "ok": false,
+          "message": "not found"
+        },
+        "loan_id": 1
+      }
+    ],
+    "loan_id": 1,
+    "ok": true
+  },
+  "after": null,
+  "controls": [
+    {
+      "name": "before_return_absent",
+      "status": "passed",
+      "observation": {
+        "checks": [
+          {
+            "name": "server_starts",
+            "ok": true
+          },
+          {
+            "name": "create_identifiable_loan",
+            "ok": true,
+            "loan_id": 1,
+            "note": "proof-loan-20261124"
+          },
+          {
+            "name": "mark_returned_control",
+            "ok": true,
+            "return_succeeded": false,
+            "expected_success": false,
+            "detail": {
+              "ok": false,
+              "message": "not found"
+            },
+            "loan_id": 1
+          }
+        ],
+        "loan_id": 1
+      }
+    },
+    {
+      "name": "mark_returned_effect",
+      "status": "not_run",
+      "observation": "candidate not probed"
+    },
+    {
+      "name": "persistence_after_restart",
+      "status": "not_run",
+      "observation": "candidate not probed"
+    },
+    {
+      "name": "served_tree_identity",
+      "status": "not_run",
+      "observation": "no served tree root"
+    }
+  ]
+}

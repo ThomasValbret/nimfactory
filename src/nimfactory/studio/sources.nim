@@ -1,6 +1,7 @@
 ## Resolve only a recorded, accepted target under the operator-selected trees directory.
 import std/[os, strutils, json, unicode]
 from nimfactory/mission/apply import simpleHash
+import nimfactory/project/tree_id
 
 proc readAcceptedSource*(treesRoot: string; step: JsonNode): JsonNode =
   if treesRoot.len == 0 or step{"accepted_tree_hash"}.getStr.len == 0:
@@ -29,3 +30,20 @@ proc readAcceptedSource*(treesRoot: string; step: JsonNode): JsonNode =
     return %*{"file":target, "text":body}
   except IOError, OSError:
     return nil
+
+proc attachPreviewTreeIdentity*(snapshot: JsonNode; treesRoot: string) =
+  ## At preview launch: recompute the served-tree manifest and compare to the
+  ## accepted hash recorded by the engine (do not trust a launcher TREE_SHA).
+  if snapshot.isNil or treesRoot.len == 0 or not dirExists(treesRoot):
+    return
+  for step in snapshot{"steps"}.getElems:
+    let id = step{"id"}.getStr
+    let claimed = step{"accepted_tree_hash"}.getStr
+    if id.len == 0 or claimed.len == 0: continue
+    let root = treesRoot / id
+    if not dirExists(root): continue
+    let served = servedTreeManifest(root)
+    served["claimed_accepted_hash"] = %claimed
+    served["matches_accepted"] = %(served{"hash"}.getStr == claimed)
+    step["served_tree"] = served
+    step["preview_tree_match"] = served["matches_accepted"]

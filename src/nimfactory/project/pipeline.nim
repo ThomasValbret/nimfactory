@@ -7,6 +7,7 @@ import ./types
 import ./store
 import ./plan_context
 import ./verify
+import ./tree_id
 
 type
   ProjectRoute* = enum
@@ -441,30 +442,6 @@ proc sourceRootForStep(doc: ProjectDoc): string =
   if doc.acceptedTreeRef.len > 0 and dirExists(doc.acceptedTreeRef):
     return doc.acceptedTreeRef
   doc.cwd
-
-proc simpleContentHash(s: string): string =
-  ## Stable short fingerprint (not cryptographic).
-  var h: uint64 = 14695981039346656037u64
-  for c in s:
-    h = h xor uint64(ord(c))
-    h = h * 1099511628211u64
-  toHex(h, 16)
-
-proc treeFingerprint(root: string): string =
-  var paths: seq[string] = @[]
-  for path in walkDirRec(root):
-    if fileExists(path) and ("/nimcache/" notin path.replace('\\', '/')) and
-       ("/build/" notin path.replace('\\', '/')):
-      paths.add(path)
-  paths.sort()
-  var acc = ""
-  for p in paths:
-    let rel = relativePath(p, root).replace('\\', '/')
-    acc.add(rel)
-    acc.add('\n')
-    acc.add(readFile(p))
-    acc.add('\n')
-  simpleContentHash(acc)
 
 proc copyTree(src, dest: string) =
   if dirExists(dest):

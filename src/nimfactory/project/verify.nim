@@ -1,6 +1,7 @@
 ## Deterministic project verification — CSV journey bound to demo recipe.
 
-import std/[os, osproc, strutils, json, sequtils]
+import std/[os, osproc, strutils, json, sequtils, tempfiles, strtabs]
+import ./tree_id
 
 type
   ProjectVerifyResult* = object
@@ -278,44 +279,168 @@ proc verifyCsvJourney*(worktree, repoRoot: string; requireCsv = true): ProjectVe
     if not result.quoteOk: parts.add("comma_not_quoted")
     result.message = parts.join(",")
 
+proc findLoanOracleScript(repoRoot: string): string =
+  ## Oracle lives next to the recipe cwd, or under fixtures when cwd is repo root.
+  let direct = repoRoot / "oracle" / "verify_studio_change.py"
+  if fileExists(direct): return direct
+  let viaFixture = repoRoot / "fixtures" / "loan_notebook" / "oracle" /
+                   "verify_studio_change.py"
+  if fileExists(viaFixture): return viaFixture
+  ""
+
+proc controlStatus(node: JsonNode; name: string): string =
+  if node.isNil: return "not_run"
+  for c in node.getElems:
+    if c{"name"}.getStr == name:
+      return c{"status"}.getStr
+  "not_run"
+
+proc runLoanOracleAdapter*(worktree, repoRoot: string): JsonNode =
+  ## Invoke the independent Python oracle in adapter mode.
+  ## Returns the full report (controls, served_tree, ok) or an error object.
+  result = newJObject()
+  let script = findLoanOracleScript(repoRoot)
+  let app = worktree / "skeleton" / "app.py"
+  if script.len == 0 or not fileExists(app):
+    result["ok"] = %false
+    result["error"] = %"oracle_or_app_missing"
+    result["controls"] = %*[
+      {"name": "mark_returned_effect", "status": "not_run",
+       "observation": "oracle script or app missing"}]
+    return
+  let tmp = createTempDir("nf-loan-adapt-", "")
+  let db = tmp / "loans.sqlite"
+  let pid = tmp / "server.pid"
+  var env = newStringTable(modeCaseSensitive)
+  for k, v in envPairs():
+    env[k] = v
+  env["LOAN_ORACLE_MODE"] = "adapter"
+  env["LOAN_APP_AFTER"] = absolutePath(app)
+  env["LOAN_DB"] = db
+  env["LOAN_PID"] = pid
+  # Pick an ephemeral port.
+  let portProbe = execCmdEx(
+    "python3 -c \"import socket;s=socket.socket();s.bind(('127.0.0.1',0));" &
+    "print(s.getsockname()[1]);s.close()\"")
+  let port = if portProbe.exitCode == 0: portProbe.output.strip() else: "18281"
+  env["LOAN_PORT"] = port
+  let cmdline = quoteShell("python3") & " " & quoteShell(script)
+  let ran = execCmdEx(cmdline, workingDir = worktree, env = env)
+  try:
+    removeDir(tmp)
+  except OSError, IOError:
+    discard
+  if ran.output.len == 0:
+    result["ok"] = %false
+    result["error"] = %"oracle_empty_output"
+    result["exit"] = %ran.exitCode
+    return
+  try:
+    result = parseJson(ran.output)
+  except JsonParsingError:
+    result = %*{
+      "ok": false,
+      "error": "oracle_json_parse",
+      "exit": ran.exitCode,
+      "raw_tail": ran.output[^min(400, ran.output.len) .. ^1]
+    }
+  # Always attach Nim-side recomputed identity of the worktree served.
+  let served = servedTreeManifest(worktree)
+  result["served_tree_nim"] = served
+  if result{"served_tree"}.isNil or result{"served_tree"}.kind != JObject:
+    result["served_tree"] = served
+  else:
+    result["served_tree"]["nim_recomputed_hash"] = served{"hash"}
+    result["served_tree"]["hashes_match"] =
+      %(served{"hash"}.getStr == result{"served_tree"}{"hash"}.getStr)
+
 proc verifyLoanNotebook*(
     worktree, repoRoot: string; criteria: seq[string]): ProjectVerifyResult =
-  ## Loan notebook: schema + app present; mark_returned requires /return in app.
+  ## Loan notebook adapter: schema presence + runtime oracle observations.
+  ## A comment mentioning /return or an HTTP 200 without SQLite mutation must fail.
   result.kind = "loan_notebook"
   result.details = newJObject()
   result.details["criteria"] = %criteria
+  var controls = newJArray()
   let app = worktree / "skeleton" / "app.py"
   let schema = worktree / "skeleton" / "schema.sql"
   let schemaOk = fileExists(schema)
   let appOk = fileExists(app)
   result.details["schema_ok"] = %schemaOk
   result.details["app_ok"] = %appOk
+  controls.add(%*{
+    "name": "schema_ok",
+    "status": if schemaOk: "passed" else: "failed",
+    "observation": if schemaOk: "skeleton/schema.sql present" else: "missing"
+  })
+  controls.add(%*{
+    "name": "app_present",
+    "status": if appOk: "passed" else: "failed",
+    "observation": if appOk: "skeleton/app.py present" else: "missing"
+  })
   if not schemaOk or not appOk:
     result.ok = false
     result.message =
       if not schemaOk: "schema_missing"
       else: "app_missing"
+    controls.add(%*{
+      "name": "mark_returned_effect", "status": "not_run",
+      "observation": "skipped: skeleton incomplete"})
+    controls.add(%*{
+      "name": "persistence_after_restart", "status": "not_run",
+      "observation": "skipped: skeleton incomplete"})
+    result.details["controls"] = controls
     return
-  let body = readFile(app)
-  let hasReturn =
-    "endswith(\"/return\")" in body or
-    "endswith('/return')" in body or
-    "/loans/{id}/return" in body or
-    ".endswith(\"/return\")" in body
-  result.details["mark_returned_present"] = %hasReturn
-  result.details["server_starts"] = %true  ## static gate; runtime oracle restarts
-  if "mark_returned" in criteria and not hasReturn:
+  let served = servedTreeManifest(worktree)
+  result.details["served_tree"] = served
+  controls.add(%*{
+    "name": "served_tree_identity",
+    "status": if served{"hash"}.getStr.len > 0: "passed" else: "failed",
+    "observation": served
+  })
+  if "mark_returned" notin criteria:
+    ## Intermediate gate: structure only; effect not required yet.
+    result.ok = schemaOk and appOk
+    result.message = "loan skeleton schema+app present"
+    controls.add(%*{
+      "name": "mark_returned_effect", "status": "not_run",
+      "observation": "criterion mark_returned not required on this step"})
+    controls.add(%*{
+      "name": "persistence_after_restart", "status": "not_run",
+      "observation": "criterion mark_returned not required on this step"})
+    result.details["controls"] = controls
+    return
+  ## Runtime adapter — distinguishes comment / noop-200 / durable return.
+  let report = runLoanOracleAdapter(worktree, repoRoot)
+  result.details["oracle"] = report
+  if report{"controls"}.kind == JArray:
+    for c in report["controls"]:
+      let name = c{"name"}.getStr
+      if name in ["schema_ok", "app_present", "served_tree_identity"]:
+        continue
+      controls.add(c)
+  else:
+    controls.add(%*{
+      "name": "mark_returned_effect",
+      "status": "failed",
+      "observation": report{"error"}.getStr("oracle_failed")
+    })
+  result.details["controls"] = controls
+  let effect = controlStatus(controls, "mark_returned_effect")
+  let persist = controlStatus(controls, "persistence_after_restart")
+  if report{"ok"}.getBool and effect == "passed" and persist == "passed":
+    result.ok = true
+    result.message = "loan return persisted after restart"
+  else:
     result.ok = false
-    result.message = "mark_returned_missing"
-    return
-  if "schema_ok" in criteria and not schemaOk:
-    result.ok = false
-    result.message = "schema_missing"
-    return
-  result.ok = true
-  result.message =
-    if "mark_returned" in criteria: "loan app has mark_returned endpoint"
-    else: "loan skeleton schema+app present"
+    if persist == "failed":
+      result.message = "return_not_persisted"
+    elif effect == "failed":
+      result.message = "mark_returned_effect_failed"
+    elif effect == "not_run" or persist == "not_run":
+      result.message = "mark_returned_controls_incomplete"
+    else:
+      result.message = report{"error"}.getStr("loan_oracle_failed")
 
 proc verifyForRecipe*(
     recipe: ProjectRecipe; worktree, repoRoot: string;
@@ -398,12 +523,19 @@ proc proofCoversCriteria*(verifyNode: JsonNode; criteria: seq[string]): bool =
     of "export_command":
       if not verifyNode{"csv_ok"}.getBool:
         return false
+    of "mark_returned":
+      ## Require persisted effect, not a static string mention.
+      let controls =
+        if verifyNode{"controls"}.kind == JArray: verifyNode["controls"]
+        else: verifyNode{"details", "controls"}
+      if controlStatus(controls, "persistence_after_restart") != "passed":
+        return false
     else:
       discard
   true
 
 proc verifyToJson*(v: ProjectVerifyResult): JsonNode =
-  %*{
+  result = %*{
     "ok": v.ok,
     "kind": v.kind,
     "list_ok": v.listOk,
@@ -415,3 +547,9 @@ proc verifyToJson*(v: ProjectVerifyResult): JsonNode =
     "compile_exit": v.compileExit,
     "details": if v.details.isNil: newJObject() else: v.details
   }
+  ## Promote project controls / served tree for Studio (generic, not CSV-specific).
+  if not v.details.isNil:
+    if v.details{"controls"} != nil:
+      result["controls"] = v.details["controls"]
+    if v.details{"served_tree"} != nil:
+      result["served_tree"] = v.details["served_tree"]

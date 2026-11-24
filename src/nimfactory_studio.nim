@@ -150,6 +150,7 @@ proc run(config: Config) =
         of "/api/snapshot":
           let snapshot = readProjectView(config.store, config.project,
             allowBootstrap = true, objective = config.objective)
+          attachPreviewTreeIdentity(snapshot, config.trees)
           headers["X-Studio-Sources"] = if config.trees.len > 0: "1" else: "0"
           headers["X-Studio-Writes"] = if writesEnabled(config): "1" else: "0"
           reply(Http200, "application/json", $snapshot)

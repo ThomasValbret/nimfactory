@@ -15,7 +15,11 @@ nimcache/
 nimble.paths.bak
 *.nimble.lock
 
+# Reserved transfer missions — never publish into builder context
+docs/qa/transfer_reserved/
+
 # Compiled test/example binaries (never ignore *.nim)
+tests/project/test_loan_adapter
 tests/f0/test_contracts
 tests/f0/test_fixture_consumers
 tests/f0/test_message_roundtrip

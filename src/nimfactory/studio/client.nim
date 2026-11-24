@@ -271,25 +271,57 @@ proc inspector(step: JsonNode): string =
     detailLine("Arbre accepté", step{"accepted_tree_hash"}.getStr) &
     detailLine("Refus", step{"refuse_code"}.getStr) & "</div>"
   if provider == "unknown": result.add("<p class='message'>Issue fournisseur inconnue.</p>")
+  if step{"change_origin"} != nil:
+    let origin = step["change_origin"]
+    result.add("<div class='small-title'>Changement du builder</div><p class='fine'>" &
+      html(origin{"target_file"}.getStr) &
+      (if origin{"route"}.getStr.len > 0: " · route " & html(origin{"route"}.getStr) else: "") &
+      (if origin{"before_hash"}.getStr.len > 0:
+         " · " & html(origin{"before_hash"}.getStr) & " → " & html(origin{"after_hash"}.getStr)
+       else: "") & "</p>")
+  if step{"served_tree"} != nil and step{"served_tree","hash"}.getStr.len > 0:
+    result.add("<div class='small-title'>Arbre prévisualisé (recalculé)</div><p class='fine'><code>" &
+      html(step{"served_tree","hash"}.getStr) & "</code> · " &
+      $step{"served_tree","file_count"}.getInt & " fichiers</p>")
+  elif step{"accepted_tree_hash"}.getStr.len > 0:
+    result.add("<div class='small-title'>Arbre accepté</div><p class='fine'><code>" &
+      html(step{"accepted_tree_hash"}.getStr) & "</code></p>")
   if step{"controls_executed"} != nil and step{"controls_executed"}.len > 0:
-    result.add("<div class='small-title'>Contrôles exécutés</div><ul class='delta'>")
+    result.add("<div class='small-title'>Contrôles du projet</div><ul class='delta'>")
     for c in step{"controls_executed"}:
-      result.add("<li>" & html(c{"name"}.getStr) &
-        (if c{"ok"}.getBool: " · ok" else: " · échec") &
-        (if c{"message"}.getStr.len > 0: " — " & html(c{"message"}.getStr) else: "") &
-        "</li>")
+      let st = c{"status"}.getStr
+      let label =
+        if st == "passed": "passé"
+        elif st == "failed": "échec"
+        elif st == "not_run": "non exécuté"
+        elif c{"ok"}.getBool: "ok"
+        else: "échec"
+      var obs = c{"message"}.getStr
+      if obs.len == 0 and c{"observation"}.kind == JString:
+        obs = c{"observation"}.getStr
+      elif obs.len == 0 and c{"observation"}.kind == JObject:
+        obs = $c{"observation"}
+      result.add("<li><code>" & html(c{"name"}.getStr) & "</code> · " & html(label) &
+        (if obs.len > 0: " — " & html(obs) else: "") & "</li>")
     result.add("</ul>")
   if step{"verify"} != nil:
     result.add("<p class='small-title'>Vérification</p><p class='fine'>" & html(step{"verify","message"}.getStr) & "</p>")
-    if step{"output_incorrect"}.getBool or
-       (step{"verify","csv_out"}.getStr.len > 0 and not step{"verify","csv_ok"}.getBool):
-      result.add("<p class='message'>Verdict moteur · sortie non vide mais incorrecte</p>")
+    if step{"output_incorrect"}.getBool:
+      result.add("<p class='message'>Contrôle en échec · " &
+        html(step{"verify","message"}.getStr) & "</p>")
   let proposal = model{"workflow","engine_proposal"}.getStr
   let activeStatus = step{"status"}.getStr
   if (activeStatus in ["blocked", "interrupted"] or
       model{"last_verdict"}.getStr == "verify_failed") and proposal.len > 0:
     result.add("<p class='message'>Proposition du moteur · " & html(proposal) & "</p>")
-  result.add("<p class='fine'>Verdict · " & html(model{"last_verdict"}.getStr) & "</p>")
+  let afterFail = model{"workflow","after_failure"}
+  if afterFail != nil and afterFail.len > 0:
+    var acts: seq[string] = @[]
+    for a in afterFail: acts.add(a.getStr)
+    result.add("<p class='message'>Conduite après échec · " & html(acts.join(", ")) & "</p>")
+  result.add("<p class='fine'>Verdict · " & html(model{"last_verdict"}.getStr) &
+    " · dépense " & $(if model{"cost"}.isNil: 0.0 else: model{"cost","estimated_usd"}.getFloat) &
+    " USD</p>")
   if view != ide and step.hasIde:
     result.add(button("open-ide-diff","Ouvrir le diff →","cta wide"))
     if step.hasTab(receipt):
@@ -354,6 +386,16 @@ proc editor(step: JsonNode): string =
     let check = step["verify"]
     result.add("<div class='pane-body'><h3>" & html(check{"kind"}.getStr("Vérification")) & "</h3><p>" &
       html(check{"message"}.getStr) & "</p>")
+    if step{"controls_executed"} != nil and step{"controls_executed"}.len > 0:
+      result.add("<p class='small-title'>Contrôles</p><ul class='delta'>")
+      for c in step{"controls_executed"}:
+        let st = c{"status"}.getStr
+        result.add("<li><code>" & html(c{"name"}.getStr) & "</code> · " &
+          html(if st.len > 0: st elif c{"ok"}.getBool: "passed" else: "failed") & "</li>")
+      result.add("</ul>")
+    if step{"served_tree","hash"}.getStr.len > 0:
+      result.add("<p class='small-title'>Identité arbre servi</p><pre class='log'>" &
+        html(step{"served_tree","hash"}.getStr) & "</pre>")
     for (key,label) in [("list_out","Sortie liste"),("csv_out","Sortie CSV")]:
       if check{key}.getStr.len > 0: result.add("<p class='small-title'>" & label & "</p><pre class='log'>" & html(check[key].getStr) & "</pre>")
     result.add("</div>")
