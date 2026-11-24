@@ -12,7 +12,7 @@ création de fichier existent ; les missions réservées ne sont pas jouées ici
 
 | | |
 | --- | --- |
-| **SHA publié** | voir `git rev-parse origin/feature/engine-pilot` après push |
+| **SHA publié** | `f9e1c9742fded03c0099bae75aa3d0981e9475e3` |
 | Empreinte binaire | `6a962ad02f7edfc4264e1f574cc8c663abfc0e02e561ccd69a35d760c50ea423` |
 
 | Nim | 2.4.0 (`~/.choosenim/toolchains/nim-2.4.0`) |
