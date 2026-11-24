@@ -30,7 +30,7 @@ coerced: @["program_runs", "stdout_exact:le", "file_exists:longueur.py"]
 
 | | |
 | --- | --- |
-` 3c2be861190755345d3757ec8b4f0b3e056db9a2 `
+| Candidat intégrable | `0bceba83ec542a600bc85d3d238fc95b8c0034e7` |
 | `build/nimfactory` | `7a53c0ac9dd78ffb7ceb1ba117f3a562bac1803a5a43a5b8767e19f1c2570959` |
 | `build/nimfactory-studio` | `354444ae7d09ce449805916006aaf6664206211ca4e916811611e80ca96f17bc` |
 
