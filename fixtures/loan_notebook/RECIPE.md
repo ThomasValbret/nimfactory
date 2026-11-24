@@ -44,3 +44,7 @@ LOAN_DB="$DEMO/loans.sqlite" \
 TREE_SHA="$SHA" LOAN_PORT=18181 \
   python3 "$FIX/oracle/verify_studio_change.py"
 ```
+
+### Preuve de restitution persistante
+
+L’oracle de réception vérifie que le prêt est ouvert avant le POST. Après la réponse HTTP, il redémarre le candidat sur la même base, relit le prêt par HTTP puis compare sa date de restitution à la ligne SQLite portant le même ID et la même note. Le champ `restart.checks` porte les observations. Un HTTP 200 qui laisse `returned_on` nul fait échouer la qualification. `TREE_SHA` est encore une valeur fournie par le lanceur.
