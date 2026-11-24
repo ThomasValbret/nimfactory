@@ -359,63 +359,6 @@ proc planStepsFingerprint*(steps: seq[ProjectStep]): string =
     parts.add(s.id & "|" & deps.join(",") & "|" & crit.join(","))
   parts.join(";")
 
-proc applyDeterministicBlockageTreatment*(
-    store: SqliteRunStore; doc: var ProjectDoc; motif: string): ProjectDoc =
-  ## When a motivated revise is structurally equivalent, change treatment locally:
-  ## coerce executable postconditions, bind helpers→tasks.nim / wire→demo_tasks,
-  ## clear exhausted recovery so the next step can use a different decision path.
-  let total = doc.steps.len
-  for i in 0 ..< doc.steps.len:
-    let titleL = doc.steps[i].title.toLowerAscii
-    doc.steps[i].criteria = coerceExecutableCriteria(
-      doc.steps[i].criteria, doc.steps[i], i + 1, total, doc.cwd, doc.objective, @[])
-    if ("helper" in titleL or "helpers" in titleL or "tasks" in titleL or
-        "formatcsv" in titleL or "csvquote" in titleL) and
-       "demo_tasks" notin titleL:
-      if "tasks.nim" notin doc.steps[i].title:
-        doc.steps[i].title = doc.steps[i].title & " [fichier: src/tasks.nim]"
-      var hc = recipeDefaultCriteria(doc.cwd)
-      if "csv_helpers" notin hc: hc.add("csv_helpers")
-      doc.steps[i].criteria = hc
-    elif "export" in titleL or "wire" in titleL or "câbl" in titleL or
-         "cabl" in titleL or "cli" in titleL or "demo" in titleL:
-      if "demo_tasks" notin doc.steps[i].title:
-        doc.steps[i].title = doc.steps[i].title & " [fichier: src/demo_tasks.nim]"
-      doc.steps[i].criteria = recipeExportCriteria(doc.cwd)
-    doc.steps[i].status = ssPending
-    doc.steps[i].result = newJObject()
-  doc.revisePlanPending = false
-  doc.revisePlanReason = ""
-  doc.revisePlanStepId = ""
-  doc.recoveryExhausted = false
-  doc.recoveryExhaustedStepId = ""
-  doc.recoveryExhaustedReason = ""
-  doc.recoveryExhaustedFingerprint = ""
-  doc.acceptedTreeRef = ""
-  doc.acceptedTreeHash = ""
-  doc.acceptedStepId = ""
-  doc.nextAction = "step"
-  doc.lastVerdict = "deterministic_treatment"
-  doc.blockedReason = ""
-  # Stamp mandate with the motif + stdout / one-file rule.
-  let mk = "mandate_v" & $doc.currentPlanVersion
-  if not doc.mandates.isNil and doc.mandates.hasKey(mk):
-    var man = doc.mandates[mk]
-    man["deterministic_treatment"] = %true
-    man["prefer_deterministic_patch"] = %true
-    man["prior_motif"] = %motif
-    man["stdout_constraint"] =
-      %"CSV export must write to stdout (not a file); keep default list intact"
-    man["one_file_per_step"] =
-      %"helpers in src/tasks.nim then CLI wire in src/demo_tasks.nim"
-    doc.mandates[mk] = man
-  saveProject(store, doc)
-  emitProjectEvent(store, doc.projectId, "project.deterministic_treatment", %*{
-    "motif": motif,
-    "fingerprint": planStepsFingerprint(doc.steps)
-  })
-  doc
-
 proc writeArtifact(dir, name, body: string): string =
   if dir.len == 0:
     return ""
@@ -578,6 +521,16 @@ proc depsSatisfied(doc: ProjectDoc; step: ProjectStep): bool =
     if not found:
       return false
   true
+
+proc incompletePlanReason(doc: ProjectDoc): string =
+  ## Called only after the scheduler has no further actionable step.
+  if doc.steps.len == 0:
+    return "plan has no steps"
+  for step in doc.steps:
+    if step.status != ssDone:
+      return "step " & step.id & " is " & $step.status
+  if doc.acceptedTreeRef.len == 0 or not dirExists(doc.acceptedTreeRef):
+    return "accepted tree missing"
 
 proc sourceRootForStep(doc: ProjectDoc): string =
   ## Next edits apply on the last accepted tree when present.
@@ -1122,6 +1075,13 @@ proc projectStep*(req: ProjectRequest): ProjectReport =
 
   let actionable = nextActionableStep(doc)
   if not actionable.found:
+    let reason = incompletePlanReason(doc)
+    if reason.len > 0:
+      result.verdict = "blocked"
+      result.message = reason
+      result.doc = doc
+      result.report = reportBase("step", doc)
+      return
     result.ok = true
     result.verdict = "nothing_pending"
     result.message = "no pending steps"
@@ -1171,6 +1131,8 @@ proc projectStep*(req: ProjectRequest): ProjectReport =
     result.verdict = "blocked"
     result.message = "dependencies not satisfied for " & step.id
     doc.blockedReason = result.message
+    doc.lastVerdict = "blocked"
+    doc.nextAction = "revise"
     for i, s in doc.steps.mpairs:
       if s.id == step.id: doc.steps[i].status = ssBlocked
     saveProject(store, doc)
@@ -1280,28 +1242,11 @@ proc projectStep*(req: ProjectRequest): ProjectReport =
   result.providerCallsThisCommand = 0
   result.apiCallsThisCommand = 0
   let historicalFirst = req.replayFirstPath.len > 0
-  # After equivalent-revise blockage: prefer known-good recipe patches over
-  # another failing model attempt (helpers then wire).
-  var detPatch = ""
-  if not historicalFirst and mandate{"prefer_deterministic_patch"}.getBool and
-     req.injectPath.len == 0:
-    if stepLooksLikeHelper(step):
-      detPatch = doc.cwd / "inject" / "step_helpers.json"
-    elif stepObjectiveImpliesExport(step, 2, 2, doc.objective, true):
-      detPatch = doc.cwd / "inject" / "step_export.json"
-    if detPatch.len > 0 and not fileExists(detPatch):
-      detPatch = ""
   if historicalFirst:
     result.provider = callFromInject(req.replayFirstPath)
     result.provider.route = "historical_replay"
     result.providerCallsThisCommand = 0
     result.untested.add("first attempt = historical replay (no new bill)")
-  elif detPatch.len > 0:
-    result.provider = callFromInject(detPatch)
-    result.provider.route = "deterministic_patch"
-    result.providerCallsThisCommand = 0
-    result.apiCallsThisCommand = 0
-    result.untested.add("deterministic recipe patch (no model call)")
   else:
     result.provider = invokeProjectModel(req, ctx.systemPrompt, ctx.userPrompt)
     result.providerCallsThisCommand = 1
@@ -1497,7 +1442,7 @@ proc projectStep*(req: ProjectRequest): ProjectReport =
         req, repairCtx.systemPrompt, repairCtx.userPrompt)
       result.repairAttempted = true
       inc result.providerCallsThisCommand
-      if result.repairProvider.route == "api" or req.route == "api":
+      if result.repairProvider.route == "api":
         inc result.apiCallsThisCommand
         recordUsage(doc, "implementer_compile_repair", result.repairProvider)
       else:
@@ -1593,7 +1538,10 @@ proc projectStep*(req: ProjectRequest): ProjectReport =
         }
     doc.lastVerdict = "step_pass"
     let more = nextPendingStep(doc)
-    doc.nextAction = if more.found: "step" else: "done"
+    doc.nextAction =
+      if more.found: "step"
+      elif incompletePlanReason(doc).len > 0: "revise"
+      else: "done"
     doc.blockedReason = ""
     doc.recoveryExhausted = false
     doc.recoveryExhaustedStepId = ""
@@ -1835,6 +1783,7 @@ proc projectResume*(req: ProjectRequest): ProjectReport =
   let store = openProjectStore(req.storePath)
   defer: closeProjectStore(store)
   result.report["sub"] = %"resume"
+  let completionIssue = if pending.found: "" else: incompletePlanReason(doc)
   if pending.found:
     result.report["resume"] = %*{
       "rehydrated": true,
@@ -1849,6 +1798,14 @@ proc projectResume*(req: ProjectRequest): ProjectReport =
     }
     result.verdict = "resumed"
     result.message = "resumed; next pending step=" & pending.step.id
+  elif completionIssue.len > 0:
+    result.ok = false
+    result.verdict = "blocked"
+    result.message = completionIssue
+    result.report["resume"] = %*{
+      "rehydrated": true, "action": "revise", "action_note": result.message,
+      "completed_steps": doneCount, "billable_plan_calls": 0
+    }
   else:
     result.report["resume"] = %*{
       "rehydrated": true,
@@ -1916,7 +1873,6 @@ proc projectRun*(req: ProjectRequest): ProjectReport =
   let maxSteps = if req.maxSteps > 0: req.maxSteps else: 8
   let maxAutoRevises = if req.maxAutoRevises > 0: req.maxAutoRevises else: 2
   var autoRevises = 0
-  var deterministicApplied = false
   var totalProvider = 0
   var totalApi = 0
   var firstFaultyRaw = ""
@@ -2037,18 +1993,6 @@ proc projectRun*(req: ProjectRequest): ProjectReport =
         elif reqMut.injectPath.len > 0: revReq.injectPath = reqMut.injectPath
         let revised = projectRevise(revReq)
         recordIntervention("revise:auto", revised)
-        if revised.verdict == "revise_equivalent":
-          ## Model returned the same structure — change treatment locally and retry.
-          var docMut = revised.doc
-          let motif = docMut.revisePlanReason
-          let treated = applyDeterministicBlockageTreatment(store, docMut, motif)
-          deterministicApplied = true
-          recordIntervention("revise:deterministic", ProjectReport(
-            ok: true, verdict: "deterministic_treatment",
-            message: "equivalent revise → deterministic one-file treatment; motif=" & motif,
-            providerCallsThisCommand: 0, apiCallsThisCommand: 0, doc: treated))
-          result.doc = treated
-          continue
         if revised.ok:
           result.doc = revised.doc
           continue
@@ -2073,20 +2017,6 @@ proc projectRun*(req: ProjectRequest): ProjectReport =
           result.report["first_faulty_raw"] = %firstFaultyRaw
           result.report["first_faulty_decision"] = %firstFaultyDecision
         return
-      # Auto-revise budget spent: one local deterministic treatment before stop.
-      if not deterministicApplied:
-        deterministicApplied = true
-        var docMut = result.doc
-        let motif =
-          if docMut.revisePlanReason.len > 0: docMut.revisePlanReason
-          else: docMut.recoveryExhaustedReason
-        let treated = applyDeterministicBlockageTreatment(store, docMut, motif)
-        recordIntervention("revise:deterministic", ProjectReport(
-          ok: true, verdict: "deterministic_treatment",
-          message: "auto-revise budget spent → deterministic one-file treatment; motif=" & motif,
-          providerCallsThisCommand: 0, apiCallsThisCommand: 0, doc: treated))
-        result.doc = treated
-        continue
       result.ok = false
       result.verdict =
         if result.doc.recoveryExhausted: "recovery_exhausted"
@@ -2113,9 +2043,6 @@ proc projectRun*(req: ProjectRequest): ProjectReport =
 
     let actionable = nextActionableStep(result.doc)
     if not actionable.found:
-      result.ok = true
-      result.verdict = "done"
-      result.message = "project run complete"
       break
 
     var stepReq = reqMut
@@ -2152,12 +2079,9 @@ proc projectRun*(req: ProjectRequest): ProjectReport =
     result.recoveryReason = stepped.recoveryReason
     result.doc = stepped.doc
     if not stepped.ok:
-      # Exhaustion during a step: try motivated auto-revise, else deterministic.
-      if stepped.doc.revisePlanPending or stepped.doc.recoveryExhausted:
-        if autoRevises < maxAutoRevises or not deterministicApplied:
-          result.doc = stepped.doc
-          # Loop head will pick up revisePlanPending / recoveryExhausted.
-          continue
+      if autoRevises < maxAutoRevises and
+         (stepped.doc.revisePlanPending or stepped.doc.recoveryExhausted):
+        continue
       result.ok = false
       result.verdict = stepped.verdict
       result.message = stepped.message
@@ -2201,15 +2125,16 @@ proc projectRun*(req: ProjectRequest): ProjectReport =
   let pending = nextPendingStep(result.doc)
   result.providerCallsThisCommand = totalProvider
   result.apiCallsThisCommand = totalApi
-  if result.verdict.len == 0 or result.verdict == "done":
+  if result.verdict.len == 0:
     if pending.found:
       result.ok = false
       result.verdict = "step_ceiling"
       result.message = "max steps reached with pending work"
     else:
-      result.ok = true
-      result.verdict = "done"
-      result.message = "project run complete; accepted tree ready"
+      let reason = incompletePlanReason(result.doc)
+      result.ok = reason.len == 0
+      result.verdict = if result.ok: "done" else: "blocked"
+      result.message = if result.ok: "project run complete; accepted tree ready" else: reason
   result.report = reportBase("run", result.doc)
   result.report["sub"] = %"run"
   result.report["interventions"] = interventions

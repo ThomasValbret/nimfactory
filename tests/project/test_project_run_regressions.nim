@@ -700,4 +700,87 @@ block implementContextPostconditions:
   doAssert "un seul target_file" in ctx.userPrompt
   echo "implement_context_postconditions: ok"
 
+
+# A mandate persisted by older builds can request a fixture patch. It must
+# still use the caller's chosen route. An offline API has no change to offer.
+block legacyMandateCannotSupplyPatch:
+  let storePath = tmpPath("legacy") & ".sqlite"
+  let art = tmpPath("legacy_art")
+  createDir(art)
+  seedPlan(storePath, art, "legacy")
+  let store = openProjectStore(storePath)
+  var doc = loadProject(store, "legacy").doc
+  doc.mandates[doc.steps[0].mandateKey]["prefer_deterministic_patch"] = %true
+  saveProject(store, doc)
+  closeProjectStore(store)
+  let savedKey = getEnv("OPENAI_API_KEY")
+  delEnv("OPENAI_API_KEY")
+  defer:
+    if savedKey.len > 0: putEnv("OPENAI_API_KEY", savedKey)
+  var req = defaultProjectRequest()
+  req.storePath = storePath
+  req.projectId = "legacy"
+  req.cwd = fix
+  req.artifactDir = art
+  req.worktree = tmpPath("legacy_wt")
+  let attempted = projectStep(req)
+  doAssert not attempted.ok and attempted.verdict == "api_unavailable", attempted.verdict
+  doAssert attempted.doc.acceptedTreeRef.len == 0
+  echo "legacy_mandate_cannot_supply_patch: ok"
+
+block blockedPlanCannotFinishOnRetry:
+  let art = tmpPath("blocked_art")
+  createDir(art)
+  var plan = parseFile(inj / "plan_v2.json")
+  plan["steps"] = %*[plan["steps"][0]]
+  plan["steps"][0]["depends_on"] = %*["missing"]
+  let path = art / "plan.json"
+  writeFile(path, $plan)
+  var req = defaultProjectRequest()
+  req.storePath = tmpPath("blocked") & ".sqlite"
+  req.projectId = "blocked"
+  req.cwd = fix
+  req.objective = "Exporter les tâches"
+  req.artifactDir = art
+  req.route = "inject"
+  req.injectPath = path
+  doAssert projectAsk(req).ok
+  doAssert projectRun(req).verdict == "blocked"
+  for r in [projectRun(req), projectResume(req), projectStep(req)]:
+    doAssert not r.ok and r.verdict == "blocked", r.verdict
+    doAssert r.providerCallsThisCommand == 0
+    doAssert r.doc.acceptedTreeRef == ""
+  echo "blocked_plan_cannot_finish_on_retry: ok"
+
+block equivalentRunKeepsAcceptedStep:
+  let art = tmpPath("keep_run_art")
+  createDir(art)
+  let storePath = tmpPath("keep_run") & ".sqlite"
+  seedPlan(storePath, art, "keep_run")
+  var req = defaultProjectRequest()
+  req.storePath = storePath
+  req.projectId = "keep_run"
+  req.cwd = fix
+  req.route = "inject"
+  req.artifactDir = art
+  req.worktree = tmpPath("keep_run_first")
+  req.injectPath = inj / "step_helpers.json"
+  let first = projectStep(req)
+  doAssert first.ok
+  req.worktree = tmpPath("keep_run_second")
+  req.injectPath = inj / "step_multi_proposal.json"
+  req.injectRecoveryPath = inj / "step_recovery_still_multi.json"
+  let rejected = projectStep(req)
+  doAssert rejected.doc.revisePlanPending
+  req.injectRecoveryPath = ""
+  req.injectPath = inj / "plan_v2.json"
+  let stopped = projectRun(req)
+  doAssert not stopped.ok and stopped.verdict == "revise_equivalent", stopped.verdict
+  doAssert stopped.doc.revisePlanReason == rejected.doc.revisePlanReason
+  doAssert stopped.doc.acceptedTreeHash == first.doc.acceptedTreeHash
+  doAssert stopped.doc.steps[0].result == first.doc.steps[0].result
+  doAssert stopped.doc.steps[0].status == ssDone
+  doAssert stopped.providerCallsThisCommand == 1 and stopped.apiCallsThisCommand == 0
+  echo "equivalent_run_keeps_accepted_step: ok"
+
 echo "ALL project run regression tests passed"
