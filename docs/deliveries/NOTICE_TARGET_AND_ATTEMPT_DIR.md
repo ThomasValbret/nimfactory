@@ -9,7 +9,7 @@ Branche : `fix/engine-pilot-done-freshness`
 | --- | --- |
 | Base fraîcheur publiée | `ff64adcae4afac6791c80ee4f9869ec525bd01a8` |
 | Intégré (collision reprise) | `598ca8ea283135995740b6a90dfbb0da8ee08285` → cherry-pick `067e6a4…` |
-| Candidat commun (tip livraison) | `ea139aec42d06f356d85f64f1a4660d306de927a` |
+| Candidat commun (tip livraison) | `b2b6b667762a25038303f03ca7316b149fa8a066` |
 
 ## Empreintes binaires (candidat)
 
