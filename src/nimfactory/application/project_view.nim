@@ -51,26 +51,29 @@ proc projectStepView(step: JsonNode): JsonNode =
   var outputIncorrect = false
   if detail{"verify"} != nil:
     let v = detail["verify"]
+    let direct = v{"controls"}
     let projectControls =
-      if v{"controls"}.kind == JArray: v["controls"]
-      elif v{"details","controls"}.kind == JArray: v{"details","controls"}
-      else: newJArray()
+      if direct != nil and direct.kind == JArray: direct.getElems
+      else: v{"details","controls"}.getElems
     if projectControls.len > 0:
       for c in projectControls:
         let status = c{"status"}.getStr
         let ok =
           if status.len > 0: status == "passed"
           else: c{"ok"}.getBool(false)
+        var observation = c{"observation"}
+        if observation == nil or observation.kind == JNull:
+          observation = c{"observations"}
         var item = %*{
           "name": c{"name"}.getStr,
           "ok": ok,
           "status": if status.len > 0: status
                     else: (if ok: "passed" else: "failed"),
           "message": c{"message"}.getStr,
-          "observation": if c{"observation"} != nil: c["observation"] else: newJNull()
+          "observation": if observation != nil: observation else: newJNull()
         }
-        if item{"message"}.getStr.len == 0 and c{"observation"}.kind == JString:
-          item["message"] = c["observation"]
+        if item{"message"}.getStr.len == 0:
+          item["message"] = %observation.getStr
         controls.add(item)
         if item{"status"}.getStr == "failed":
           outputIncorrect = true

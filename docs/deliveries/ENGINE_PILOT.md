@@ -1,5 +1,19 @@
 # Livraison — Engine pilot (intégré Studio)
 
+## Référence commune pour les rejeux de transfert du 24 novembre
+
+Le code de référence est `b2b6b667762a25038303f03ca7316b149fa8a066`.
+Son descendant `49ba13529484f156491d4c1abdd631328779aa76` précise uniquement le SHA dans le [reçu moteur](NOTICE_TARGET_AND_ATTEMPT_DIR.md).
+
+| Binaire de référence | SHA-256 |
+| --- | --- |
+| CLI | `24c768f61763325b54748fcb8dcacc322ce3db70b906a98934fbf2f16e5197e0` |
+| Studio | `619a83bc00d8ba42dc8e347dc6b89d466ce1b859770ad365d3b10470d1493d74` |
+
+Ces empreintes sont publiées dans les deux reçus. Le [premier essai word_tally](https://github.com/ThomasValbret/nimfactory/blob/87be7e90fdb12a1167ba3bc4ae4a1fdd0aa99e8b/docs/deliveries/UNKNOWN_FIRST_TRIAL.md) a précédé cette désignation. La campagne peut utiliser cette paire pour les comparaisons à condition de vérifier les deux exécutables présents avant le lancement. Toute reconstruction portant une autre empreinte est identifiée séparément. Le [correctif de lecture des contrôles dans Studio](STUDIO_GENERIC_SNAPSHOT.md) est postérieur à cette paire.
+
+## Gel historique d519d49
+
 Date : 2026-11-24  
 Branche : `feature/engine-pilot`  
 **SHA publié** : `d519d49ac8c149186d873fa9d6470ce8d0974c04`

@@ -57,6 +57,25 @@ suite "Studio project observation":
     check view["steps"][2]{"readable_diff"} == nil
     check view["events"].len == 0
 
+  test "generic, structured and historical verification results can be reopened":
+    let doc = %*{"kind":"project_mission", "project_id":"observations", "steps":[
+      {"id":"generic","status":"done","result":{"verify":{"details":{"controls":[
+        {"name":"file_exists:NOTICE.txt","status":"passed","observations":"target present: NOTICE.txt"},
+        {"name":"program_runs","status":"unexecuted"}]}}}},
+      {"id":"structured","status":"done","result":{"verify":{"controls":[
+        {"name":"served_tree","status":"passed","observation":{"hash":"abc"},"observations":"hash=abc"}]}}},
+      {"id":"legacy","status":"done","result":{"verify":{"compile_exit":0}}}]}
+    writer.runPrepared("INSERT INTO nf_runs(run_id,state_json) VALUES(?,?)",
+      ["project:observations", $doc])
+    let steps = readProjectView(path, "observations")["steps"]
+    let generic = steps[0]["controls_executed"]
+    check generic[0]["message"].getStr == "target present: NOTICE.txt"
+    check generic[0]["observation"] == generic[0]["message"]
+    check generic[1]["status"].getStr == "unexecuted"
+    check generic[1]["observation"].kind == JNull
+    check steps[1]["controls_executed"][0]["observation"] == %*{"hash":"abc"}
+    check steps[2]["controls_executed"][0]["name"].getStr == "compile"
+
   test "only matching accepted file bytes can be opened":
     let root = tmp / "trees"
     let tree = root / "record"

@@ -293,14 +293,14 @@ proc inspector(step: JsonNode): string =
       let label =
         if st == "passed": "passé"
         elif st == "failed": "échec"
-        elif st == "not_run": "non exécuté"
+        elif st in ["not_run", "unexecuted"]: "non exécuté"
         elif c{"ok"}.getBool: "ok"
         else: "échec"
       var obs = c{"message"}.getStr
-      if obs.len == 0 and c{"observation"}.kind == JString:
-        obs = c{"observation"}.getStr
-      elif obs.len == 0 and c{"observation"}.kind == JObject:
-        obs = $c{"observation"}
+      let observation = c{"observation"}
+      if obs.len == 0 and observation != nil:
+        if observation.kind == JObject: obs = $observation
+        else: obs = observation.getStr
       result.add("<li><code>" & html(c{"name"}.getStr) & "</code> · " & html(label) &
         (if obs.len > 0: " — " & html(obs) else: "") & "</li>")
     result.add("</ul>")
