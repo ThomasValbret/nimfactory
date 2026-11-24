@@ -285,9 +285,46 @@ proc verifyCsvJourney*(worktree, repoRoot: string; requireCsv = true): ProjectVe
     if not result.quoteOk: parts.add("comma_not_quoted")
     result.message = parts.join(",")
 
+proc stripPyComments*(src: string): string =
+  ## Drop `# …` outside quotes so comment-only "/return" cannot fake a handler.
+  var acc = ""
+  for line in src.splitLines:
+    var inStr = false
+    var quote = '\0'
+    var i = 0
+    var cleaned = ""
+    while i < line.len:
+      let c = line[i]
+      if inStr:
+        cleaned.add(c)
+        if c == '\\' and i + 1 < line.len:
+          cleaned.add(line[i + 1])
+          inc i
+          inc i
+          continue
+        if c == quote:
+          inStr = false
+        inc i
+      elif c in {'"', '\''}:
+        inStr = true
+        quote = c
+        cleaned.add(c)
+        inc i
+      elif c == '#':
+        break
+      else:
+        cleaned.add(c)
+        inc i
+    acc.add(cleaned)
+    acc.add('\n')
+  acc
+
 proc verifyLoanNotebook*(
     worktree, repoRoot: string; criteria: seq[string]): ProjectVerifyResult =
-  ## Loan notebook: schema + app present; mark_returned requires /return in app.
+  ## Loan notebook: schema + app; mark_returned needs /return AND returned_on UPDATE.
+  ## Comments alone never satisfy the control (witness 1). A handler that does not
+  ## persist returned_on fails (witness 2). Correct UPDATE passes static gate
+  ## (witness 3); runtime oracle still checks restart.
   result.kind = "loan_notebook"
   result.details = newJObject()
   result.details["criteria"] = %criteria
@@ -303,26 +340,39 @@ proc verifyLoanNotebook*(
       if not schemaOk: "schema_missing"
       else: "app_missing"
     return
-  let body = readFile(app)
+  let body = stripPyComments(readFile(app))
   let hasReturn =
     "endswith(\"/return\")" in body or
     "endswith('/return')" in body or
-    "/loans/{id}/return" in body or
-    ".endswith(\"/return\")" in body
+    ".endswith(\"/return\")" in body or
+    ".endswith('/return')" in body
+  let hasPersist =
+    "returned_on = date('now')" in body or
+    "returned_on = date(\"now\")" in body or
+    "returned_on=date('now')" in body or
+    "returned_on=date(\"now\")" in body
   result.details["mark_returned_present"] = %hasReturn
+  result.details["mark_returned_persists"] = %hasPersist
   result.details["server_starts"] = %true  ## static gate; runtime oracle restarts
-  if "mark_returned" in criteria and not hasReturn:
-    result.ok = false
-    result.message = "mark_returned_missing"
-    return
   if "schema_ok" in criteria and not schemaOk:
     result.ok = false
     result.message = "schema_missing"
     return
+  if "mark_returned" in criteria:
+    if not hasReturn:
+      result.ok = false
+      result.message = "mark_returned_missing"
+      return
+    if not hasPersist:
+      result.ok = false
+      result.message = "mark_returned_no_persist"
+      return
   result.ok = true
   result.message =
-    if "mark_returned" in criteria: "loan app has mark_returned endpoint"
-    else: "loan skeleton schema+app present"
+    if "mark_returned" in criteria:
+      "UPDATE sets returned_on on open loan"
+    else:
+      "loan skeleton schema+app present"
 
 proc verifyForRecipe*(
     recipe: ProjectRecipe; worktree, repoRoot: string;
@@ -399,6 +449,7 @@ proc verifyStepCriteria*(
 
 proc proofCoversCriteria*(verifyNode: JsonNode; criteria: seq[string]): bool =
   ## Prior accepted verify proof still covers the (possibly revised) criteria.
+  ## Unknown criteria are not covered (strict): revise must re-prove them.
   if verifyNode.isNil or verifyNode.kind != JObject:
     return false
   if not verifyNode{"ok"}.getBool:
@@ -417,8 +468,21 @@ proc proofCoversCriteria*(verifyNode: JsonNode; criteria: seq[string]): bool =
     of "csv_helpers":
       if not verifyNode{"details"}{"csv_helpers"}.getBool:
         return false
+    of "server_starts":
+      if verifyNode{"details"}{"server_starts"} != nil and
+         not verifyNode{"details"}{"server_starts"}.getBool:
+        return false
+    of "schema_ok":
+      if not verifyNode{"details"}{"schema_ok"}.getBool:
+        return false
+    of "mark_returned":
+      if not verifyNode{"details"}{"mark_returned_present"}.getBool:
+        return false
+      if verifyNode{"details"}{"mark_returned_persists"} != nil and
+         not verifyNode{"details"}{"mark_returned_persists"}.getBool:
+        return false
     else:
-      discard
+      return false
   true
 
 proc verifyToJson*(v: ProjectVerifyResult): JsonNode =

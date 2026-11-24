@@ -229,7 +229,10 @@ proc buildGenericReceipt*(
     for key in ["provider", "artifacts", "untested", "usage_by_role", "steps",
                 "plan_versions", "refinements", "interventions", "blocked",
                 "proof_kept", "proof_dropped", "paused_after_step", "resume",
-                "provider_calls_this_command", "api_calls_this_command"]:
+                "provider_calls_this_command", "api_calls_this_command",
+                "diff_origin", "attempt", "controls_requested",
+                "controls_executed", "observations", "delivered_tree",
+                "delivered_hash"]:
       if prep.report.hasKey(key):
         result[key] = prep.report[key]
 

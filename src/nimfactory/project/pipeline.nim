@@ -372,8 +372,48 @@ proc usageTableJson(doc: ProjectDoc): JsonNode =
   for k, v in doc.usageByRole:
     result[k] = usageToJson(v)
 
+proc inferDiffOrigin(doc: ProjectDoc): string =
+  for step in doc.steps:
+    if step.result.isNil: continue
+    let r = step.result{"provider_attempt", "route"}.getStr
+    if r == "inject": return "inject"
+    if r == "api": return "model"
+    if r.len > 0: return r
+  if doc.lastVerdict == "historical_replay": return "historical_replay"
+  "model"
+
+proc collectControls(doc: ProjectDoc): tuple[requested, executed: JsonNode; obs: string] =
+  result.requested = newJArray()
+  result.executed = newJArray()
+  result.obs = ""
+  var seenReq: seq[string] = @[]
+  for step in doc.steps:
+    for c in step.criteria:
+      if c notin seenReq:
+        seenReq.add(c)
+        result.requested.add(%c)
+    if step.status != ssDone or step.result.isNil: continue
+    let v = step.result{"verify"}
+    let tree = step.result{"accepted_tree_ref"}.getStr
+    let hash = step.result{"accepted_tree_hash"}.getStr
+    let msg = if v.isNil: "" else: v{"message"}.getStr
+    for c in step.criteria:
+      result.executed.add(%*{
+        "name": c,
+        "ok": if v.isNil: false else: v{"ok"}.getBool,
+        "tree_ref": tree,
+        "tree_hash": hash,
+        "observations": msg,
+        "step_id": step.id
+      })
+    if step.id == doc.acceptedStepId and msg.len > 0:
+      result.obs = msg
+  if result.obs.len == 0 and doc.blockedReason.len > 0:
+    result.obs = doc.blockedReason
+
 proc reportBase(cmd: string; doc: ProjectDoc): JsonNode =
-  %*{
+  let controls = collectControls(doc)
+  result = %*{
     "command": "project",
     "sub": cmd,
     "project_id": doc.projectId,
@@ -398,7 +438,18 @@ proc reportBase(cmd: string; doc: ProjectDoc): JsonNode =
     "recovery_exhausted_reason": doc.recoveryExhaustedReason,
     "usage_by_role": usageTableJson(doc),
     "steps": doc.steps.mapIt(stepToJson(it)),
-    "plan_versions": doc.planVersions.mapIt(planToJson(it))
+    "plan_versions": doc.planVersions.mapIt(planToJson(it)),
+    "diff_origin": inferDiffOrigin(doc),
+    "attempt": {
+      "kind": cmd,
+      "plan_version": doc.currentPlanVersion,
+      "source_tree": doc.cwd,
+      "accepted_tree_ref": doc.acceptedTreeRef,
+      "accepted_tree_hash": doc.acceptedTreeHash
+    },
+    "controls_requested": controls.requested,
+    "controls_executed": controls.executed,
+    "observations": controls.obs
   }
 
 proc finishStepRefuse*(
@@ -524,6 +575,7 @@ proc depsSatisfied(doc: ProjectDoc; step: ProjectStep): bool =
 
 proc incompletePlanReason(doc: ProjectDoc): string =
   ## Called only after the scheduler has no further actionable step.
+  ## Done gate: every required control must pass on the accepted delivered tree.
   if doc.steps.len == 0:
     return "plan has no steps"
   for step in doc.steps:
@@ -531,6 +583,18 @@ proc incompletePlanReason(doc: ProjectDoc): string =
       return "step " & step.id & " is " & $step.status
   if doc.acceptedTreeRef.len == 0 or not dirExists(doc.acceptedTreeRef):
     return "accepted tree missing"
+  for step in doc.steps:
+    if step.status != ssDone: continue
+    if step.result.isNil:
+      return "step " & step.id & " missing result/controls"
+    let v = step.result{"verify"}
+    if v.isNil or not v{"ok"}.getBool:
+      return "step " & step.id & " control failed or absent"
+    let tree = step.result{"accepted_tree_ref"}.getStr
+    if tree.len == 0:
+      return "step " & step.id & " control missing tree_ref"
+    if step.id == doc.acceptedStepId and tree != doc.acceptedTreeRef:
+      return "controls not executed on accepted tree"
 
 proc sourceRootForStep(doc: ProjectDoc): string =
   ## Next edits apply on the last accepted tree when present.
@@ -2140,6 +2204,9 @@ proc projectRun*(req: ProjectRequest): ProjectReport =
   result.report["interventions"] = interventions
   result.report["provider_calls_this_command"] = %totalProvider
   result.report["api_calls_this_command"] = %totalApi
+  result.report["provider_calls"] = %totalProvider
+  result.report["api_calls"] = %totalApi
+  result.report["replayed"] = %false
   if result.doc.acceptedTreeRef.len > 0:
     result.report["delivered_tree"] = %result.doc.acceptedTreeRef
     result.report["delivered_hash"] = %result.doc.acceptedTreeHash

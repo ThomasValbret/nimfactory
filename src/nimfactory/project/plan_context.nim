@@ -19,15 +19,14 @@ type
 const
   PlanSystemPrompt* = """
 Tu es le planificateur NimFactory pour un petit projet logiciel.
-Lis les consignes locales (AGENTS.md) et les sources fournies.
-Propose un plan d'étapes bornées pour satisfaire la demande du pilote.
-Une étape = un fichier. Pour un export CSV: d'abord helpers dans tasks.nim
-(postconditions compile+list+csv_helpers: csvQuote ET formatCsv obligatoires),
-puis câblage CLI dans demo_tasks.nim
-(postconditions compile+list+export_command). CSV sur stdout.
+Lis les consignes locales (AGENTS.md), la recette (recipe.json) et les
+sources fournies sous budget. Propose un plan d'étapes bornées.
+Une étape = un fichier (un target_file). Un dépôt vide peut recevoir ses
+premiers fichiers ; un dépôt existant peut être dans un autre langage.
 Distingue clairement:
-  - final_criteria: critères d'acceptation du livrable final (ex. export CSV),
-  - postconditions: ce que chaque étape doit laisser vrai.
+  - final_criteria: critères d'acceptation du livrable final,
+  - postconditions: ce que chaque étape doit laisser vrai (tokens exécutables
+    de la recette quand ils existent).
 Tu peux poser une question d'architecture facultative OU annoncer une hypothèse.
 Ne code pas. Réponds UNIQUEMENT en JSON avec les clés:
   summary (string),
@@ -54,33 +53,19 @@ Ne code pas. Réponds UNIQUEMENT en JSON avec les clés:
 
   ImplementSystemPrompt* = """
 Tu es l'agent de réalisation NimFactory pour une étape bornée.
-Contrat plan↔exécution: chaque étape doit laisser un arbre compilable.
+Contrat plan↔exécution: chaque étape doit laisser un arbre cohérent.
 UNE seule proposition JSON (un target_file). Toutes les ancres doivent
-appartenir à CE fichier ; si un helper vit ailleurs (ex. tasks.nim),
-traite-le dans une étape dédiée — ne mélange pas les fichiers.
+appartenir à CE fichier ; un prérequis hors fichier → revise_plan.
 Si un prérequis hors mandat impose de revoir le plan, retourne:
   {"revise_plan": true, "decision": "<motif>"}.
-Sinon edits (contrat multi-langage, texte brut):
-  - remplacement: {oldText, newText}
-  - insertion textuelle: {insertBefore|insertAfter, newText}
-  - insertion de ligne: {insertLineBefore|insertLineAfter, newText}
-Pour ajouter un proc après un autre: préférer oldText/newText sur tout
-le proc précédent, ou insertLineAfter sur sa DERNIÈRE ligne de corps
-(ex. lines.join(...)) — jamais insertLineAfter sur le seul en-tête
-`proc foo*... =` (casse l'indentation / le corps existant).
-Étape helpers (tasks.nim): définir csvQuote* ET formatCsv* (en-tête
-id,title ; titres avec virgule quotés). Ne pas s'arrêter à csvQuote seul.
-Syntaxe Nim: concaténer avec & (pas +) ; littéraux caractère entre apostrophes.
-Étape câblage (demo_tasks.nim): ajouter une branche case distincte
-  of "export-csv":
-    echo formatCsv(loadTasks())
-sans if collé dans le else (qui tomberait dans unknown/quit).
-Réutiliser formatCsv de tasks.nim — ne pas le redéfinir dans demo_tasks.
-Respecte les postconditions exécutables de l'étape et la contrainte
-stdout (export CSV sur la sortie standard, pas un fichier).
-Les ancres oldText / insert* doivent être des sous-chaînes EXACTES
-copiées depuis la section Sources (ne pas inventer de signatures).
-JSON strict. Retourne: target_file, decision, edits: [...].
+Sinon:
+  - fichier existant: edits {oldText,newText} | insertBefore/After |
+    insertLineBefore/After (jamais insertLineAfter sur un seul en-tête
+    `proc/def … =` / `:` — sauter le corps indenté),
+  - fichier absent: {"target_file","decision","patched_content": "<corps complet>"}.
+Respecte les postconditions exécutables de l'étape et les contraintes
+de la recette (ex. stdout si export CSV). Ancres = sous-chaînes EXACTES
+des Sources. JSON strict: target_file, decision, edits ou patched_content.
 """.strip()
 
   ProjectRecoverySystemPrompt* = """
@@ -88,7 +73,7 @@ Tu récupères une proposition d'édition refusée avant écriture.
 Le diagnostic indique pour chaque ancre le fichier où elle a été trouvée
 (found_in_file). Si une ancre est dans un autre fichier que target_file,
 reformule UNE proposition pour ce fichier-là, ou revise_plan pour
-séparer helper et CLI. Une seule proposition JSON (un target_file).
+séparer les fichiers. Une seule proposition JSON (un target_file).
 Sinon: oldText/newText, insertBefore/After, ou insertLineBefore/After.
 """.strip()
 
@@ -97,28 +82,82 @@ Tu répares un candidat déjà appliqué qui a échoué à la compilation.
 On t'a donné: le candidat rejeté (proposition exacte), son diff lisible,
 et un diagnostic localisé (chemin/ligne/colonne + extrait) — formats
 compilateur variés, reste sur du texte.
-Si l'identifiant manquant est formatCsv/csvQuote (helpers tasks.nim),
-retourne revise_plan plutôt que de les redéfinir dans demo_tasks.nim.
-Corrige sans recommencer tout le plan. Préfère insertLineBefore/After ou
-un remplacement oldText/newText local. Une seule proposition JSON
+Si l'identifiant manquant appartient à un autre fichier du plan,
+retourne revise_plan plutôt que de le redéfinir ici.
+Corrige sans recommencer tout le plan. Une seule proposition JSON
 (un target_file). Si le prérequis impose de réviser le plan:
   {"revise_plan": true, "decision": "<motif>"}.
 """.strip()
+
+const SourceExts = [
+  ".nim", ".py", ".rs", ".go", ".ts", ".js", ".tsx", ".jsx",
+  ".c", ".h", ".cpp", ".hpp", ".java", ".kt", ".sql", ".md",
+  ".json", ".toml", ".yaml", ".yml"
+]
+
+proc fenceForPath(rel: string): string =
+  let ext = splitFile(rel).ext.toLowerAscii
+  case ext
+  of ".py": "python"
+  of ".rs": "rust"
+  of ".go": "go"
+  of ".ts", ".tsx": "typescript"
+  of ".js", ".jsx": "javascript"
+  of ".sql": "sql"
+  of ".md": "markdown"
+  of ".json": "json"
+  of ".toml": "toml"
+  of ".yaml", ".yml": "yaml"
+  of ".c", ".h": "c"
+  of ".cpp", ".hpp": "cpp"
+  of ".java": "java"
+  of ".kt": "kotlin"
+  else: "text"
+
+proc pathLooksRelevant(rel: string): bool =
+  let low = rel.toLowerAscii
+  if low.startsWith(".git/") or "/.git/" in low: return false
+  if "/nimcache/" in low or low.endsWith(".o") or low.endsWith(".pyc"):
+    return false
+  if low.startsWith("build/") or low.startsWith("node_modules/"): return false
+  let ext = splitFile(rel).ext.toLowerAscii
+  if ext in SourceExts: return true
+  # Keep recipe / agents at roots even without extension match already covered.
+  extractFilename(rel) in ["AGENTS.md", "recipe.json", "RECIPE.md"]
+
 proc collectProjectSources*(cwd: string; maxFiles = 12; maxBytes = 80_000): seq[ProjectSource] =
-  let srcDir = cwd / "src"
-  if not dirExists(srcDir):
+  ## Budget-capped discovery: AGENTS/recipe first, then source trees (any language).
+  if not dirExists(cwd):
     return @[]
   var paths: seq[string] = @[]
-  for path in walkDirRec(srcDir):
-    if path.endsWith(".nim") and fileExists(path):
-      paths.add(path)
+  for name in ["AGENTS.md", "recipe.json", "RECIPE.md"]:
+    let p = cwd / name
+    if fileExists(p): paths.add(p)
+  for rootName in ["src", "skeleton", "lib", "app"]:
+    let root = cwd / rootName
+    if not dirExists(root): continue
+    for path in walkDirRec(root):
+      if fileExists(path):
+        let rel = relativePath(path, cwd).replace('\\', '/')
+        if pathLooksRelevant(rel):
+          paths.add(path)
+  # Also shallow files under cwd (e.g. main.py) when no src/.
+  if not dirExists(cwd / "src") and not dirExists(cwd / "skeleton"):
+    for kind, path in walkDir(cwd):
+      if kind == pcFile:
+        let rel = relativePath(path, cwd).replace('\\', '/')
+        if pathLooksRelevant(rel) and '/' notin rel:
+          paths.add(path)
   paths.sort()
+  var seen: seq[string] = @[]
   var total = 0
   for p in paths:
+    let rel = relativePath(p, cwd).replace('\\', '/')
+    if rel in seen: continue
     if result.len >= maxFiles: break
     let body = readFile(p)
     if total + body.len > maxBytes: break
-    let rel = relativePath(p, cwd).replace('\\', '/')
+    seen.add(rel)
     result.add(ProjectSource(relPath: rel, content: body))
     total += body.len
 
@@ -126,26 +165,42 @@ proc loadAgentsMd*(cwd: string): string =
   let p = cwd / "AGENTS.md"
   if fileExists(p): readFile(p) else: ""
 
+proc loadRecipeExcerpt*(cwd: string; maxBytes = 4_000): string =
+  let p = cwd / "recipe.json"
+  if not fileExists(p): return ""
+  let body = readFile(p)
+  if body.len <= maxBytes: body else: body[0 ..< maxBytes] & "\n…"
+
 proc renderSources(sources: seq[ProjectSource]): string =
   var parts: seq[string] = @[]
   for s in sources:
-    parts.add("### FILE " & s.relPath & "\n```nim\n" & s.content & "\n```")
+    let fence = fenceForPath(s.relPath)
+    parts.add("### FILE " & s.relPath & "\n```" & fence & "\n" & s.content & "\n```")
   parts.join("\n\n")
 
 proc buildAskContext*(cwd, objective: string): PlanContext =
   result.agentsMd = loadAgentsMd(cwd)
   result.sources = collectProjectSources(cwd)
   result.sourceIds = result.sources.mapIt(it.relPath)
-  if result.sources.len == 0 and result.agentsMd.len == 0:
-    result.ok = false
-    result.error = "no AGENTS.md and no src/*.nim under project cwd"
+  let recipe = loadRecipeExcerpt(cwd)
+  # Empty cwd is allowed: bootstrap first files from objective alone.
+  if result.sources.len == 0 and result.agentsMd.len == 0 and recipe.len == 0:
+    result.ok = true
+    result.systemPrompt = PlanSystemPrompt
+    result.userPrompt =
+      "Demande du pilote:\n" & objective.strip() & "\n\n" &
+      "Le dossier projet est vide (pas encore de sources). Propose un plan " &
+      "qui crée les premiers fichiers nécessaires.\n\n" &
+      "Produis le JSON du plan maintenant."
     return
   result.ok = true
   result.systemPrompt = PlanSystemPrompt
   result.userPrompt =
     "Demande du pilote:\n" & objective.strip() & "\n\n" &
     "AGENTS.md:\n" & (if result.agentsMd.len > 0: result.agentsMd else: "(absent)") &
-    "\n\nSources:\n\n" & renderSources(result.sources) &
+    "\n\nrecipe.json:\n" & (if recipe.len > 0: recipe else: "(absent)") &
+    "\n\nSources:\n\n" &
+    (if result.sources.len > 0: renderSources(result.sources) else: "(aucune)") &
     "\n\nProduis le JSON du plan maintenant."
 
 proc buildReviseContext*(
@@ -162,6 +217,7 @@ proc buildReviseContext*(
       implementerReason.strip() & "\n\n"
     else:
       ""
+  let recipe = loadRecipeExcerpt(cwd)
   result.userPrompt =
     "Demande initiale:\n" & objective.strip() & "\n\n" &
     implBlock &
@@ -169,14 +225,16 @@ proc buildReviseContext*(
     (if refinements.len > 0: refinements.join("\n- ") else: "(aucune)") & "\n\n" &
     "Plan précédent (JSON):\n```json\n" & priorPlanJson & "\n```\n\n" &
     "AGENTS.md:\n" & (if result.agentsMd.len > 0: result.agentsMd else: "(absent)") &
-    "\n\nSources:\n\n" & renderSources(result.sources) &
+    "\n\nrecipe.json:\n" & (if recipe.len > 0: recipe else: "(absent)") &
+    "\n\nSources:\n\n" &
+    (if result.sources.len > 0: renderSources(result.sources) else: "(aucune)") &
     "\n\nProduis le JSON du plan révisé maintenant."
 
 proc buildImplementContext*(
     cwd: string; mandate: JsonNode; stepTitle: string;
     postconditions: seq[string] = @[];
     stdoutConstraint = ""): PlanContext =
-  ## postconditions = executable step checks; stdoutConstraint = CSV-on-stdout rule.
+  ## postconditions = executable step checks; stdoutConstraint = optional recipe rule.
   result.agentsMd = loadAgentsMd(cwd)
   result.sources = collectProjectSources(cwd)
   result.sourceIds = result.sources.mapIt(it.relPath)
@@ -189,9 +247,8 @@ proc buildImplementContext*(
       postconditions.join("\n- ") & "\n\n"
   let stdoutBlock =
     if stdoutConstraint.len > 0: stdoutConstraint.strip() & "\n\n"
-    else:
-      "Contrainte stdout: si l'étape touche l'export, écrire le CSV sur la " &
-      "sortie standard (pas un fichier). Garder list/défaut intact.\n\n"
+    else: ""
+  let recipe = loadRecipeExcerpt(cwd)
   result.userPrompt =
     "Étape: " & stepTitle & "\n\n" &
     postBlock &
@@ -199,7 +256,9 @@ proc buildImplementContext*(
     "Mandat borné (JSON):\n```json\n" & pretty(mandate) & "\n```\n\n" &
     "Extraits AGENTS.md utiles:\n" &
     (if result.agentsMd.len > 0: result.agentsMd else: "(absent)") &
-    "\n\nSources autorisées:\n\n" & renderSources(result.sources) &
+    "\n\nrecipe.json:\n" & (if recipe.len > 0: recipe else: "(absent)") &
+    "\n\nSources autorisées:\n\n" &
+    (if result.sources.len > 0: renderSources(result.sources) else: "(aucune — fichier à créer)") &
     "\n\nProduis les edits JSON maintenant (un seul target_file)."
 
 proc buildProjectRecoveryContext*(

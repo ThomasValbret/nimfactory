@@ -563,16 +563,25 @@ proc applyDecision*(repoRoot, worktreeRoot: string; dec: FixDecision): ApplyResu
     result.message = "copy to worktree failed: " & e.msg
     return
   let dest = alloc.path / dec.targetFile
+  var createdTarget = false
   if not fileExists(dest):
-    result.ok = false
-    result.refuseCode = "target_missing"
-    result.message = "target not present in worktree: " & dec.targetFile
-    return
+    # Bootstrap: create missing file when a full body is provided.
+    if dec.patchedContent.len == 0:
+      result.ok = false
+      result.refuseCode = "target_missing"
+      result.message = "target not present in worktree: " & dec.targetFile
+      return
+    let parent = parentDir(dest)
+    if parent.len > 0:
+      createDir(parent)
+    writeFile(dest, "")
+    createdTarget = true
   let beforeRaw = readFile(dest)
   let before = beforeRaw.replace("\r\n", "\n")
   result.beforeHash = simpleHash(before)
 
-  if dec.mode == "edits" or (dec.edits.len > 0 and dec.patchedContent.len == 0):
+  if not createdTarget and
+      (dec.mode == "edits" or (dec.edits.len > 0 and dec.patchedContent.len == 0)):
     result.mode = "edits"
     let applied = applyEditsToContent(before, dec.edits)
     result.editDetails = applied.details
