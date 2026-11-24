@@ -95,13 +95,33 @@ Assertions réservées : uniquement côté évaluateur (`/tmp/qual_d519d49/eval/
 
 **Limite de trace :** le corps JSON/edits renvoyé par le modèle à l’étape 1 n’a pas été persisté (`first_faulty_raw` absent du reçu `command_id`). On ne peut pas qualifier la *forme* (edits vs patched_content vs prose) au-delà du refus `missing_edits` répété après recovery.
 
-## 5. Protocole « prochain gel » (prêt, non exécuté ici)
+## 5. Protocole « prochain gel » (prêt, non exécuté)
 
-Le tip moteur `067e6a4` (worktree frais par tentative) **n’a pas** encore de fiche d’empreintes gel. Tant que `ENGINE_PILOT.md` pointe `d519d49` + sha256 `58e92444…` / `f20aff2e…`, le prochain gel n’est pas déclaré.
+`ENGINE_PILOT.md` pointe toujours `d519d49` + sha256 CLI `58e92444…` / Studio `f20aff2e…`.  
+Tip moteur observé ensuite : `49ba135` (après `067e6a4` worktree frais + `b2b6b66` bind `file_exists`) — **pas** de nouvelle fiche d’empreintes gel. Le binaire CLI gelé `58e92444…` n’est plus présent sur disque (reconstructions non bit-identique).
 
-Au gel suivant, enchaîner :
+Au gel suivant, enchaîner **avant** toute autre campagne :
 
 1. Comparer CLI/Studio aux empreintes publiées.
 2. Rejouer `empty_ledger` et `foreign_inventory` depuis cwd initiaux neufs ; **même** `--worktree` root entre échec et relance.
 3. Essai **assisté** AGENTS : deux copies initiales identiques, seule la présence de `AGENTS.md` varie ; classer `assisted`.
-4. Mission **inconnue** du builder (hors empty/foreign/loan/csv) : livrer le **premier essai** séparé des réparations (SHA, coût, 1ᵉʳ fichier utile, arbre Studio, verdict évaluateur, ce que l’utilisateur peut lancer).
+
+La mission inconnue (étape 4 du protocole) a été livrée séparément ci-dessous, hors gel, pour clôturer le lot courant.
+
+## 6. Mission inconnue — premier essai (séparé des réparations)
+
+Reçu détaillé : [UNKNOWN_FIRST_TRIAL.md](UNKNOWN_FIRST_TRIAL.md) · journaux `/tmp/qual_unknown_067e6a4/`.
+
+| Champ | Valeur |
+| --- | --- |
+| Mission | `word_tally` (inconnue du builder ; hors empty/foreign/loan/csv) |
+| SHA source | `49ba13529484f156491d4c1abdd631328779aa76` |
+| CLI sha256 | `24c768f61763325b54748fcb8dcacc322ce3db70b906a98934fbf2f16e5197e0` |
+| Coût | **~$0.00053** · 2 appels API · `diff_origin=model` |
+| 1ᵉʳ fichier utile | `tally.py` (`7B3167304F266B1C`) · mode `patched_content` |
+| Arbre (status / Studio) | `art/trees/step1` · hash `AAB37878B03070F9` · fichiers : `tally.py` · `proof_freshness=fresh` |
+| Verdict moteur | `paused_after_step` / `step_pass` (pause après step1 ; pas de réparation) |
+| Évaluateur | **failed** : `tally_py_present`+`program_runs` ok ; `stdout_three_ints` ko (sortie multi-lignes `Lines:/Words:/Characters:`) |
+| Lançable | `python3 tally.py <fichier.txt>` depuis l’arbre → compteurs libellés, **pas** la ligne `N N N` demandée |
+
+Assertions : uniquement `/tmp/qual_unknown_067e6a4/eval/` (jamais dans le cwd builder).
