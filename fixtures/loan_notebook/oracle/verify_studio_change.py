@@ -5,12 +5,13 @@ Avant  : squelette initial → la fonction demandée (/return) échoue.
          Crée un prêt identifiable ; conserve la même base SQLite.
 Après  : démarre l'app depuis l'arbre accepté NimFactory (même LOAN_DB)
          → retrouve le prêt sans le recréer ; /return réussit.
+Adapter : même contrôles runtime pour l'adaptateur Nim (mode=adapter).
 
 Variables :
   LOAN_APP   chemin de l'app (défaut : skeleton/app.py)
   LOAN_DB    fichier SQLite partagé (conservé entre redémarrages)
   LOAN_PORT  port HTTP
-  TREE_SHA   hash d'arbre servi (renseigné dans le rapport)
+  TREE_SHA   empreinte *revendiquée* par le lanceur (ne prouve pas l'identité)
 """
 from __future__ import annotations
 
@@ -32,7 +33,61 @@ BASE = f"http://127.0.0.1:{PORT}"
 PID_FILE = Path(os.environ.get("LOAN_PID", ROOT / "data" / "server.pid"))
 DB_PATH = Path(os.environ.get("LOAN_DB", ROOT / "data" / "loans.sqlite"))
 LOAN_NOTE = os.environ.get("LOAN_NOTE", "oracle-ident-20261123T1958Z")
-TREE_SHA = os.environ.get("TREE_SHA", "")
+CLAIMED_TREE_SHA = os.environ.get("TREE_SHA", "")
+
+
+def fnv1a64_hex(data: bytes) -> str:
+    """Match Nim tree_id.simpleContentHash (FNV-1a 64-bit, width 16)."""
+    h = 14695981039346656037
+    for b in data:
+        h ^= b
+        h = (h * 1099511628211) & 0xFFFFFFFFFFFFFFFF
+    return f"{h:016X}"
+
+
+_SKIP_TREE_NAMES = {"nimcache", "build", ".git", "inject", ".nimfactory"}
+
+
+def _path_skipped(rel: str) -> bool:
+    return any(part in _SKIP_TREE_NAMES for part in rel.replace("\\", "/").split("/"))
+
+
+def served_tree_identity(tree_root: Path) -> dict:
+    """Recalculate identity of the directory actually served (not TREE_SHA env)."""
+    root = tree_root.resolve()
+    paths: list[Path] = []
+    if root.is_dir():
+        for path in sorted(root.rglob("*")):
+            if not path.is_file():
+                continue
+            rel = path.relative_to(root).as_posix()
+            if _path_skipped(rel):
+                continue
+            paths.append(path)
+    acc = bytearray()
+    files: list[str] = []
+    for path in paths:
+        rel = path.relative_to(root).as_posix()
+        files.append(rel)
+        acc.extend(rel.encode("utf-8"))
+        acc.append(ord("\n"))
+        acc.extend(path.read_bytes())
+        acc.append(ord("\n"))
+    return {
+        "root": str(root),
+        "hash": fnv1a64_hex(bytes(acc)),
+        "file_count": len(files),
+        "files": files,
+        "claimed_tree_sha": CLAIMED_TREE_SHA,
+    }
+
+
+def tree_root_for_app(app: Path) -> Path:
+    """skeleton/app.py → parent of skeleton (accepted tree / worktree root)."""
+    app = app.resolve()
+    if app.parent.name == "skeleton":
+        return app.parent.parent
+    return app.parent
 
 
 def http_json(method: str, path: str, payload=None):
@@ -116,10 +171,12 @@ def find_loan_by_note(note: str) -> dict | None:
 def probe(phase: str, app: Path, *, wipe_db: bool, expect_return: bool,
           loan_id: int | None = None, create: bool = False) -> dict:
     """Run one phase; returns check dict + optional loan_id."""
+    served = served_tree_identity(tree_root_for_app(app)) if phase.startswith("after") or phase == "adapter" else {}
     out: dict = {
         "phase": phase,
         "app": str(app),
-        "tree_sha": TREE_SHA if phase.startswith("after") else "",
+        "tree_sha": served.get("hash", ""),
+        "served_tree": served,
         "expect_return": expect_return,
         "checks": [],
     }
@@ -226,23 +283,110 @@ def verify_persistence(app: Path, loan_id: int | None) -> dict:
     return out
 
 
+def controls_from_report(report: dict) -> list:
+    """Stable controls[] for the Nim adapter / Studio (passed|failed|not_run)."""
+    controls: list = []
+    after = report.get("after") or report.get("adapter")
+    restart = report.get("restart")
+
+    def add(name: str, status: str, observation):
+        controls.append({"name": name, "status": status, "observation": observation})
+
+    if report.get("before"):
+        b = report["before"]
+        add(
+            "before_return_absent",
+            "passed" if b.get("ok") else "failed",
+            {"checks": b.get("checks"), "loan_id": b.get("loan_id")},
+        )
+    if after is None:
+        add("mark_returned_effect", "not_run", "candidate not probed")
+        add("persistence_after_restart", "not_run", "candidate not probed")
+    else:
+        effect = next(
+            (c for c in after.get("checks", []) if c.get("name") == "mark_returned_control"),
+            None,
+        )
+        http_ok = bool(effect and effect.get("return_succeeded"))
+        add(
+            "mark_returned_effect",
+            "passed" if http_ok and after.get("ok") else "failed",
+            effect or after.get("checks"),
+        )
+        if restart is None:
+            add(
+                "persistence_after_restart",
+                "not_run",
+                "skipped because effect failed" if not http_ok else "restart not run",
+            )
+        else:
+            add(
+                "persistence_after_restart",
+                "passed" if restart.get("ok") else "failed",
+                {"checks": restart.get("checks"), "loan_id": restart.get("loan_id")},
+            )
+    served = report.get("served_tree") or (after or {}).get("served_tree") or {}
+    if served:
+        claimed = served.get("claimed_tree_sha") or ""
+        match = (not claimed) or claimed == served.get("hash")
+        add(
+            "served_tree_identity",
+            "passed" if served.get("hash") else "failed",
+            {
+                **served,
+                "claimed_matches_recomputed": match,
+            },
+        )
+    else:
+        add("served_tree_identity", "not_run", "no served tree root")
+    return controls
+
+
 def main() -> int:
     before_app = Path(os.environ.get("LOAN_APP_BEFORE", str(DEFAULT_SKELETON)))
     after_app = Path(os.environ.get("LOAN_APP_AFTER", ""))
-    mode = os.environ.get("LOAN_ORACLE_MODE", "full")  # before | after | full
+    mode = os.environ.get("LOAN_ORACLE_MODE", "full")  # before | after | full | adapter
 
     report: dict = {
         "ok": False,
         "role": "oracle",
         "loan_note": LOAN_NOTE,
         "db": str(DB_PATH),
-        "tree_sha": TREE_SHA,
+        "tree_sha": "",
+        "claimed_tree_sha": CLAIMED_TREE_SHA,
+        "served_tree": None,
         "before": None,
         "after": None,
+        "controls": [],
     }
 
     try:
         loan_id = None
+        if mode == "adapter":
+            if not after_app or not after_app.is_file():
+                raise FileNotFoundError(
+                    "LOAN_APP_AFTER must point to skeleton/app.py for adapter mode"
+                )
+            # Create on candidate, demand return, restart, compare SQLite.
+            adapter = probe(
+                "adapter",
+                after_app,
+                wipe_db=True,
+                expect_return=True,
+                create=True,
+            )
+            report["adapter"] = adapter
+            report["served_tree"] = adapter.get("served_tree")
+            report["tree_sha"] = (adapter.get("served_tree") or {}).get("hash", "")
+            if adapter.get("ok"):
+                report["restart"] = verify_persistence(after_app, adapter.get("loan_id"))
+                report["ok"] = report["restart"]["ok"]
+            else:
+                report["ok"] = False
+            report["controls"] = controls_from_report(report)
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+            return 0 if report["ok"] else 1
+
         if mode in ("before", "full"):
             before = probe(
                 "before_skeleton",
@@ -255,6 +399,7 @@ def main() -> int:
             loan_id = before.get("loan_id")
             if mode == "before":
                 report["ok"] = before.get("ok", False)
+                report["controls"] = controls_from_report(report)
                 print(json.dumps(report, ensure_ascii=False, indent=2))
                 return 0 if report["ok"] else 1
 
@@ -273,16 +418,22 @@ def main() -> int:
                 create=False,
             )
             report["after"] = after
-            report["tree_sha"] = TREE_SHA or after.get("tree_sha", "")
+            report["served_tree"] = after.get("served_tree")
+            report["tree_sha"] = (after.get("served_tree") or {}).get("hash", "")
             if after["ok"]:
                 report["restart"] = verify_persistence(after_app, after["loan_id"])
-                report["ok"] = report["restart"]["ok"] and (mode == "after" or report["before"]["ok"])
+                report["ok"] = report["restart"]["ok"] and (
+                    mode == "after" or report["before"]["ok"]
+                )
+            else:
+                report["ok"] = False
     except Exception as exc:
         report["error"] = str(exc)
         report["ok"] = False
     finally:
         stop_server()
 
+    report["controls"] = controls_from_report(report)
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0 if report.get("ok") else 1
 

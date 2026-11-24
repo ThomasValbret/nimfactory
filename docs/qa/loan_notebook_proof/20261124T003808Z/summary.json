@@ -1,0 +1,27 @@
+{
+  "stamp": "20261124T003808Z",
+  "branch": "feature/studio-proof",
+  "git_sha": "05ea3b77d69e9c254f1268d6fdac9879dc36b3a3",
+  "pr10": "05ea3b7",
+  "binary_sha256_16": "8f4e87d0bf0ed9bd",
+  "cli_verdict": "done",
+  "delivered_hash": "1EDE3D2530FC7058",
+  "verify_message": "loan return persisted after restart",
+  "change": {
+    "before": "BCF817E3",
+    "after": "FD0A7FE5",
+    "route": "inject"
+  },
+  "oracle_ok": true,
+  "served_tree_hash": "1EDE3D2530FC7058",
+  "claimed_tree_sha": "CLAIMED-NOT-IDENTITY",
+  "sqlite_after_restart": {
+    "id": 1,
+    "note": "proof-loan-20261124",
+    "returned_on": "2026-11-24"
+  },
+  "studio_preview_match": true,
+  "studio_served_hash": "1EDE3D2530FC7058",
+  "studio_after_failure": [],
+  "cost_usd": 0.0
+}

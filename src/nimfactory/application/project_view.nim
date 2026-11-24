@@ -44,46 +44,92 @@ proc projectStepView(step: JsonNode): JsonNode =
   if detail{"verify"} != nil:
     result["verify"] = allowedFields(detail["verify"],
       ["ok", "kind", "message", "compile_exit", "list_out", "csv_out",
-       "list_ok", "csv_ok", "quote_ok", "criteria", "controls", "details"])
-  ## Controls actually executed (for blocked / verified steps).
+       "list_ok", "csv_ok", "quote_ok", "criteria", "controls", "details",
+       "served_tree"])
+  ## Prefer project-supplied controls; fall back to legacy CSV observations.
   var controls = newJArray()
   var outputIncorrect = false
   if detail{"verify"} != nil:
     let v = detail["verify"]
-    if v{"compile_exit"} != nil:
-      controls.add(%*{"name": "compile", "exit": v{"compile_exit"}.getInt,
-                      "ok": v{"compile_exit"}.getInt == 0})
-    if v{"list_out"}.getStr.len > 0:
-      let listOk = v{"list_ok"}.getBool(v{"ok"}.getBool)
-      controls.add(%*{
-        "name": "list",
-        "ok": listOk,
-        "message": if listOk: "" else: "sortie non vide mais incorrecte"
-      })
-      if not listOk: outputIncorrect = true
-    if v{"csv_out"}.getStr.len > 0:
-      let csvOk = v{"csv_ok"}.getBool(false)
-      let quoteOk = v{"quote_ok"}.getBool(true)
-      let csvPass = csvOk and quoteOk
-      controls.add(%*{
-        "name": "export-csv",
-        "ok": csvPass,
-        "message":
-          if csvPass: ""
-          elif v{"csv_out"}.getStr.len > 0: "sortie non vide mais incorrecte"
-          else: "sortie vide"
-      })
-      if not csvPass: outputIncorrect = true
-    if v{"criteria"} != nil:
-      for c in v{"criteria"}:
-        controls.add(c)
+    let projectControls =
+      if v{"controls"}.kind == JArray: v["controls"]
+      elif v{"details","controls"}.kind == JArray: v{"details","controls"}
+      else: newJArray()
+    if projectControls.len > 0:
+      for c in projectControls:
+        let status = c{"status"}.getStr
+        let ok =
+          if status.len > 0: status == "passed"
+          else: c{"ok"}.getBool(false)
+        var item = %*{
+          "name": c{"name"}.getStr,
+          "ok": ok,
+          "status": if status.len > 0: status
+                    else: (if ok: "passed" else: "failed"),
+          "message": c{"message"}.getStr,
+          "observation": if c{"observation"} != nil: c["observation"] else: newJNull()
+        }
+        if item{"message"}.getStr.len == 0 and c{"observation"}.kind == JString:
+          item["message"] = c["observation"]
+        controls.add(item)
+        if item{"status"}.getStr == "failed":
+          outputIncorrect = true
+        elif item{"status"}.getStr == "not_run":
+          discard  ## identifiable in UI; not a proof
+    else:
+      if v{"compile_exit"} != nil:
+        controls.add(%*{"name": "compile", "exit": v{"compile_exit"}.getInt,
+                        "ok": v{"compile_exit"}.getInt == 0,
+                        "status": if v{"compile_exit"}.getInt == 0: "passed" else: "failed"})
+      if v{"list_out"}.getStr.len > 0:
+        let listOk = v{"list_ok"}.getBool(v{"ok"}.getBool)
+        controls.add(%*{
+          "name": "list",
+          "ok": listOk,
+          "status": if listOk: "passed" else: "failed",
+          "message": if listOk: "" else: "sortie non vide mais incorrecte"
+        })
+        if not listOk: outputIncorrect = true
+      if v{"csv_out"}.getStr.len > 0:
+        let csvOk = v{"csv_ok"}.getBool(false)
+        let quoteOk = v{"quote_ok"}.getBool(true)
+        let csvPass = csvOk and quoteOk
+        controls.add(%*{
+          "name": "export-csv",
+          "ok": csvPass,
+          "status": if csvPass: "passed" else: "failed",
+          "message":
+            if csvPass: ""
+            elif v{"csv_out"}.getStr.len > 0: "sortie non vide mais incorrecte"
+            else: "sortie vide"
+        })
+        if not csvPass: outputIncorrect = true
+    if v{"served_tree"} != nil:
+      result["served_tree"] = v["served_tree"]
+    elif v{"details","served_tree"} != nil:
+      result["served_tree"] = v{"details","served_tree"}
   if detail{"apply","ok"} != nil:
     controls.add(%*{"name": "apply", "ok": detail{"apply","ok"}.getBool,
-                    "message": detail{"apply","message"}.getStr})
+                    "status": if detail{"apply","ok"}.getBool: "passed" else: "failed",
+                    "message": detail{"apply","message"}.getStr,
+                    "observation": %*{
+                      "target_file": detail{"apply","target_file"}.getStr,
+                      "before_hash": detail{"apply","before_hash"}.getStr,
+                      "after_hash": detail{"apply","after_hash"}.getStr,
+                      "route": detail{"provider_attempt","route"}.getStr
+                    }})
   if controls.len > 0:
     result["controls_executed"] = controls
   if outputIncorrect:
     result["output_incorrect"] = %true
+  ## Diff origin + previewed tree for the three user questions.
+  result["change_origin"] = %*{
+    "route": detail{"provider_attempt","route"}.getStr,
+    "target_file": detail{"apply","target_file"}.getStr,
+    "before_hash": detail{"apply","before_hash"}.getStr,
+    "after_hash": detail{"apply","after_hash"}.getStr,
+    "decision": detail{"decision"}.getStr
+  }
   let proof = detail{"accepted_tree_hash"}.getStr.len > 0 and
               step{"status"}.getStr == "done"
   result["has_proof"] = %proof
@@ -186,6 +232,15 @@ proc workflowStatus(doc: JsonNode; steps: JsonNode): JsonNode =
     elif doc{"recovery_exhausted"}.getBool: doc{"recovery_exhausted_reason"}.getStr
     elif doc{"blocked_reason"}.getStr.len > 0: doc{"blocked_reason"}.getStr
     else: doc{"last_verdict"}.getStr
+  ## Conduct after failure: which command the pilot can take next.
+  var afterFailure = newJArray()
+  if doc{"last_verdict"}.getStr in
+     ["verify_failed", "blocked", "recovery_exhausted", "revise_plan_needed"] or
+     doc{"revise_plan_pending"}.getBool or doc{"recovery_exhausted"}.getBool:
+    if doc{"revise_plan_pending"}.getBool or doc{"recovery_exhausted"}.getBool:
+      afterFailure.add(%"revise_plan")
+    afterFailure.add(%"resume")
+    afterFailure.add(%"pause_after_step")
   result = %*{
     "objective": doc{"objective"}.getStr,
     "active_step": if active.kind == JNull: newJNull() else: %*{
@@ -201,12 +256,14 @@ proc workflowStatus(doc: JsonNode; steps: JsonNode): JsonNode =
     "next_decision": decision,
     "blocked_reason": doc{"blocked_reason"}.getStr,
     "engine_proposal": proposal,
+    "after_failure": afterFailure,
     "engine_verdict": %*{
       "last_verdict": doc{"last_verdict"}.getStr,
       "next_action": next,
       "proposal": proposal,
       "output_incorrect": outputIncorrect,
-      "incorrect_detail": incorrectDetail
+      "incorrect_detail": incorrectDetail,
+      "after_failure": afterFailure
     }
   }
 

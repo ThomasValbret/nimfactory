@@ -1,0 +1,156 @@
+{
+  "ok": true,
+  "role": "oracle",
+  "loan_note": "proof-loan-20261124",
+  "db": "/tmp/loan_proof_demo2/loans.sqlite",
+  "tree_sha": "1EDE3D2530FC7058",
+  "claimed_tree_sha": "CLAIMED-NOT-IDENTITY",
+  "served_tree": {
+    "root": "/tmp/loan_proof_demo2/artifacts/trees/mark_returned",
+    "hash": "1EDE3D2530FC7058",
+    "file_count": 7,
+    "files": [
+      ".gitignore",
+      "AGENTS.md",
+      "RECIPE.md",
+      "recipe.json",
+      "skeleton/app.py",
+      "skeleton/requirements.txt",
+      "skeleton/schema.sql"
+    ],
+    "claimed_tree_sha": "CLAIMED-NOT-IDENTITY"
+  },
+  "before": null,
+  "after": {
+    "phase": "after_accepted_tree",
+    "app": "/tmp/loan_proof_demo2/artifacts/trees/mark_returned/skeleton/app.py",
+    "tree_sha": "1EDE3D2530FC7058",
+    "served_tree": {
+      "root": "/tmp/loan_proof_demo2/artifacts/trees/mark_returned",
+      "hash": "1EDE3D2530FC7058",
+      "file_count": 7,
+      "files": [
+        ".gitignore",
+        "AGENTS.md",
+        "RECIPE.md",
+        "recipe.json",
+        "skeleton/app.py",
+        "skeleton/requirements.txt",
+        "skeleton/schema.sql"
+      ],
+      "claimed_tree_sha": "CLAIMED-NOT-IDENTITY"
+    },
+    "expect_return": true,
+    "checks": [
+      {
+        "name": "server_starts",
+        "ok": true
+      },
+      {
+        "name": "find_loan_without_recreate",
+        "ok": true,
+        "found": {
+          "id": 1,
+          "borrower": "Ada Lovelace",
+          "amount_cents": 4200,
+          "lent_on": "2026-11-23",
+          "due_on": null,
+          "returned_on": null,
+          "note": "proof-loan-20261124"
+        },
+        "expected_note": "proof-loan-20261124",
+        "expected_id": null
+      },
+      {
+        "name": "loan_initially_open",
+        "ok": true
+      },
+      {
+        "name": "mark_returned_control",
+        "ok": true,
+        "return_succeeded": true,
+        "expected_success": true,
+        "detail": {
+          "ok": true,
+          "id": 1
+        },
+        "loan_id": 1
+      }
+    ],
+    "loan_id": 1,
+    "ok": true
+  },
+  "controls": [
+    {
+      "name": "mark_returned_effect",
+      "status": "passed",
+      "observation": {
+        "name": "mark_returned_control",
+        "ok": true,
+        "return_succeeded": true,
+        "expected_success": true,
+        "detail": {
+          "ok": true,
+          "id": 1
+        },
+        "loan_id": 1
+      }
+    },
+    {
+      "name": "persistence_after_restart",
+      "status": "passed",
+      "observation": {
+        "checks": [
+          {
+            "name": "http_same_loan_returned_after_restart",
+            "ok": true,
+            "returned_on": "2026-11-24"
+          },
+          {
+            "name": "sqlite_same_loan_returned",
+            "ok": true,
+            "returned_on": "2026-11-24"
+          }
+        ],
+        "loan_id": 1
+      }
+    },
+    {
+      "name": "served_tree_identity",
+      "status": "passed",
+      "observation": {
+        "root": "/tmp/loan_proof_demo2/artifacts/trees/mark_returned",
+        "hash": "1EDE3D2530FC7058",
+        "file_count": 7,
+        "files": [
+          ".gitignore",
+          "AGENTS.md",
+          "RECIPE.md",
+          "recipe.json",
+          "skeleton/app.py",
+          "skeleton/requirements.txt",
+          "skeleton/schema.sql"
+        ],
+        "claimed_tree_sha": "CLAIMED-NOT-IDENTITY",
+        "claimed_matches_recomputed": false
+      }
+    }
+  ],
+  "restart": {
+    "phase": "after_restart",
+    "loan_id": 1,
+    "checks": [
+      {
+        "name": "http_same_loan_returned_after_restart",
+        "ok": true,
+        "returned_on": "2026-11-24"
+      },
+      {
+        "name": "sqlite_same_loan_returned",
+        "ok": true,
+        "returned_on": "2026-11-24"
+      }
+    ],
+    "ok": true
+  }
+}

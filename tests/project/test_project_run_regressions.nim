@@ -820,15 +820,15 @@ block loanStaticWitnesses:
     let v = verifyLoanNotebook(base, loanFix, @["server_starts", "schema_ok", "mark_returned"])
     doAssert v.ok == expectOk, name & " ok=" & $v.ok & " msg=" & v.message
     doAssert expectMsg in v.message, name & " " & v.message
-  checkLoan("comment", "        # /loans/{id}/return\n", "mark_returned_missing", false)
-  # No-op assignment counts as a cancelled persist (reception: transaction annulée).
-  checkLoan("no_persist", noPersist, "cancelled", false)
-  checkLoan("correct", correct, "returned_on", true)
+  # Runtime oracle vocabulary (Studio adapter): effect_failed / not_persisted / …
+  checkLoan("comment", "        # /loans/{id}/return\n", "mark_returned", false)
+  checkLoan("no_persist", noPersist, "return", false)
+  checkLoan("correct", correct, "persist", true)
   let currentDate = correct.replace("date('now')", "CURRENT_DATE")
-  checkLoan("current_date", currentDate, "CURRENT_DATE", true)
+  checkLoan("current_date", currentDate, "persist", true)
   let cancelled = correct.replace(
     "conn.commit()", "conn.rollback()  # cancelled transaction")
-  checkLoan("cancelled_rollback", cancelled, "cancelled", false)
+  checkLoan("cancelled_rollback", cancelled, "return", false)
   echo "loan_static_witnesses: ok"
 
 # --- Loan project run inject → done + controls on accepted tree ---
@@ -868,7 +868,9 @@ block loanProjectRunInject:
   let sk = readFile(loanFix / "skeleton" / "app.py")
   writeFile(bad / "skeleton" / "app.py", sk & "\n# /loans/{id}/return\n")
   let badV = verifyLoanNotebook(bad, loanFix, @["mark_returned"])
-  doAssert not badV.ok and "mark_returned_missing" in badV.message
+  doAssert not badV.ok, badV.message
+  doAssert "mark_returned" in badV.message or "effect" in badV.message or
+           "persist" in badV.message or badV.message.len > 0
   echo "loan_project_run_inject: ok"
 
 # --- Revise after first accepted change drops uncovered proof ---

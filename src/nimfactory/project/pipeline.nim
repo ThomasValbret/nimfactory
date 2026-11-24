@@ -7,6 +7,7 @@ import ./types
 import ./store
 import ./plan_context
 import ./verify
+import ./tree_id
 
 type
   ProjectRoute* = enum
@@ -459,8 +460,20 @@ proc collectControls(doc: ProjectDoc): tuple[requested, executed: JsonNode; obs:
         node["tree_hash"] = %hash
         node["step_id"] = %step.id
         if attempt != nil: node["attempt"] = attempt
-        let fps = n{"file_fingerprints"}
+        if not node.hasKey("observations"):
+          let obs = n{"observation"}
+          if obs != nil and obs.kind == JString:
+            node["observations"] = obs
+          elif obs != nil:
+            node["observations"] = %($obs)
+        if node{"status"}.getStr in ["not_run", "skipped"]:
+          node["status"] = %"unexecuted"
+          node["ok"] = %false
+        elif not node.hasKey("ok"):
+          node["ok"] = %(node{"status"}.getStr == "passed")
+        let fps = node{"file_fingerprints"}
         if step.status == ssDone and tree.len > 0 and
+           fps != nil and fps.kind == JObject and fps.len > 0 and
            not fingerprintStillMatches(tree, fps):
           node["ok"] = %false
           node["status"] = %"stale"
@@ -700,8 +713,8 @@ proc incompletePlanReason*(doc: ProjectDoc): string =
     let st = n{"status"}.getStr
     let name = n{"name"}.getStr
     let obs = n{"observations"}.getStr
-    if st in ["failed", "failed_legacy", "absent", "unexecuted", "stale"] or
-       not n{"ok"}.getBool:
+    if st in ["failed", "failed_legacy", "absent", "unexecuted", "not_run",
+              "skipped", "stale"] or not n{"ok"}.getBool:
       return "control " & name & " " & (if st.len > 0: st else: "failed") &
              (if obs.len > 0: ": " & obs else: "")
   for step in doc.steps:
@@ -719,30 +732,6 @@ proc sourceRootForStep(doc: ProjectDoc): string =
   if doc.acceptedTreeRef.len > 0 and dirExists(doc.acceptedTreeRef):
     return doc.acceptedTreeRef
   doc.cwd
-
-proc simpleContentHash(s: string): string =
-  ## Stable short fingerprint (not cryptographic).
-  var h: uint64 = 14695981039346656037u64
-  for c in s:
-    h = h xor uint64(ord(c))
-    h = h * 1099511628211u64
-  toHex(h, 16)
-
-proc treeFingerprint(root: string): string =
-  var paths: seq[string] = @[]
-  for path in walkDirRec(root):
-    if fileExists(path) and ("/nimcache/" notin path.replace('\\', '/')) and
-       ("/build/" notin path.replace('\\', '/')):
-      paths.add(path)
-  paths.sort()
-  var acc = ""
-  for p in paths:
-    let rel = relativePath(p, root).replace('\\', '/')
-    acc.add(rel)
-    acc.add('\n')
-    acc.add(readFile(p))
-    acc.add('\n')
-  simpleContentHash(acc)
 
 proc copyTree(src, dest: string) =
   if dirExists(dest):
