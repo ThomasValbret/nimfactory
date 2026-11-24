@@ -6,7 +6,7 @@
 ## newText string is a valid deletion. Ambiguous anchors refuse without choosing
 ## an occurrence for the model.
 
-import std/[os, json, strutils, times, algorithm]
+import std/[os, json, strutils, tempfiles, algorithm]
 
 type
   TextEdit* = object
@@ -432,14 +432,17 @@ proc dirIsOccupied(path: string): bool =
     return true
   false
 
-proc allocateWorktree*(requested: string): tuple[ok: bool; path: string; message: string] =
-  ## If `requested` is empty, create a fresh mission-owned directory.
-  ## If provided, refuse when the path already exists or is occupied.
-  if requested.len == 0:
-    let path = getTempDir() / ("nf_mission_" & $getCurrentProcessId() & "_" &
-               $(epochTime().int))
-    createDir(path)
-    return (true, path, "allocated fresh worktree")
+proc allocateWorktree*(requested: string; freshChild = false
+                       ): tuple[ok: bool; path: string; message: string] =
+  ## Runs own a fresh directory per attempt. Direct callers can request an exact path.
+  if freshChild or requested.len == 0:
+    try:
+      if requested.len > 0:
+        createDir(requested)
+      let path = createTempDir("nf_mission_", "", requested)
+      return (true, path, "allocated fresh worktree")
+    except OSError as e:
+      return (false, requested, "cannot allocate fresh worktree: " & e.msg)
   if fileExists(requested):
     return (false, requested, "worktree path is an existing file; refuse to overwrite: " & requested)
   if dirExists(requested):
@@ -534,7 +537,8 @@ proc applyEditsToContent*(
             "identical", 0, 0, "", @[])
   (true, updated, "applied edits", details, edits.len, "", 0, 0, "", @[])
 
-proc applyDecision*(repoRoot, worktreeRoot: string; dec: FixDecision): ApplyResult =
+proc applyDecision*(repoRoot, worktreeRoot: string; dec: FixDecision;
+                    freshChild = false): ApplyResult =
   result.targetFile = dec.targetFile
   result.decision = dec.decision
   result.mode = dec.mode
@@ -548,7 +552,7 @@ proc applyDecision*(repoRoot, worktreeRoot: string; dec: FixDecision): ApplyResu
     result.refuseCode = "unsafe_target"
     result.message = "refusing unsafe target_file: " & dec.targetFile
     return
-  let alloc = allocateWorktree(worktreeRoot)
+  let alloc = allocateWorktree(worktreeRoot, freshChild)
   result.worktree = alloc.path
   if not alloc.ok:
     result.ok = false

@@ -35,6 +35,7 @@ type
     replayFirstPath*: string    ## historical first raw; no new ask/revise/step bill
     historicalProvenance*: string ## note / path preserved in report
     worktree*: string
+    worktreeIsParent: bool      ## project run owns a separate directory for each write
     artifactDir*: string        ## optional: write plan/mandate/diff here
     commandId*: string          ## idempotency key for write commands
     expectedPlanVersion*: int   ## optimistic concurrency (with expectPlanVersion)
@@ -1630,7 +1631,7 @@ proc projectStep*(req: ProjectRequest): ProjectReport =
         return
 
     decision = parseFixDecision(rawText)
-    result.apply = applyDecision(sourceRoot, req.worktree, decision)
+    result.apply = applyDecision(sourceRoot, req.worktree, decision, req.worktreeIsParent)
     if not result.apply.ok:
       # Diagnosis should have caught anchors; residual refuse after write attempt.
       refuseNow(result.apply.refuseCode, "apply_failed",
@@ -1733,10 +1734,11 @@ proc projectStep*(req: ProjectRequest): ProjectReport =
           return
         let repairDec = parseFixDecision(result.repairProvider.rawText)
         let repairWt =
-          if req.worktree.len > 0: req.worktree & "_repair"
-          else: ""
+          if req.worktreeIsParent or req.worktree.len == 0: req.worktree
+          else: req.worktree & "_repair"
         # Repair edits the rejected candidate tree (not pristine source).
-        let repaired = applyDecision(result.apply.worktree, repairWt, repairDec)
+        let repaired = applyDecision(result.apply.worktree, repairWt, repairDec,
+                                     req.worktreeIsParent)
         if repaired.ok:
           usedCompileRepair = true
           result.apply = repaired
@@ -2331,10 +2333,7 @@ proc projectRun*(req: ProjectRequest): ProjectReport =
       stepReq.injectPath = helloInj
     elif reqMut.injectPath.len > 0:
       stepReq.injectPath = reqMut.injectPath
-    if reqMut.worktree.len > 0:
-      # Unique dir per attempt — reuse after revise/repair must not hit occupied.
-      stepReq.worktree = reqMut.worktree /
-        ("step_" & actionable.step.id & "_a" & $stepIdx & "_" & $autoRevises)
+    stepReq.worktreeIsParent = true
     let stepped = projectStep(stepReq)
     recordIntervention("step:" & actionable.step.id, stepped)
     result.apply = stepped.apply

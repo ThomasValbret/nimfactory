@@ -1001,6 +1001,45 @@ block staleProofAfterMutation:
   doAssert again.report{"distinguished_from_current_files"}.getBool
   echo "stale_proof_and_replay: ok"
 
+block retryWithSameWorktreeRoot:
+  let dir = tmpPath("retry_worktree_root")
+  let injectDir = dir / "inject"
+  let cwd = dir / "input"
+  createDir(cwd)
+  copyDir(root / "fixtures" / "hello_empty" / "inject", injectDir)
+  let stepPath = injectDir / "step_hello.json"
+  let goodStep = readFile(stepPath)
+  let rejectedProgram = "raise RuntimeError('first attempt')\n"
+  var change = parseJson(goodStep)
+  change["patched_content"] = %rejectedProgram
+  writeFile(stepPath, $change)
+
+  var req = defaultProjectRequest()
+  req.storePath = dir / "project.sqlite"
+  req.projectId = "retry_worktree_root"
+  req.cwd = cwd
+  req.objective = "Créer hello.py qui affiche bonjour"
+  req.route = "inject"
+  req.injectDir = injectDir
+  req.artifactDir = dir / "artifacts"
+  req.worktree = dir / "worktrees"
+  let first = projectRun(req)
+  doAssert first.verdict == "verify_failed", first.verdict
+  let prior = first.apply.worktree
+  doAssert readFile(prior / "hello.py") == rejectedProgram
+
+  writeFile(stepPath, goodStep)
+  let retry = projectRun(req)
+  doAssert retry.verdict == "done", retry.message
+  doAssert parentDir(prior) == req.worktree
+  doAssert parentDir(retry.apply.worktree) == req.worktree
+  doAssert prior != retry.apply.worktree
+  doAssert readFile(prior / "hello.py") == rejectedProgram
+  let expectedProgram = parseJson(goodStep){"patched_content"}.getStr
+  doAssert readFile(retry.doc.acceptedTreeRef / "hello.py") == expectedProgram
+  doAssert not allocateWorktree(prior).ok
+  echo "retry_with_same_worktree_root: ok"
+
 # --- Stale delivered tree: new command_id must not inherit done ---
 block staleDoneRequiresRecheck:
   let linked = root / "fixtures" / "linked_two_files"
