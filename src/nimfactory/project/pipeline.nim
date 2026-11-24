@@ -309,6 +309,10 @@ proc coerceExecutableCriteria*(raw: seq[string]; st: ProjectStep;
       addUnique("stdout_exact:" & rawStrip[rawStrip.find(':')+1 .. ^1].strip())
     elif cl.startsWith("stdout_contains:"):
       addUnique("stdout_contains:" & rawStrip[rawStrip.find(':')+1 .. ^1].strip())
+    if cl.startsWith("cli_case:"):
+      addUnique(rawStrip)
+    elif cl == "cli_cases":
+      addUnique("cli_cases")
     if cl.startsWith("file_exists:"):
       addUnique("file_exists:" & rawStrip[rawStrip.find(':')+1 .. ^1].strip())
     elif cl.startsWith("file_created:"):
@@ -320,14 +324,25 @@ proc coerceExecutableCriteria*(raw: seq[string]; st: ProjectStep;
       addUnique("file_exists")
     if "program_runs" in cl or "exécut" in cl or "execut" in cl:
       addUnique("program_runs")
+    # File-argument CLI tools: keep program_runs + recipe/plan cli_cases.
+    if ("argument" in cl or "argv" in cl) and
+       ("fichier" in cl or "file" in cl or "passé" in cl or "passe" in cl):
+      addUnique("program_runs")
+      addUnique("cli_cases")
     # "affiche exactement bonjour" → exact stdout + program_runs (exit).
+    # Ignore filler after "exactement" (le/la/nombre/…) — that is not a literal.
     if ("exactement" in cl or "exactly" in cl) and
        ("affiche" in cl or "stdout" in cl or "sortie" in cl or "print" in cl):
       var exp = expectedAfterMarker(cl, "exactement ")
       if exp.len == 0: exp = expectedAfterMarker(cl, "exactly ")
-      if exp.len > 0:
+      const fillers = ["le", "la", "les", "the", "un", "une", "du", "de", "des",
+                       "nombre", "number", "valeur", "resultat", "résultat"]
+      if exp.len > 0 and exp.toLowerAscii notin fillers:
         addUnique("program_runs")
         addUnique("stdout_exact:" & exp)
+      elif ("argument" in cl or "fichier" in cl) and recipe.verify != "csv_journey":
+        addUnique("program_runs")
+        addUnique("cli_cases")
     elif "affiche" in cl or "bonjour" in cl or "hello" in cl:
       addUnique("program_runs")
       if "bonjour" in cl and "exact" notin cl:
@@ -377,6 +392,10 @@ proc coerceExecutableCriteria*(raw: seq[string]; st: ProjectStep;
        stepObjectiveImpliesExport(st, index, total, objective,
                                   finalCriteria.len > 0, cwd):
     addUnique("export_command")
+  # Expand recipe.cli_cases into concrete cli_case:INPUT::EXPECTED tokens.
+  if "cli_cases" in kept:
+    for tok in recipeCliCaseTokens(recipe):
+      addUnique(tok)
   # Bind bare file_exists / file_created to the path named by the step/plan.
   # Never invent a file gate when the step did not request one.
   if not csvBound and recipe.verify != "loan_notebook":

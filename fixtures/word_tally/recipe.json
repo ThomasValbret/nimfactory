@@ -1,0 +1,8 @@
+{
+  "id": "word_tally",
+  "verify": "generic_program",
+  "cli_cases": [
+    {"input": "samples/one.txt", "expected": "2 4 21"},
+    {"input": "samples/two.txt", "expected": "1 2 9"}
+  ]
+}

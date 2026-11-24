@@ -1,0 +1,8 @@
+{
+  "id": "longueur_py",
+  "verify": "generic_program",
+  "cli_cases": [
+    {"input": "samples/a.txt", "expected": "5"},
+    {"input": "samples/b.txt", "expected": "11"}
+  ]
+}

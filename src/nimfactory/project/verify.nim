@@ -618,6 +618,34 @@ proc stdoutRuleFromCriterion*(c: string): tuple[kind, expected, name: string] =
     return ("contains", "", "run_stdout")
   ("none", "", c)
 
+proc cliCaseFromCriterion*(c: string): tuple[ok: bool; input, expected, name: string] =
+  ## `cli_case:INPUT::EXPECTED` — invoke the entry with INPUT as argv[1].
+  let cl = c.strip()
+  let low = cl.toLowerAscii
+  if not low.startsWith("cli_case:"):
+    return (false, "", "", c)
+  let body = cl[cl.find(':')+1 .. ^1]
+  let sep = body.find("::")
+  if sep < 0:
+    return (false, "", "", c)
+  let input = body[0 ..< sep].strip().replace('\\', '/')
+  let expected = body[sep+2 .. ^1]
+  if input.len == 0:
+    return (false, "", "", c)
+  (true, input, expected, cl)
+
+proc recipeCliCaseTokens*(recipe: ProjectRecipe): seq[string] =
+  ## Expand recipe.cli_cases into reusable cli_case:INPUT::EXPECTED tokens.
+  result = @[]
+  if recipe.raw.isNil: return
+  let arr = recipe.raw{"cli_cases"}
+  if arr.isNil or arr.kind != JArray: return
+  for n in arr:
+    let input = n{"input"}.getStr.strip().replace('\\', '/')
+    if input.len == 0: continue
+    let expected = n{"expected"}.getStr
+    result.add("cli_case:" & input & "::" & expected)
+
 proc fileTargetFromCriterion*(c: string): tuple[kind, path, name: string] =
   ## kind: exists | created | none — path is relative when bound to a plan target.
   let cl = c.strip()
@@ -708,10 +736,24 @@ proc verifyGenericProgram*(
         break
 
   var needStdout = false
+  var cliCases: seq[tuple[input, expected, name: string]] = @[]
   for c in criteria:
     if stdoutRuleFromCriterion(c).kind != "none" or c == "run_stdout":
       needStdout = true
-  let needRun = "program_runs" in criteria or needStdout
+    let cc = cliCaseFromCriterion(c)
+    if cc.ok:
+      cliCases.add((cc.input, cc.expected, cc.name))
+  if "cli_cases" in criteria:
+    let recipe = loadProjectRecipe(repoRoot)
+    for tok in recipeCliCaseTokens(recipe):
+      let cc = cliCaseFromCriterion(tok)
+      if cc.ok:
+        var dup = false
+        for x in cliCases:
+          if x.name == cc.name: dup = true
+        if not dup:
+          cliCases.add((cc.input, cc.expected, cc.name))
+  let needRun = "program_runs" in criteria or needStdout or cliCases.len > 0
   if criteria.len == 0:
     wantFile = true
 
@@ -776,53 +818,120 @@ proc verifyGenericProgram*(
   var exitCode = -1
   var observedOut = ""
   var ran = false
+  var cliAllOk = cliCases.len == 0
   if needRun:
     if entry.len == 0 or not fileExists(entryAbs):
-      if "program_runs" in criteria:
+      if "program_runs" in criteria or cliCases.len > 0:
         var n = controlNode("program_runs", false, "absent",
           "program_runs absent — no file to execute", fp, attempt)
         n["expected_path"] = %entryPrefer
         n["observed_path"] = %entry
         n["examined_tree"] = %worktree
         controls.add(n)
+      for cc in cliCases:
+        var n = controlNode(cc.name, false, "absent",
+          "cli_case absent — no program to invoke", fp, attempt)
+        n["input"] = %cc.input
+        n["arguments"] = %*[entryPrefer, cc.input]
+        n["expected"] = %cc.expected
+        n["observed"] = %""
+        n["examined_tree"] = %worktree
+        controls.add(n)
+      cliAllOk = false
     elif not entry.endsWith(".py"):
-      if "program_runs" in criteria:
+      if "program_runs" in criteria or cliCases.len > 0:
         var n = controlNode("program_runs", false, "failed",
           "unsupported entry language for generic run: " & entry, fp, attempt)
         n["expected_path"] = %entryPrefer
         n["observed_path"] = %entry
         n["examined_tree"] = %worktree
         controls.add(n)
+      cliAllOk = false
     else:
       let py = findExe("python3")
       if py.len == 0:
-        if "program_runs" in criteria:
+        if "program_runs" in criteria or cliCases.len > 0:
           controls.add(controlNode("program_runs", false, "failed",
             "python3 not on PATH", fp, attempt))
+        cliAllOk = false
       else:
-        let workDir =
-          if '/' in entry or '\\' in entry: parentDir(entryAbs) else: worktree
-        let script = extractFilename(entry)
-        let r = runCmd(workDir, py, @[script])
-        exitCode = r.exit
-        observedOut = r.outp.replace("\r\n", "\n")
-        ran = true
-        result.details["stdout"] = %observedOut
-        result.details["exit"] = %exitCode
-        if "program_runs" in criteria:
-          let ok = exitCode == 0
-          var n = controlNode(
-            "program_runs", ok, if ok: "passed" else: "failed",
-            "exit=" & $exitCode & " stdout=" & observedOut.strip(),
-            fp, attempt)
-          n["expected_path"] = %(if entryPrefer.len > 0: entryPrefer else: entry)
-          n["observed_path"] = %entry
-          n["examined_tree"] = %worktree
-          controls.add(n)
+        let workDir = worktree
+        let scriptRel = entry
+        if cliCases.len > 0:
+          ## Use the tool as a person would: python entry <input-file>.
+          cliAllOk = true
+          var caseNodes = newJArray()
+          for cc in cliCases:
+            noteFingerprint(cc.input)
+            let inputAbs = worktree / cc.input
+            var args = @[scriptRel, cc.input]
+            var got = ""
+            var ex = -1
+            var ok = false
+            var status = "failed"
+            var obs = ""
+            if not fileExists(inputAbs):
+              status = "absent"
+              obs = "cli input missing: " & cc.input
+              cliAllOk = false
+            else:
+              let r = runCmd(workDir, py, args)
+              ex = r.exit
+              got = r.outp.replace("\r\n", "\n").strip()
+              ok = ex == 0 and got == cc.expected.strip()
+              status = if ok: "passed" else: "failed"
+              obs = "input=" & cc.input & " argv=" & args.join(" ") &
+                    " expected=" & cc.expected.strip() &
+                    " observed=" & got & " exit=" & $ex
+              if not ok: cliAllOk = false
+            var n = controlNode(cc.name, ok, status, obs, fp, attempt)
+            n["input"] = %cc.input
+            n["arguments"] = %args
+            n["expected"] = %cc.expected.strip()
+            n["observed"] = %got
+            n["exit"] = %ex
+            n["examined_tree"] = %worktree
+            n["expected_path"] = %entry
+            n["observed_path"] = %entry
+            controls.add(n)
+            caseNodes.add(n)
+          result.details["cli_cases"] = caseNodes
+          ran = true
+          if "program_runs" in criteria:
+            var n = controlNode(
+              "program_runs", cliAllOk,
+              if cliAllOk: "passed" else: "failed",
+              "cli_cases exit/stdout aggregate ok=" & $cliAllOk,
+              fp, attempt)
+            n["expected_path"] = %entry
+            n["observed_path"] = %entry
+            n["examined_tree"] = %worktree
+            controls.add(n)
+        else:
+          let r = runCmd(workDir, py, @[scriptRel])
+          exitCode = r.exit
+          observedOut = r.outp.replace("\r\n", "\n")
+          ran = true
+          result.details["stdout"] = %observedOut
+          result.details["exit"] = %exitCode
+          if "program_runs" in criteria:
+            let ok = exitCode == 0
+            var n = controlNode(
+              "program_runs", ok, if ok: "passed" else: "failed",
+              "exit=" & $exitCode & " stdout=" & observedOut.strip(),
+              fp, attempt)
+            n["expected_path"] = %(if entryPrefer.len > 0: entryPrefer else: entry)
+            n["observed_path"] = %entry
+            n["examined_tree"] = %worktree
+            n["arguments"] = %*[scriptRel]
+            controls.add(n)
 
   for c in criteria:
     let rule = stdoutRuleFromCriterion(c)
     if rule.kind == "none": continue
+    ## stdout_exact without cli_case is a no-arg invocation check.
+    if cliCases.len > 0:
+      continue
     var ok = false
     var status = "failed"
     var obs = ""
@@ -859,6 +968,7 @@ proc verifyGenericProgram*(
   for c in criteria:
     var found = false
     let ft = fileTargetFromCriterion(c)
+    let cc = cliCaseFromCriterion(c)
     for n in controls:
       let nm = n{"name"}.getStr
       if nm == c: found = true
@@ -867,6 +977,8 @@ proc verifyGenericProgram*(
          nm.startsWith("file_exists:") or nm.startsWith("file_created:")):
         found = true
       if stdoutRuleFromCriterion(c).name == nm: found = true
+      if cc.ok and nm == cc.name: found = true
+      if c == "cli_cases" and nm.startsWith("cli_case:"): found = true
     if not found:
       controls.add(controlNode(c, false, "unexecuted",
         "control " & c & " requested but not executed", newJObject(), attempt))
@@ -917,19 +1029,27 @@ proc verifyStepCriteria*(
   var genericTok =
     "file_exists" in criteria or "file_created" in criteria or
     "program_runs" in criteria or "stdout_bonjour" in criteria or
-    "run_stdout" in criteria
+    "run_stdout" in criteria or "cli_cases" in criteria
   var expectedPath = ""
+  var crit = criteria
   for c in criteria:
-    if c.startsWith("stdout_exact:") or c.startsWith("stdout_contains:"):
+    if c.startsWith("stdout_exact:") or c.startsWith("stdout_contains:") or
+       c.startsWith("cli_case:"):
       genericTok = true
     let ft = fileTargetFromCriterion(c)
     if ft.kind != "none":
       genericTok = true
       if ft.path.len > 0 and expectedPath.len == 0:
         expectedPath = ft.path
+  if "cli_cases" in crit or crit.anyIt(it.startsWith("cli_case:")):
+    genericTok = true
+  # Recipe-declared cases enrich the tip when the step asked for cli usage.
+  if "cli_cases" in crit or crit.anyIt("argument" in it.toLowerAscii):
+    for tok in recipeCliCaseTokens(recipe):
+      if tok notin crit: crit.add(tok)
   if recipe.verify in ["generic_program", "run_stdout"] or
      (recipe.verify == "" and genericTok):
-    result = verifyGenericProgram(worktree, repoRoot, criteria, expectedPath)
+    result = verifyGenericProgram(worktree, repoRoot, crit, expectedPath)
     return
   if recipe.verify == "" and not genericTok:
     # No recipe and no generic tokens: do not fall into CSV by accident.
@@ -1040,7 +1160,8 @@ proc proofCoversCriteria*(verifyNode: JsonNode; criteria: seq[string]): bool =
       if not hit: return false
     else:
       if c.startsWith("stdout_exact:") or c.startsWith("stdout_contains:") or
-         c.startsWith("file_exists:") or c.startsWith("file_created:"):
+         c.startsWith("file_exists:") or c.startsWith("file_created:") or
+         c.startsWith("cli_case:") or c == "cli_cases":
         if controls == nil: return false
         var hit = false
         for n in controls:
@@ -1049,7 +1170,9 @@ proc proofCoversCriteria*(verifyNode: JsonNode; criteria: seq[string]): bool =
              (c.startsWith("file_exists:") and
               (nm == c or nm == "file_exists" or nm.startsWith("file_exists:"))) or
              (c.startsWith("file_created:") and
-              (nm == c or nm == "file_created" or nm.startsWith("file_created:"))):
+              (nm == c or nm == "file_created" or nm.startsWith("file_created:"))) or
+             (c.startsWith("cli_case:") and nm == c) or
+             (c == "cli_cases" and nm.startsWith("cli_case:")):
             hit = true
             if not n{"ok"}.getBool: return false
         if not hit: return false

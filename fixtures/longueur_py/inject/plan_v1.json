@@ -1,0 +1,29 @@
+{
+  "summary": "Créer longueur.py : longueur du fichier passé en argument.",
+  "hypothesis": "Deux entrées distinctes discriminent une constante.",
+  "optional_question": "",
+  "final_criteria": [
+    "file_exists",
+    "program_runs",
+    "cli_case:samples/a.txt::5",
+    "cli_case:samples/b.txt::11"
+  ],
+  "steps": [
+    {
+      "id": "create_longueur",
+      "title": "Créer longueur.py qui affiche la longueur du fichier passé en argument",
+      "depends_on": [],
+      "criteria": [
+        "file_exists",
+        "program_runs",
+        "cli_case:samples/a.txt::5",
+        "cli_case:samples/b.txt::11"
+      ]
+    }
+  ],
+  "mandate_sketch": {
+    "goal": "longueur.py lit un fichier passé en argument et affiche sa longueur",
+    "constraints": ["Python", "stdout exact"],
+    "files_likely": ["longueur.py"]
+  }
+}

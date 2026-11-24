@@ -1190,4 +1190,107 @@ block noticeTargetBinding:
   doAssert expectedNotice and observedWrong, $failed.report{"controls_executed"}
   echo "notice_target_binding: ok"
 
+# --- CLI tool: longueur.py with two file inputs; constant fails 2nd ---
+block longueurCliTwoInputs:
+  let base = tmpPath("longueur_unit")
+  createDir(base)
+  createDir(base / "samples")
+  writeFile(base / "samples" / "a.txt", "hello")
+  writeFile(base / "samples" / "b.txt", "hello world")
+  writeFile(base / "longueur.py",
+    "import sys\nprint(len(open(sys.argv[1], encoding='utf-8').read()))\n")
+  let good = verifyGenericProgram(base, base,
+    @["file_exists:longueur.py", "program_runs",
+      "cli_case:samples/a.txt::5", "cli_case:samples/b.txt::11"])
+  doAssert good.ok, good.message
+  var sawA = false
+  var sawB = false
+  for c in good.details{"controls"}:
+    if c{"name"}.getStr.startsWith("cli_case:samples/a.txt"):
+      sawA = true
+      doAssert c{"ok"}.getBool
+      doAssert c{"input"}.getStr == "samples/a.txt"
+      doAssert c{"expected"}.getStr == "5"
+      doAssert c{"observed"}.getStr == "5"
+      doAssert c{"arguments"}.len >= 2
+      doAssert c{"examined_tree"}.getStr == base
+    if c{"name"}.getStr.startsWith("cli_case:samples/b.txt"):
+      sawB = true
+      doAssert c{"ok"}.getBool
+      doAssert c{"observed"}.getStr == "11"
+  doAssert sawA and sawB, $good.details{"controls"}
+  writeFile(base / "longueur.py", "print(5)\n")
+  let bad = verifyGenericProgram(base, base,
+    @["file_exists:longueur.py", "program_runs",
+      "cli_case:samples/a.txt::5", "cli_case:samples/b.txt::11"])
+  doAssert not bad.ok, bad.message
+  var firstOk = false
+  var secondFail = false
+  for c in bad.details{"controls"}:
+    if c{"name"}.getStr.startsWith("cli_case:samples/a.txt") and c{"ok"}.getBool:
+      firstOk = true
+    if c{"name"}.getStr.startsWith("cli_case:samples/b.txt") and not c{"ok"}.getBool:
+      secondFail = true
+      doAssert c{"expected"}.getStr == "11"
+      doAssert c{"observed"}.getStr == "5"
+  doAssert firstOk and secondFail, $bad.details{"controls"}
+  echo "longueur_cli_two_inputs: ok"
+
+# --- word_tally project run + verify_recheck replays same inputs ---
+block wordTallyRunAndRecheck:
+  let fix = root / "fixtures" / "word_tally"
+  let store = tmpPath("word_tally") & ".sqlite"
+  let art = tmpPath("word_tally_art")
+  createDir(art)
+  var req = defaultProjectRequest()
+  req.storePath = store
+  req.projectId = "word_tally"
+  req.cwd = fix
+  req.objective =
+    "Je veux un outil Python tally.py qui lit un fichier texte passé en argument " &
+    "et affiche sur une seule ligne le nombre de lignes, de mots et de caractères, " &
+    "séparés par des espaces."
+  req.route = "inject"
+  req.injectDir = fix / "inject"
+  req.artifactDir = art
+  req.worktree = tmpPath("word_tally_wt")
+  req.commandId = "cmd-word-tally-1"
+  let first = executeProjectCommand(RunCommand, req)
+  doAssert first.ok and first.verdict == "done", first.verdict & " " & first.message
+  var cases = 0
+  for c in first.report{"controls_executed"}:
+    if c{"name"}.getStr.startsWith("cli_case:"):
+      inc cases
+      doAssert c{"ok"}.getBool, $c
+      doAssert c{"input"}.getStr.len > 0
+      doAssert c{"arguments"}.len >= 2
+      doAssert c{"expected"}.getStr.len > 0
+      doAssert c{"observed"}.getStr == c{"expected"}.getStr
+      doAssert c{"examined_tree"}.getStr.len > 0
+  doAssert cases >= 2, $first.report{"controls_executed"}
+  let tree = first.doc.acceptedTreeRef
+  # Mutate to multi-line labels (known wrong shape from unknown trial)
+  writeFile(tree / "tally.py",
+    "import sys\np=sys.argv[1]\nL=W=C=0\nwith open(p,encoding='utf-8') as f:\n" &
+    "  for line in f:\n    L+=1; W+=len(line.split()); C+=len(line)\n" &
+    "print(f'Lines: {L}')\nprint(f'Words: {W}')\nprint(f'Characters: {C}')\n")
+  var again = req
+  again.commandId = "cmd-word-tally-2"
+  again.worktree = tmpPath("word_tally_wt2")
+  again.artifactDir = tmpPath("word_tally_art2")
+  createDir(again.artifactDir)
+  let second = executeProjectCommand(RunCommand, again)
+  doAssert not second.ok
+  doAssert second.verdict == "proof_stale", second.verdict
+  let vr = second.report{"verify_recheck"}
+  doAssert vr != nil and not vr{"ok"}.getBool
+  var replayed = 0
+  for c in vr{"details"}{"controls"}:
+    if c{"name"}.getStr.startsWith("cli_case:"):
+      inc replayed
+      doAssert c{"input"}.getStr in ["samples/one.txt", "samples/two.txt"]
+      doAssert not c{"ok"}.getBool or c{"observed"}.getStr != c{"expected"}.getStr
+  doAssert replayed >= 2, $vr
+  echo "word_tally_run_and_recheck: ok"
+
 echo "ALL project run regression tests passed"

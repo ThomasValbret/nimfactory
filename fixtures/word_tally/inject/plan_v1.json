@@ -1,0 +1,29 @@
+{
+  "summary": "tally.py : lignes mots caractères sur une seule ligne.",
+  "hypothesis": "Invocation avec fichier en argument ; format «L W C».",
+  "optional_question": "",
+  "final_criteria": [
+    "file_exists",
+    "program_runs",
+    "cli_case:samples/one.txt::2 4 21",
+    "cli_case:samples/two.txt::1 2 9"
+  ],
+  "steps": [
+    {
+      "id": "create_tally",
+      "title": "Créer tally.py qui lit un fichier passé en argument et affiche lignes mots caractères",
+      "depends_on": [],
+      "criteria": [
+        "file_exists",
+        "program_runs",
+        "cli_case:samples/one.txt::2 4 21",
+        "cli_case:samples/two.txt::1 2 9"
+      ]
+    }
+  ],
+  "mandate_sketch": {
+    "goal": "tally.py lit un fichier passé en argument et affiche sur une ligne le nombre de lignes, mots et caractères séparés par des espaces",
+    "constraints": ["Python", "une seule ligne"],
+    "files_likely": ["tally.py"]
+  }
+}

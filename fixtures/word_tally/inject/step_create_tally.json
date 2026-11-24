@@ -1,0 +1,5 @@
+{
+  "target_file": "tally.py",
+  "decision": "create_tally_single_line",
+  "patched_content": "import sys\np = sys.argv[1]\nlines = words = chars = 0\nwith open(p, encoding=\"utf-8\") as f:\n    for line in f:\n        lines += 1\n        words += len(line.split())\n        chars += len(line)\nprint(f\"{lines} {words} {chars}\")\n"
+}
