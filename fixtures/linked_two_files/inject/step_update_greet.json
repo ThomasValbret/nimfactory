@@ -1,0 +1,10 @@
+{
+  "target_file": "src/greet.py",
+  "decision": "rename_greeting",
+  "edits": [
+    {
+      "oldText": "def greeting(name: str) -> str:\n    return f\"hello {name}\"\n",
+      "newText": "def formal_greeting(name: str) -> str:\n    return f\"bonjour {name}\"\n"
+    }
+  ]
+}

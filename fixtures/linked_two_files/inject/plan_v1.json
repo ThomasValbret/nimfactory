@@ -1,0 +1,25 @@
+{
+  "summary": "Évolution liée: salut formalisé dans greet et main.",
+  "hypothesis": "Deux fichiers liés; une étape = un fichier.",
+  "optional_question": "",
+  "final_criteria": ["file_exists", "program_runs"],
+  "steps": [
+    {
+      "id": "update_greet",
+      "title": "Renommer greeting en formal_greeting dans greet.py",
+      "depends_on": [],
+      "criteria": ["file_exists"]
+    },
+    {
+      "id": "wire_main",
+      "title": "Câbler main.py sur formal_greeting",
+      "depends_on": ["update_greet"],
+      "criteria": ["file_exists", "program_runs"]
+    }
+  ],
+  "mandate_sketch": {
+    "goal": "formal_greeting utilisé par main",
+    "constraints": ["Python", "deux fichiers"],
+    "files_likely": ["src/greet.py", "src/main.py"]
+  }
+}

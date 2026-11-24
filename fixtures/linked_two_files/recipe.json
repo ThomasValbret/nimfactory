@@ -1,0 +1,6 @@
+{
+  "id": "linked_two_files",
+  "verify": "generic_program",
+  "criteria": ["file_exists", "program_runs"],
+  "export_criteria": ["file_exists", "program_runs"]
+}

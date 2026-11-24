@@ -319,66 +319,274 @@ proc stripPyComments*(src: string): string =
     acc.add('\n')
   acc
 
+proc fileContentFingerprint*(path: string): string =
+  ## Short stable fingerprint of a verified file (not cryptographic).
+  if not fileExists(path): return ""
+  var h: uint64 = 14695981039346656037u64
+  for c in readFile(path):
+    h = h xor uint64(ord(c))
+    h = h * 1099511628211u64
+  toHex(h, 16)
+
+proc controlNode*(
+    name: string; ok: bool; status, observations: string;
+    fingerprints: JsonNode; attempt: JsonNode = nil): JsonNode =
+  result = %*{
+    "name": name,
+    "ok": ok,
+    "status": status,           ## passed | failed | absent | unexecuted | stale
+    "observations": observations,
+    "file_fingerprints": fingerprints,
+    "attempt": if attempt.isNil: newJObject() else: attempt
+  }
+
+proc loanPersistAssign*(body: string): bool =
+  ## True when UPDATE assigns a real date expression (date('now') or CURRENT_DATE).
+  let low = body.toLowerAscii
+  "returned_on = date('now')" in low or
+    "returned_on = date(\"now\")" in low or
+    "returned_on=date('now')" in low or
+    "returned_on=date(\"now\")" in low or
+    "returned_on = current_date" in low or
+    "returned_on=current_date" in low or
+    "set returned_on = current_date" in low or
+    "returned_on = date('now')" in body or
+    "CURRENT_DATE" in body and "returned_on" in low
+
+proc loanTransactionCancelled*(body: string): bool =
+  ## UPDATE then rollback / no commit ⇒ cancelled transaction (must fail).
+  let low = body.toLowerAscii
+  let retAt = low.find("returned_on")
+  if retAt < 0: return false
+  let rb = low.find("rollback", retAt)
+  let cm = low.find("commit", retAt)
+  if rb >= 0 and (cm < 0 or rb < cm):
+    return true
+  # Explicit no-op assignment is a cancelled persist.
+  "returned_on = returned_on" in low
+
 proc verifyLoanNotebook*(
     worktree, repoRoot: string; criteria: seq[string]): ProjectVerifyResult =
-  ## Loan notebook: schema + app; mark_returned needs /return AND returned_on UPDATE.
-  ## Comments alone never satisfy the control (witness 1). A handler that does not
-  ## persist returned_on fails (witness 2). Correct UPDATE passes static gate
-  ## (witness 3); runtime oracle still checks restart.
+  ## Per-control observations with file fingerprints. CURRENT_DATE OK;
+  ## cancelled/rollback persist fails.
   result.kind = "loan_notebook"
   result.details = newJObject()
   result.details["criteria"] = %criteria
+  var controls = newJArray()
   let app = worktree / "skeleton" / "app.py"
   let schema = worktree / "skeleton" / "schema.sql"
   let schemaOk = fileExists(schema)
   let appOk = fileExists(app)
+  let schemaFp = %*{
+    "skeleton/schema.sql": fileContentFingerprint(schema)
+  }
+  let appFp = %*{
+    "skeleton/app.py": fileContentFingerprint(app)
+  }
   result.details["schema_ok"] = %schemaOk
   result.details["app_ok"] = %appOk
-  if not schemaOk or not appOk:
-    result.ok = false
-    result.message =
-      if not schemaOk: "schema_missing"
-      else: "app_missing"
-    return
-  let body = stripPyComments(readFile(app))
-  let hasReturn =
-    "endswith(\"/return\")" in body or
-    "endswith('/return')" in body or
-    ".endswith(\"/return\")" in body or
-    ".endswith('/return')" in body
-  let hasPersist =
-    "returned_on = date('now')" in body or
-    "returned_on = date(\"now\")" in body or
-    "returned_on=date('now')" in body or
-    "returned_on=date(\"now\")" in body
+  let attempt = %*{
+    "kind": "static_loan_verify",
+    "worktree": worktree
+  }
+
+  template addCtrl(name: string; ok: bool; status, obs: string; fp: JsonNode) =
+    controls.add(controlNode(name, ok, status, obs, fp, attempt))
+
+  if "server_starts" in criteria:
+    # Static gate: presence of runnable app; runtime oracle restarts separately.
+    let ok = appOk
+    addCtrl("server_starts", ok,
+      if ok: "passed" else: "failed",
+      if ok: "skeleton/app.py present for HTTP start"
+      else: "app_missing — cannot start server",
+      appFp)
+    result.details["server_starts"] = %ok
+
+  if "schema_ok" in criteria:
+    addCtrl("schema_ok", schemaOk,
+      if schemaOk: "passed" else: "failed",
+      if schemaOk: "schema.sql present"
+      else: "schema_missing",
+      schemaFp)
+
+  var hasReturn = false
+  var hasPersist = false
+  var cancelled = false
+  if appOk:
+    let body = stripPyComments(readFile(app))
+    hasReturn =
+      "endswith(\"/return\")" in body or
+      "endswith('/return')" in body or
+      ".endswith(\"/return\")" in body or
+      ".endswith('/return')" in body
+    cancelled = loanTransactionCancelled(body)
+    hasPersist = loanPersistAssign(body) and not cancelled
   result.details["mark_returned_present"] = %hasReturn
   result.details["mark_returned_persists"] = %hasPersist
-  result.details["server_starts"] = %true  ## static gate; runtime oracle restarts
-  if "schema_ok" in criteria and not schemaOk:
-    result.ok = false
-    result.message = "schema_missing"
-    return
+  result.details["mark_returned_cancelled"] = %cancelled
+
   if "mark_returned" in criteria:
-    if not hasReturn:
-      result.ok = false
-      result.message = "mark_returned_missing"
-      return
-    if not hasPersist:
-      result.ok = false
-      result.message = "mark_returned_no_persist"
-      return
-  result.ok = true
-  result.message =
-    if "mark_returned" in criteria:
-      "UPDATE sets returned_on on open loan"
+    var ok = false
+    var status = "failed"
+    var obs = ""
+    if not appOk:
+      status = "absent"
+      obs = "mark_returned unexecuted — app.py missing"
+    elif not hasReturn:
+      status = "failed"
+      obs = "mark_returned_missing — no /return handler (comments ignored)"
+    elif cancelled:
+      status = "failed"
+      obs = "mark_returned_cancelled — UPDATE rolled back or returned_on unchanged"
+    elif not hasPersist:
+      status = "failed"
+      obs = "mark_returned_no_persist — need date('now') or CURRENT_DATE assignment"
     else:
-      "loan skeleton schema+app present"
+      ok = true
+      status = "passed"
+      obs = "UPDATE sets returned_on via date('now') or CURRENT_DATE"
+    addCtrl("mark_returned", ok, status, obs, appFp)
+
+  result.details["controls"] = controls
+
+  # Required criteria not listed above → absent.
+  for c in criteria:
+    var found = false
+    for n in controls:
+      if n{"name"}.getStr == c: found = true
+    if not found:
+      controls.add(controlNode(c, false, "unexecuted",
+        "control " & c & " requested but not executed by loan verifier",
+        newJObject(), attempt))
+  result.details["controls"] = controls
+
+  var allOk = true
+  var messages: seq[string] = @[]
+  for n in controls:
+    if not n{"ok"}.getBool:
+      allOk = false
+      messages.add(n{"name"}.getStr & ":" & n{"status"}.getStr & ":" &
+                   n{"observations"}.getStr)
+  result.ok = allOk and criteria.len > 0
+  if criteria.len == 0:
+    result.ok = schemaOk and appOk
+    result.message = "loan skeleton schema+app present"
+  elif result.ok:
+    result.message = controls[^1]{"observations"}.getStr
+  else:
+    result.message = messages.join(" | ")
+
+proc verifyGenericProgram*(
+    worktree, repoRoot: string; criteria: seq[string]): ProjectVerifyResult =
+  ## Empty / novel projects: file presence + optional program stdout check.
+  result.kind = "generic_program"
+  result.details = newJObject()
+  result.details["criteria"] = %criteria
+  var controls = newJArray()
+  let attempt = %*{"kind": "generic_program", "worktree": worktree}
+
+  proc findEntry(): string =
+    for name in ["hello.py", "main.py", "app.py"]:
+      if fileExists(worktree / name): return name
+    for prefer in ["main.py", "hello.py", "app.py"]:
+      for path in walkDirRec(worktree):
+        if fileExists(path) and extractFilename(path) == prefer:
+          return relativePath(path, worktree).replace('\\', '/')
+    for path in walkDirRec(worktree):
+      if path.endsWith(".py") and fileExists(path):
+        return relativePath(path, worktree).replace('\\', '/')
+    for name in ["hello.nim", "main.nim"]:
+      if fileExists(worktree / name): return name
+    ""
+
+  let entry = findEntry()
+  let entryAbs = if entry.len > 0: worktree / entry else: ""
+  let fp = newJObject()
+  if entry.len > 0:
+    fp[entry] = %fileContentFingerprint(entryAbs)
+
+  let needFile =
+    criteria.len == 0 or "file_exists" in criteria or "file_created" in criteria or
+    "program_runs" in criteria or "stdout_bonjour" in criteria or
+    "run_stdout" in criteria
+  if needFile or "file_exists" in criteria or "file_created" in criteria:
+    let ok = entry.len > 0 and fileExists(entryAbs)
+    controls.add(controlNode(
+      if "file_created" in criteria: "file_created" else: "file_exists",
+      ok, if ok: "passed" else: "failed",
+      if ok: "created file present: " & entry else: "no entry script found",
+      fp, attempt))
+
+  let needRun =
+    "program_runs" in criteria or "stdout_bonjour" in criteria or
+    "run_stdout" in criteria
+  if needRun:
+    var ok = false
+    var obs = "program not run"
+    var status = "failed"
+    if entry.len == 0 or not fileExists(entryAbs):
+      status = "absent"
+      obs = "program_runs absent — no file to execute"
+    elif entry.endsWith(".py"):
+      let py = findExe("python3")
+      if py.len == 0:
+        obs = "python3 not on PATH"
+      else:
+        # Run from the script directory so sibling imports (greet/main) resolve.
+        let workDir =
+          if '/' in entry or '\\' in entry: parentDir(entryAbs) else: worktree
+        let script = extractFilename(entry)
+        let r = runCmd(workDir, py, @[script])
+        result.details["stdout"] = %r.outp
+        result.details["exit"] = %r.exit
+        let outLow = r.outp.toLowerAscii
+        let wantBonjour = "stdout_bonjour" in criteria or "bonjour" in criteria
+        if r.exit != 0:
+          obs = "program_runs exit=" & $r.exit & " out=" & r.outp.strip()
+        elif wantBonjour and ("bonjour" notin outLow and "hello" notin outLow):
+          obs = "stdout missing bonjour/hello; got=" & r.outp.strip()
+        else:
+          ok = true
+          status = "passed"
+          obs = "stdout=" & r.outp.strip()
+    else:
+      obs = "unsupported entry language for generic run: " & entry
+    # Emit every run-related criterion that was requested (shared attempt).
+    var runNames: seq[string] = @[]
+    if "stdout_bonjour" in criteria: runNames.add("stdout_bonjour")
+    if "program_runs" in criteria: runNames.add("program_runs")
+    if "run_stdout" in criteria: runNames.add("run_stdout")
+    if runNames.len == 0: runNames.add("program_runs")
+    for name in runNames:
+      controls.add(controlNode(name, ok, status, obs, fp, attempt))
+
+  for c in criteria:
+    var found = false
+    for n in controls:
+      if n{"name"}.getStr == c: found = true
+      if c == "file_created" and n{"name"}.getStr == "file_exists": found = true
+    if not found:
+      controls.add(controlNode(c, false, "unexecuted",
+        "control " & c & " requested but not executed", newJObject(), attempt))
+
+  result.details["controls"] = controls
+  var allOk = controls.len > 0
+  var messages: seq[string] = @[]
+  for n in controls:
+    if not n{"ok"}.getBool:
+      allOk = false
+      messages.add(n{"name"}.getStr & ":" & n{"observations"}.getStr)
+  result.ok = allOk
+  result.message =
+    if result.ok and controls.len > 0: controls[^1]{"observations"}.getStr
+    elif messages.len > 0: messages.join(" | ")
+    else: "no generic controls executed"
 
 proc verifyForRecipe*(
     recipe: ProjectRecipe; worktree, repoRoot: string;
     finalStep = true): ProjectVerifyResult =
   ## Bind verification to the project recipe; generic pilot has no CSV oracle.
-  ## Intermediate steps only require list integrity; final step runs full CSV.
   case recipe.verify
   of "csv_journey":
     result = verifyCsvJourney(worktree, repoRoot, requireCsv = finalStep)
@@ -387,11 +595,11 @@ proc verifyForRecipe*(
       if finalStep: @["server_starts", "schema_ok", "mark_returned"]
       else: @["server_starts", "schema_ok"]
     result = verifyLoanNotebook(worktree, repoRoot, crit)
-  of "":
-    result.kind = "none"
-    result.ok = false
-    result.message = "no verify bound to recipe (missing recipe.json verify)"
-    result.details = newJObject()
+  of "generic_program", "run_stdout", "":
+    let crit =
+      if finalStep: @["file_exists", "program_runs"]
+      else: @["file_exists"]
+    result = verifyGenericProgram(worktree, repoRoot, crit)
   else:
     result.kind = recipe.verify
     result.ok = false
@@ -402,9 +610,28 @@ proc verifyStepCriteria*(
     recipe: ProjectRecipe; worktree, repoRoot: string;
     criteria: seq[string]; finalStep = false): ProjectVerifyResult =
   ## Verify against criteria attached to the step (not only "last step" heuristic).
-  ## export_command forces CSV/opt-in command checks — a comment-only edit fails.
   if recipe.verify == "loan_notebook":
     result = verifyLoanNotebook(worktree, repoRoot, criteria)
+    return
+  let genericTok =
+    "file_exists" in criteria or "file_created" in criteria or
+    "program_runs" in criteria or "stdout_bonjour" in criteria or
+    "run_stdout" in criteria
+  if recipe.verify in ["generic_program", "run_stdout"] or
+     (recipe.verify == "" and genericTok):
+    result = verifyGenericProgram(worktree, repoRoot, criteria)
+    return
+  if recipe.verify == "" and not genericTok:
+    # No recipe and no generic tokens: do not fall into CSV by accident.
+    if "export_command" in criteria or "list_intact" in criteria or
+       "compile" in criteria:
+      result.kind = "criteria"
+      result.ok = false
+      result.message = "no verify bound to recipe for CSV criteria"
+      result.details = %*{"criteria": criteria}
+      return
+    result = verifyGenericProgram(worktree, repoRoot,
+      if criteria.len > 0: criteria else: @["file_exists", "program_runs"])
     return
   var needCsv = finalStep or ("export_command" in criteria)
   var needCompile = criteria.len == 0 or "compile" in criteria or
@@ -416,20 +643,8 @@ proc verifyStepCriteria*(
     result.details = %*{"criteria": criteria}
     return
   case recipe.verify
-  of "csv_journey", "":
-    # Empty recipe verify still allows compile/list when criteria demand it.
-    if recipe.verify == "" and needCsv:
-      result.kind = "criteria"
-      result.ok = false
-      result.message = "no verify bound to recipe for export_command"
-      result.details = %*{"criteria": criteria}
-      return
-    if recipe.verify == "" and not needCsv:
-      # compile+list via csv journey partial without recipe id
-      result = verifyCsvJourney(worktree, repoRoot, requireCsv = false)
-      result.kind = "criteria_partial"
-    else:
-      result = verifyCsvJourney(worktree, repoRoot, requireCsv = needCsv)
+  of "csv_journey":
+    result = verifyCsvJourney(worktree, repoRoot, requireCsv = needCsv)
     if result.ok and "export_command" in criteria and not result.csvOk:
       result.ok = false
       result.message = "export_command_missing"
@@ -476,10 +691,29 @@ proc proofCoversCriteria*(verifyNode: JsonNode; criteria: seq[string]): bool =
       if not verifyNode{"details"}{"schema_ok"}.getBool:
         return false
     of "mark_returned":
-      if not verifyNode{"details"}{"mark_returned_present"}.getBool:
-        return false
-      if verifyNode{"details"}{"mark_returned_persists"} != nil and
-         not verifyNode{"details"}{"mark_returned_persists"}.getBool:
+      if verifyNode{"details"}{"controls"} != nil:
+        var hit = false
+        for n in verifyNode{"details"}{"controls"}:
+          if n{"name"}.getStr == "mark_returned":
+            hit = true
+            if not n{"ok"}.getBool: return false
+        if not hit: return false
+      else:
+        if not verifyNode{"details"}{"mark_returned_present"}.getBool:
+          return false
+        if verifyNode{"details"}{"mark_returned_persists"} != nil and
+           not verifyNode{"details"}{"mark_returned_persists"}.getBool:
+          return false
+    of "file_exists", "file_created", "program_runs", "stdout_bonjour", "run_stdout":
+      if verifyNode{"details"}{"controls"} != nil:
+        var hit = false
+        for n in verifyNode{"details"}{"controls"}:
+          if n{"name"}.getStr == c or
+             (c == "file_created" and n{"name"}.getStr == "file_exists"):
+            hit = true
+            if not n{"ok"}.getBool: return false
+        if not hit: return false
+      else:
         return false
     else:
       return false

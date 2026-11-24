@@ -1,0 +1,10 @@
+{
+  "target_file": "src/main.py",
+  "decision": "wire_formal_greeting",
+  "edits": [
+    {
+      "oldText": "from greet import greeting\n\ndef main() -> None:\n    print(greeting(\"world\"))\n",
+      "newText": "from greet import formal_greeting\n\ndef main() -> None:\n    print(formal_greeting(\"world\"))\n"
+    }
+  ]
+}

@@ -1,5 +1,5 @@
 ## Shared project write commands (Studio + CLI). Idempotent by command_id.
-import std/[json, tables, times, os, sequtils]
+import std/[json, tables, times, os, sequtils, strutils]
 import nimfactory/project/[pipeline, types, store]
 import nimfactory/runtime/journal/[run_store, sqlite_ffi]
 
@@ -166,6 +166,7 @@ proc annotateSpend*(receipt: JsonNode; newProvider, newApi: int; replayed: bool)
   receipt["replayed"] = %replayed
 
 proc reportFromReceipt*(receipt: JsonNode): ProjectReport =
+  ## Historical replay of a finished command_id: zero new spend; surface limits.
   result.command = receipt{"command"}.getStr
   result.projectId = receipt{"project_id"}.getStr
   result.ok = receipt{"ok"}.getBool
@@ -175,6 +176,32 @@ proc reportFromReceipt*(receipt: JsonNode): ProjectReport =
   result.apiCallsThisCommand = receipt{"api_calls"}.getInt
   result.report = receipt.copy()
   annotateSpend(result.report, 0, 0, true)
+  result.report["historical_receipt"] = %true
+  var limits = newJArray()
+  if not result.report.hasKey("controls_executed"):
+    limits.add(%"pre_controls_v2")
+  else:
+    var legacy = false
+    for c in result.report{"controls_executed"}:
+      if c{"status"}.getStr.endsWith("_legacy") or
+         c.hasKey("receipt_limits"):
+        legacy = true
+      if not c.hasKey("file_fingerprints"):
+        limits.add(%"missing_file_fingerprints")
+        break
+    if legacy: limits.add(%"pre_per_control_observations")
+  if limits.len > 0:
+    result.report["receipt_limits"] = limits
+  # Distinguish archived proof from current files when cwd/tree still exist.
+  let tree = result.report{"accepted_tree_ref"}.getStr
+  let proofHash = result.report{"accepted_tree_hash"}.getStr
+  result.report["proof_tree_hash"] = %proofHash
+  if tree.len > 0 and dirExists(tree):
+    # Lazy: presence only here; fingerprint re-check lives in collectControls/status.
+    result.report["proof_tree_present"] = %true
+  else:
+    result.report["proof_tree_present"] = %false
+  result.report["distinguished_from_current_files"] = %true
 
 proc buildReviseReceipt*(
     req: ProjectRequest; prep: ProjectReport; fromVersion: int;

@@ -4,6 +4,7 @@
 import std/[os, json, strutils, times, osproc]
 import nimfactory/project/[pipeline, store, verify, types, plan_context]
 import nimfactory/mission/apply
+import nimfactory/application/project_command
 
 let root = getCurrentDir()
 let fix = root / "fixtures" / "demo_tasks_cli"
@@ -820,8 +821,14 @@ block loanStaticWitnesses:
     doAssert v.ok == expectOk, name & " ok=" & $v.ok & " msg=" & v.message
     doAssert expectMsg in v.message, name & " " & v.message
   checkLoan("comment", "        # /loans/{id}/return\n", "mark_returned_missing", false)
-  checkLoan("no_persist", noPersist, "mark_returned_no_persist", false)
+  # No-op assignment counts as a cancelled persist (reception: transaction annulée).
+  checkLoan("no_persist", noPersist, "cancelled", false)
   checkLoan("correct", correct, "returned_on", true)
+  let currentDate = correct.replace("date('now')", "CURRENT_DATE")
+  checkLoan("current_date", currentDate, "CURRENT_DATE", true)
+  let cancelled = correct.replace(
+    "conn.commit()", "conn.rollback()  # cancelled transaction")
+  checkLoan("cancelled_rollback", cancelled, "cancelled", false)
   echo "loan_static_witnesses: ok"
 
 # --- Loan project run inject → done + controls on accepted tree ---
@@ -887,10 +894,109 @@ block reviseAfterAcceptedDropsProof:
   let revised = projectRevise(rev)
   doAssert revised.ok or revised.verdict == "plan_revised" or
            revised.report{"proof_dropped"}.len >= 0
-  # After helpers accepted, revising to demand export on same step drops proof.
   if revised.report.hasKey("proof_dropped"):
-    discard  # observed
+    discard
   doAssert first.doc.acceptedTreeRef.len > 0
   echo "revise_after_accepted: ok"
+
+# --- Empty dir: create hello.py → run program (no CSV inheritance) ---
+block helloEmptyCreateAndRun:
+  let emptyDir = tmpPath("hello_cwd")
+  createDir(emptyDir)
+  let helloFix = root / "fixtures" / "hello_empty"
+  let store = tmpPath("hello") & ".sqlite"
+  let art = tmpPath("hello_art")
+  createDir(art)
+  # Diagnose create must not refuse patched_content on missing file.
+  let raw = readFile(helloFix / "inject" / "step_hello.json")
+  let diag = diagnoseRawAgainstTree(emptyDir, raw)
+  doAssert not diag.needsRefuse, diag.refuseCode & " " & diag.finding
+  doAssert diag.edits.len == 1 and diag.edits[0].note == "create_file"
+  var req = defaultProjectRequest()
+  req.storePath = store
+  req.projectId = "hello_empty"
+  req.cwd = emptyDir
+  req.objective = "crée hello.py qui affiche bonjour"
+  req.route = "inject"
+  req.injectDir = helloFix / "inject"
+  req.artifactDir = art
+  req.worktree = tmpPath("hello_wt")
+  let r = projectRun(req)
+  doAssert r.ok, r.verdict & " / " & r.message & " / " & $r.report
+  doAssert r.verdict == "done", r.verdict
+  doAssert "export_command" notin $r.report{"controls_requested"}
+  doAssert fileExists(r.doc.acceptedTreeRef / "hello.py")
+  let runPy = execCmdEx("python3 hello.py", workingDir = r.doc.acceptedTreeRef)
+  doAssert runPy.exitCode == 0, runPy.output
+  doAssert "bonjour" in runPy.output.toLowerAscii, runPy.output
+  var hasPerCtrl = false
+  for c in r.report{"controls_executed"}:
+    if c.hasKey("file_fingerprints") and c{"status"}.getStr == "passed":
+      hasPerCtrl = true
+  doAssert hasPerCtrl, $r.report{"controls_executed"}
+  echo "hello_empty_create_and_run: ok"
+
+# --- Linked two-file evolution ---
+block linkedTwoFilesRun:
+  let linked = root / "fixtures" / "linked_two_files"
+  let store = tmpPath("linked") & ".sqlite"
+  let art = tmpPath("linked_art")
+  createDir(art)
+  var req = defaultProjectRequest()
+  req.storePath = store
+  req.projectId = "linked_two"
+  req.cwd = linked
+  req.objective = "formaliser greeting en formal_greeting"
+  req.route = "inject"
+  req.injectDir = linked / "inject"
+  req.artifactDir = art
+  req.worktree = tmpPath("linked_wt")
+  let r = projectRun(req)
+  doAssert r.ok, r.verdict & " / " & r.message
+  doAssert r.verdict == "done"
+  let body = readFile(r.doc.acceptedTreeRef / "src" / "main.py")
+  doAssert "formal_greeting" in body
+  echo "linked_two_files_run: ok"
+
+# --- Stale proof after tree mutation; command_id replay is historical ---
+block staleProofAfterMutation:
+  let loanFix = root / "fixtures" / "loan_notebook"
+  let store = tmpPath("stale") & ".sqlite"
+  let art = tmpPath("stale_art")
+  createDir(art)
+  var req = defaultProjectRequest()
+  req.storePath = store
+  req.projectId = "stale_loan"
+  req.cwd = loanFix
+  req.objective = "Je veux un carnet de prêts local avec restitution."
+  req.route = "inject"
+  req.injectDir = loanFix / "builder" / "inject"
+  req.artifactDir = art
+  req.worktree = tmpPath("stale_wt")
+  req.commandId = "cmd-stale-1"
+  let r = executeProjectCommand(RunCommand, req)
+  doAssert r.ok and r.verdict == "done", r.verdict & " " & r.message
+  let tree = r.doc.acceptedTreeRef
+  let app = tree / "skeleton" / "app.py"
+  writeFile(app, readFile(app) & "\n# mutated after accept\n")
+  var st = defaultProjectRequest()
+  st.storePath = store
+  st.projectId = "stale_loan"
+  let status = projectStatus(st)
+  doAssert status.report{"proof_freshness"}.getStr == "stale" or
+           not status.report{"proof_matches_files"}.getBool,
+           $status.report
+  var staleHit = false
+  for c in status.report{"controls_executed"}:
+    if c{"status"}.getStr == "stale": staleHit = true
+  let motif = incompletePlanReason(status.doc)
+  doAssert staleHit or "stale" in motif or "control" in motif, motif
+  # Replay same command_id → historical receipt, zero new spend.
+  let again = executeProjectCommand(RunCommand, req)
+  doAssert again.report{"historical_receipt"}.getBool or
+           again.report{"replayed"}.getBool, $again.report
+  doAssert again.report{"new_provider_calls"}.getInt == 0, $again.report
+  doAssert again.report{"distinguished_from_current_files"}.getBool
+  echo "stale_proof_and_replay: ok"
 
 echo "ALL project run regression tests passed"

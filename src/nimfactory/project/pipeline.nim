@@ -186,15 +186,25 @@ proc validatePlanNode(node: JsonNode): tuple[ok: bool; err: string] =
   (true, "")
 
 proc recipeDefaultCriteria(cwd: string): seq[string] =
-  ## Criteria attached to the project recipe (fallback for every step).
+  ## Defaults follow the bound recipe only. No recipe ⇒ no CSV inheritance.
   let recipe = loadProjectRecipe(cwd)
   result = @[]
   if not recipe.raw.isNil and recipe.raw.hasKey("criteria"):
     let arr = recipe.raw{"criteria"}
     if arr.kind == JArray:
       for c in arr: result.add(c.getStr)
-  if result.len == 0:
+  if result.len > 0:
+    return
+  case recipe.verify
+  of "csv_journey":
     result = @["compile", "list_intact"]
+  of "loan_notebook":
+    result = @["server_starts", "schema_ok"]
+  of "generic_program", "run_stdout":
+    result = @["file_exists", "program_runs"]
+  else:
+    # Empty / unknown recipe: generic tokens — never invent export_command.
+    result = @["file_exists", "program_runs"]
 
 proc recipeExportCriteria(cwd: string): seq[string] =
   let recipe = loadProjectRecipe(cwd)
@@ -203,10 +213,14 @@ proc recipeExportCriteria(cwd: string): seq[string] =
     let arr = recipe.raw{"export_criteria"}
     if arr.kind == JArray:
       for c in arr: result.add(c.getStr)
-  if result.len == 0:
-    result = recipeDefaultCriteria(cwd)
-    if "export_command" notin result:
-      result.add("export_command")
+  if result.len > 0:
+    return
+  if recipe.verify != "csv_journey":
+    # Non-CSV recipes must not inherit export_command from demo_tasks defaults.
+    return recipeDefaultCriteria(cwd)
+  result = recipeDefaultCriteria(cwd)
+  if "export_command" notin result:
+    result.add("export_command")
 
 proc stepLooksLikeHelper(st: ProjectStep): bool =
   ## "helpers pour l'export CSV" is still a helper step (one file: tasks.nim).
@@ -222,9 +236,14 @@ proc stepLooksLikeHelper(st: ProjectStep): bool =
     ("tasks.nim" in t and "export-csv" notin t)
 
 proc stepObjectiveImpliesExport(st: ProjectStep; index, total: int;
-                                objective = ""; hasFinalCriteria = false): bool =
+                                objective = ""; hasFinalCriteria = false;
+                                cwd = ""): bool =
   ## When the plan declares final_criteria, do not push export onto helpers.
   ## Bare "csv" in a helper title (csvQuote/formatCsv) is not an export wire.
+  ## Without a csv_journey recipe, never imply export from objective prose.
+  let recipe = loadProjectRecipe(cwd)
+  if recipe.verify != "csv_journey":
+    return false
   let t = st.title.toLowerAscii
   let id = st.id.toLowerAscii
   let obj = objective.toLowerAscii
@@ -253,58 +272,75 @@ proc coerceExecutableCriteria*(raw: seq[string]; st: ProjectStep;
                                finalCriteria: seq[string]): seq[string] =
   ## Map prose / free-form postconditions onto executable oracle tokens.
   ## Explicit executable tokens win; final_criteria enrich the last step only.
-  const known = ["compile", "list_intact", "export_command"]
+  ## CSV tokens only apply when the recipe is csv_journey.
+  let recipe = loadProjectRecipe(cwd)
+  let csvBound = recipe.verify == "csv_journey"
+  const csvKnown = ["compile", "list_intact", "export_command", "csv_helpers"]
+  const genericKnown = ["file_exists", "file_created", "program_runs",
+                        "stdout_bonjour", "run_stdout"]
+  const loanKnown = ["server_starts", "schema_ok", "mark_returned"]
   var kept: seq[string] = @[]
   template addUnique(tok: string) =
     if tok notin kept: kept.add(tok)
   for c in raw:
     let cl = c.toLowerAscii.strip()
-    for k in known:
+    for k in csvKnown:
+      if cl == k and (csvBound or k == "compile"): addUnique(k)
+    for k in genericKnown:
       if cl == k: addUnique(k)
-    # Exact token embedded as a word (not "formatCsv" alone ⇒ export_command).
-    if "compile" == cl or cl.startsWith("compile ") or " compil" in cl or
-       cl.startsWith("compil"): addUnique("compile")
-    if "list_intact" in cl or "list intact" in cl: addUnique("list_intact")
-    if "export_command" in cl or "export-csv" in cl or "export_csv" in cl:
-      addUnique("export_command")
-    elif "exporte" in cl or "exportation" in cl:
-      addUnique("export_command")
-    elif "export" in cl and
-         ("stdout" in cl or "sortie" in cl or "commande" in cl or
-          "command" in cl or "csv" in cl or "drapeau" in cl or
-          "opt-in" in cl or "optin" in cl):
-      addUnique("export_command")
-    elif "csv" in cl and
-         ("stdout" in cl or "sortie" in cl or "commande" in cl or
-          "command" in cl or "export" in cl or "exporte" in cl):
-      addUnique("export_command")
-    # Do not treat "formatCsv" alone as export_command.
-    if ("list_intact" in cl or "list intact" in cl or
-        (cl.contains("list") and ("intact" in cl or "inchang" in cl or
-         "défaut" in cl or "defaut" in cl or "default" in cl or
-         "affichage" in cl))):
-      addUnique("list_intact")
-    elif ("affichage" in cl or "défaut" in cl or "defaut" in cl) and
-         "csv" notin cl:
-      addUnique("list_intact")
+    for k in loanKnown:
+      if cl == k: addUnique(k)
+    if "file_exists" in cl or ("fichier" in cl and "cré" in cl):
+      addUnique("file_exists")
+    if "file_created" in cl or "crée" in cl or "creer" in cl or "create" in cl:
+      addUnique("file_exists")
+    if "program_runs" in cl or "exécut" in cl or "execut" in cl or
+       "affiche" in cl or "bonjour" in cl or "hello" in cl:
+      addUnique("program_runs")
+    if "bonjour" in cl or "stdout_bonjour" in cl:
+      addUnique("stdout_bonjour")
+    if csvBound:
+      if "compile" == cl or cl.startsWith("compile ") or " compil" in cl or
+         cl.startsWith("compil"): addUnique("compile")
+      if "list_intact" in cl or "list intact" in cl: addUnique("list_intact")
+      if "export_command" in cl or "export-csv" in cl or "export_csv" in cl:
+        addUnique("export_command")
+      elif "exporte" in cl or "exportation" in cl:
+        addUnique("export_command")
+      elif "export" in cl and
+           ("stdout" in cl or "sortie" in cl or "commande" in cl or
+            "command" in cl or "csv" in cl or "drapeau" in cl or
+            "opt-in" in cl or "optin" in cl):
+        addUnique("export_command")
+      elif "csv" in cl and
+           ("stdout" in cl or "sortie" in cl or "commande" in cl or
+            "command" in cl or "export" in cl or "exporte" in cl):
+        addUnique("export_command")
+      if ("list_intact" in cl or "list intact" in cl or
+          (cl.contains("list") and ("intact" in cl or "inchang" in cl or
+           "défaut" in cl or "defaut" in cl or "default" in cl or
+           "affichage" in cl))):
+        addUnique("list_intact")
+      elif ("affichage" in cl or "défaut" in cl or "defaut" in cl) and
+           "csv" notin cl:
+        addUnique("list_intact")
   if kept.len == 0:
-    # Ignore prose; infer from title / recipe / final_criteria.
     var tmp = st
     tmp.criteria = @[]
     return inferStepCriteria(tmp, index, total, cwd, objective, finalCriteria)
-  if "compile" notin kept:
-    kept.insert("compile", 0)
-  # Helper steps must leave csvQuote+formatCsv in tasks.nim.
-  if stepLooksLikeHelper(st) and "export_command" notin kept:
-    addUnique("csv_helpers")
-  # final_criteria (often prose) enrich the last step via the same token map.
+  if csvBound:
+    if "compile" notin kept:
+      kept.insert("compile", 0)
+    if stepLooksLikeHelper(st) and "export_command" notin kept:
+      addUnique("csv_helpers")
   if index == total and finalCriteria.len > 0:
     let mapped = coerceExecutableCriteria(
       finalCriteria, st, index, total, cwd, objective, @[])
     for f in mapped:
       addUnique(f)
-  elif "export_command" notin kept and
-       stepObjectiveImpliesExport(st, index, total, objective, finalCriteria.len > 0):
+  elif csvBound and "export_command" notin kept and
+       stepObjectiveImpliesExport(st, index, total, objective,
+                                  finalCriteria.len > 0, cwd):
     addUnique("export_command")
   kept
 
@@ -317,13 +353,15 @@ proc inferStepCriteria*(st: ProjectStep; index, total: int;
     return coerceExecutableCriteria(
       st.criteria, st, index, total, cwd, objective, finalCriteria)
   let hasFinal = finalCriteria.len > 0
-  if stepObjectiveImpliesExport(st, index, total, objective, hasFinal):
+  if stepObjectiveImpliesExport(st, index, total, objective, hasFinal, cwd):
     if hasFinal and index == total:
       return coerceExecutableCriteria(
         finalCriteria, st, index, total, cwd, objective, @[])
     return recipeExportCriteria(cwd)
   result = recipeDefaultCriteria(cwd)
-  if stepLooksLikeHelper(st) and "csv_helpers" notin result:
+  let recipe = loadProjectRecipe(cwd)
+  if recipe.verify == "csv_journey" and stepLooksLikeHelper(st) and
+     "csv_helpers" notin result:
     result.add("csv_helpers")
 
 proc stepsFromPlanNode*(node: JsonNode; mandateKey: string;
@@ -382,7 +420,21 @@ proc inferDiffOrigin(doc: ProjectDoc): string =
   if doc.lastVerdict == "historical_replay": return "historical_replay"
   "model"
 
+proc fingerprintStillMatches(treeRef: string; recorded: JsonNode): bool =
+  ## True when every recorded file fingerprint still matches the tree on disk.
+  if recorded.isNil or recorded.kind != JObject: return true
+  if treeRef.len == 0 or not dirExists(treeRef): return false
+  for key, val in recorded.pairs:
+    let want = val.getStr
+    if want.len == 0: continue
+    let absPath = treeRef / key
+    if not fileExists(absPath): return false
+    if fileContentFingerprint(absPath) != want: return false
+  true
+
 proc collectControls(doc: ProjectDoc): tuple[requested, executed: JsonNode; obs: string] =
+  ## Prefer per-control observations from verify.details.controls.
+  ## Fall back for legacy receipts and mark their limits.
   result.requested = newJArray()
   result.executed = newJArray()
   result.obs = ""
@@ -392,22 +444,81 @@ proc collectControls(doc: ProjectDoc): tuple[requested, executed: JsonNode; obs:
       if c notin seenReq:
         seenReq.add(c)
         result.requested.add(%c)
-    if step.status != ssDone or step.result.isNil: continue
+    if step.result.isNil: continue
     let v = step.result{"verify"}
     let tree = step.result{"accepted_tree_ref"}.getStr
     let hash = step.result{"accepted_tree_hash"}.getStr
-    let msg = if v.isNil: "" else: v{"message"}.getStr
-    for c in step.criteria:
+    let attempt = step.result{"provider_attempt"}
+    let detailControls =
+      if v.isNil: nil else: v{"details", "controls"}
+    if detailControls != nil and detailControls.kind == JArray and
+       detailControls.len > 0:
+      for n in detailControls:
+        var node = n.copy()
+        node["tree_ref"] = %tree
+        node["tree_hash"] = %hash
+        node["step_id"] = %step.id
+        if attempt != nil: node["attempt"] = attempt
+        let fps = n{"file_fingerprints"}
+        if step.status == ssDone and tree.len > 0 and
+           not fingerprintStillMatches(tree, fps):
+          node["ok"] = %false
+          node["status"] = %"stale"
+          let prev = node{"observations"}.getStr
+          node["observations"] = %(
+            "proof stale — verified files changed on delivered tree" &
+            (if prev.len > 0: " (was: " & prev & ")" else: ""))
+        elif step.status != ssDone and node{"status"}.getStr == "passed":
+          node["status"] = %"unexecuted"
+          node["ok"] = %false
+        result.executed.add(node)
+        if step.id == doc.acceptedStepId:
+          result.obs = node{"observations"}.getStr
+    elif step.status == ssDone:
+      # Legacy receipt: global ok copied per criterion — surface the limit.
+      let msg = if v.isNil: "" else: v{"message"}.getStr
+      let globalOk = if v.isNil: false else: v{"ok"}.getBool
+      for c in step.criteria:
+        result.executed.add(%*{
+          "name": c,
+          "ok": globalOk,
+          "status": if globalOk: "passed_legacy" else: "failed_legacy",
+          "tree_ref": tree,
+          "tree_hash": hash,
+          "observations": msg,
+          "step_id": step.id,
+          "attempt": attempt,
+          "file_fingerprints": newJObject(),
+          "receipt_limits": ["pre_per_control_observations"]
+        })
+      if step.id == doc.acceptedStepId and msg.len > 0:
+        result.obs = msg
+    else:
+      for c in step.criteria:
+        result.executed.add(%*{
+          "name": c,
+          "ok": false,
+          "status": "unexecuted",
+          "tree_ref": tree,
+          "tree_hash": hash,
+          "observations": "control " & c & " not yet executed on step " & step.id,
+          "step_id": step.id
+        })
+  # Requested but never appeared in executed → absent.
+  var seenExec: seq[string] = @[]
+  for n in result.executed:
+    let nm = n{"name"}.getStr
+    if nm notin seenExec: seenExec.add(nm)
+  for c in seenReq:
+    if c notin seenExec:
       result.executed.add(%*{
         "name": c,
-        "ok": if v.isNil: false else: v{"ok"}.getBool,
-        "tree_ref": tree,
-        "tree_hash": hash,
-        "observations": msg,
-        "step_id": step.id
+        "ok": false,
+        "status": "absent",
+        "observations": "control " & c & " obligatory but absent from execution",
+        "tree_ref": doc.acceptedTreeRef,
+        "tree_hash": doc.acceptedTreeHash
       })
-    if step.id == doc.acceptedStepId and msg.len > 0:
-      result.obs = msg
   if result.obs.len == 0 and doc.blockedReason.len > 0:
     result.obs = doc.blockedReason
 
@@ -573,9 +684,10 @@ proc depsSatisfied(doc: ProjectDoc; step: ProjectStep): bool =
       return false
   true
 
-proc incompletePlanReason(doc: ProjectDoc): string =
+proc incompletePlanReason*(doc: ProjectDoc): string =
   ## Called only after the scheduler has no further actionable step.
-  ## Done gate: every required control must pass on the accepted delivered tree.
+  ## Done gate: each obligatory control must pass on the accepted delivered tree
+  ## with fresh fingerprints (stale / absent / failed / unexecuted ⇒ motif).
   if doc.steps.len == 0:
     return "plan has no steps"
   for step in doc.steps:
@@ -583,13 +695,19 @@ proc incompletePlanReason(doc: ProjectDoc): string =
       return "step " & step.id & " is " & $step.status
   if doc.acceptedTreeRef.len == 0 or not dirExists(doc.acceptedTreeRef):
     return "accepted tree missing"
+  let controls = collectControls(doc)
+  for n in controls.executed:
+    let st = n{"status"}.getStr
+    let name = n{"name"}.getStr
+    let obs = n{"observations"}.getStr
+    if st in ["failed", "failed_legacy", "absent", "unexecuted", "stale"] or
+       not n{"ok"}.getBool:
+      return "control " & name & " " & (if st.len > 0: st else: "failed") &
+             (if obs.len > 0: ": " & obs else: "")
   for step in doc.steps:
     if step.status != ssDone: continue
     if step.result.isNil:
       return "step " & step.id & " missing result/controls"
-    let v = step.result{"verify"}
-    if v.isNil or not v{"ok"}.getBool:
-      return "step " & step.id & " control failed or absent"
     let tree = step.result{"accepted_tree_ref"}.getStr
     if tree.len == 0:
       return "step " & step.id & " control missing tree_ref"
@@ -1207,7 +1325,7 @@ proc projectStep*(req: ProjectRequest): ProjectReport =
   let sourceRoot = sourceRootForStep(doc)
   # Wire step without formatCsv in the accepted tree → revise, don't invent helpers.
   if not stepLooksLikeHelper(step) and
-     stepObjectiveImpliesExport(step, 2, 2, doc.objective, true):
+     stepObjectiveImpliesExport(step, 2, 2, doc.objective, true, doc.cwd):
     let tasksSrc = sourceRoot / "src" / "tasks.nim"
     if fileExists(tasksSrc) and "formatCsv" notin readFile(tasksSrc):
       let motif =
@@ -1283,8 +1401,12 @@ proc projectStep*(req: ProjectRequest): ProjectReport =
   for c in step.criteria: postArr.add(%c)
   mandate["postconditions"] = postArr
   if not mandate.hasKey("stdout_constraint"):
-    mandate["stdout_constraint"] =
-      %"CSV export must write to stdout (not a file); keep default list intact"
+    let stepRecipe = loadProjectRecipe(doc.cwd)
+    if stepRecipe.verify == "csv_journey":
+      mandate["stdout_constraint"] =
+        %"CSV export must write to stdout (not a file); keep default list intact"
+    else:
+      mandate["stdout_constraint"] = %""
   if doc.acceptedStepId.len > 0:
     mandate["prior_accepted_step"] = %doc.acceptedStepId
     mandate["prior_accepted_tree"] = %doc.acceptedTreeRef
@@ -1721,6 +1843,22 @@ proc projectStatus*(req: ProjectRequest): ProjectReport =
     result.message = "status ok"
   result.report = reportBase("status", loaded.doc)
   result.report["mandates"] = loaded.doc.mandates
+  let tip = loaded.doc.acceptedTreeRef
+  let tipHash = loaded.doc.acceptedTreeHash
+  result.report["proof_tree_hash"] = %tipHash
+  if tip.len > 0 and dirExists(tip):
+    let live = treeFingerprint(tip)
+    result.report["files_current_hash"] = %live
+    result.report["proof_matches_files"] = %(live == tipHash)
+    if live != tipHash:
+      result.report["proof_freshness"] = %"stale"
+      result.report["proof_freshness_motif"] =
+        %("accepted tree hash " & tipHash & " ≠ current files " & live)
+    else:
+      result.report["proof_freshness"] = %"fresh"
+  else:
+    result.report["proof_matches_files"] = %false
+    result.report["proof_freshness"] = %"absent"
   if loaded.doc.revisePlanPending:
     result.report["revise_plan"] = %*{
       "pending": true,
@@ -2110,13 +2248,19 @@ proc projectRun*(req: ProjectRequest): ProjectReport =
       break
 
     var stepReq = reqMut
+    let byId = resolveInject(reqMut, "step_" & actionable.step.id & ".json")
     let helpers = resolveInject(reqMut, "step_helpers.json")
     let exportInj = resolveInject(reqMut, "step_export.json")
     let markRet = resolveInject(reqMut, "step_mark_returned.json")
-    if actionable.step.id == "add_csv_helpers" and helpers.len > 0:
+    let helloInj = resolveInject(reqMut, "step_hello.json")
+    if byId.len > 0:
+      stepReq.injectPath = byId
+    elif actionable.step.id == "add_csv_helpers" and helpers.len > 0:
       stepReq.injectPath = helpers
     elif actionable.step.id == "mark_returned" and markRet.len > 0:
       stepReq.injectPath = markRet
+    elif actionable.step.id == "create_hello" and helloInj.len > 0:
+      stepReq.injectPath = helloInj
     elif ("export" in actionable.step.id.toLowerAscii or
           "export" in actionable.step.title.toLowerAscii) and exportInj.len > 0:
       stepReq.injectPath = exportInj
@@ -2126,6 +2270,8 @@ proc projectRun*(req: ProjectRequest): ProjectReport =
       stepReq.injectPath = exportInj
     elif markRet.len > 0 and "return" in actionable.step.id.toLowerAscii:
       stepReq.injectPath = markRet
+    elif helloInj.len > 0 and "hello" in actionable.step.id.toLowerAscii:
+      stepReq.injectPath = helloInj
     elif reqMut.injectPath.len > 0:
       stepReq.injectPath = reqMut.injectPath
     if reqMut.worktree.len > 0:

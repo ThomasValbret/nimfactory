@@ -75,3 +75,4 @@ tests/mission/test_intervention_bench
 tests/studio/test_project_command
 tests/studio/test_project_view
 tests/project/test_project_run_regressions
+__pycache__/

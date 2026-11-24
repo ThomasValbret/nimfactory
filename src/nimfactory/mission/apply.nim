@@ -880,10 +880,20 @@ proc diagnoseRawAgainstTree*(sourceRoot, raw: string): ProposalDiagnosis =
           result.edits.add(
             diagnoseEditItem(item, tf, content, fileExists, ei, sourceRoot))
       elif node.hasKey("patched_content"):
+        # Create vs edit: missing target + non-empty body ⇒ create_file (not refuse).
+        # edits on a missing file remain target_missing; only patched_content creates.
+        let body = node{"patched_content"}.getStr
+        var note = "target_missing"
+        var matches = 0
+        if fileExists:
+          note = "patched_content_mode"
+          matches = 1
+        elif body.len > 0:
+          note = "create_file"
+          matches = 1
         var ed = EditDiagnosis(
           targetFile: tf, foundInFile: tf, editIndex: 1, parseOk: true,
-          note: if fileExists: "patched_content_mode" else: "target_missing",
-          matchCount: if fileExists: 1 else: 0)
+          note: note, matchCount: matches)
         result.edits.add(ed)
       else:
         var ed = EditDiagnosis(
@@ -926,6 +936,7 @@ proc diagnoseRawAgainstTree*(sourceRoot, raw: string): ProposalDiagnosis =
     result.refuseCode = "multi_proposal"
   else:
     for ed in result.edits:
+      # create_file / patched_content_mode are valid apply paths — never refuse.
       if ed.note in ["anchor_ambiguous", "anchor_missing", "anchor_wrong_file",
                      "target_missing", "empty_or_missing_oldText",
                      "malformed_edit_element", "missing_edits",

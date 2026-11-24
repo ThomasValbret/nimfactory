@@ -1,0 +1,19 @@
+{
+  "summary": "Créer hello.py qui affiche bonjour.",
+  "hypothesis": "Dossier vide: un seul fichier suffit.",
+  "optional_question": "",
+  "final_criteria": ["file_exists", "stdout_bonjour"],
+  "steps": [
+    {
+      "id": "create_hello",
+      "title": "Créer hello.py qui affiche bonjour",
+      "depends_on": [],
+      "criteria": ["file_exists", "stdout_bonjour"]
+    }
+  ],
+  "mandate_sketch": {
+    "goal": "hello.py affiche bonjour",
+    "constraints": ["Python", "stdout"],
+    "files_likely": ["hello.py"]
+  }
+}
