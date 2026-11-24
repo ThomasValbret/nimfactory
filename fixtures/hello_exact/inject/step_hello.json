@@ -1,0 +1,5 @@
+{
+  "target_file": "hello.py",
+  "decision": "create_exact_bonjour",
+  "patched_content": "print(\"bonjour\")\n"
+}

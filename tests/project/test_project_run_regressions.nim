@@ -1001,4 +1001,90 @@ block staleProofAfterMutation:
   doAssert again.report{"distinguished_from_current_files"}.getBool
   echo "stale_proof_and_replay: ok"
 
+# --- Stale delivered tree: new command_id must not inherit done ---
+block staleDoneRequiresRecheck:
+  let linked = root / "fixtures" / "linked_two_files"
+  let store = tmpPath("stale_done") & ".sqlite"
+  let art = tmpPath("stale_done_art")
+  createDir(art)
+  var req = defaultProjectRequest()
+  req.storePath = store
+  req.projectId = "stale_done"
+  req.cwd = linked
+  req.objective = "formaliser greeting en formal_greeting"
+  req.route = "inject"
+  req.injectDir = linked / "inject"
+  req.artifactDir = art
+  req.worktree = tmpPath("stale_done_wt")
+  req.commandId = "cmd-stale-done-1"
+  let first = executeProjectCommand(RunCommand, req)
+  doAssert first.ok and first.verdict == "done", first.verdict & " " & first.message
+  let tree = first.doc.acceptedTreeRef
+  writeFile(tree / "src" / "greet.py",
+    "def formal_greeting(name: str) -> str:\n    raise RuntimeError(\"broken\")\n")
+  var st = defaultProjectRequest()
+  st.storePath = store
+  st.projectId = "stale_done"
+  let status = projectStatus(st)
+  doAssert status.report{"proof_freshness"}.getStr == "stale", $status.report
+  let replay = executeProjectCommand(RunCommand, req)
+  doAssert replay.report{"historical_receipt"}.getBool
+  doAssert replay.report{"new_provider_calls"}.getInt == 0
+  doAssert replay.report{"proof_tree_ref"}.getStr == tree or
+           replay.report{"accepted_tree_ref"}.getStr == tree
+  doAssert replay.report{"proof_tree_hash"}.getStr.len > 0
+  doAssert replay.report{"proof_freshness"}.getStr == "stale"
+  var again = req
+  again.commandId = "cmd-stale-done-2"
+  again.worktree = tmpPath("stale_done_wt2")
+  again.artifactDir = tmpPath("stale_done_art2")
+  createDir(again.artifactDir)
+  let second = executeProjectCommand(RunCommand, again)
+  doAssert not second.ok, $second.report
+  doAssert second.verdict == "proof_stale", second.verdict & " " & second.message
+  doAssert second.report{"proof_freshness"}.getStr == "stale" or
+           second.report.hasKey("verify_recheck")
+  echo "stale_done_requires_recheck: ok"
+
+# --- Exact stdout vs contains; program_runs can pass while stdout fails ---
+block exactStdoutThreePrograms:
+  let base = tmpPath("exact_out")
+  createDir(base)
+  writeFile(base / "hello.py", "print(\"bonjour\")\n")
+  let vOk = verifyGenericProgram(base, base,
+    @["file_exists", "program_runs", "stdout_exact:bonjour"])
+  doAssert vOk.ok, vOk.message
+  writeFile(base / "hello.py", "print(\"hello\")\n")
+  let vHello = verifyGenericProgram(base, base,
+    @["file_exists", "program_runs", "stdout_exact:bonjour"])
+  doAssert not vHello.ok
+  var runsOk = false
+  var exactFail = false
+  for c in vHello.details{"controls"}:
+    if c{"name"}.getStr == "program_runs" and c{"ok"}.getBool: runsOk = true
+    if c{"name"}.getStr == "stdout_exact:bonjour" and not c{"ok"}.getBool:
+      exactFail = true
+      doAssert c{"expected"}.getStr == "bonjour"
+      doAssert c{"observed"}.getStr == "hello"
+      doAssert c{"comparison_rule"}.getStr == "exact"
+  doAssert runsOk and exactFail, $vHello.details{"controls"}
+  writeFile(base / "hello.py", "print(\"je dis bonjour\")\n")
+  let vPhrase = verifyGenericProgram(base, base,
+    @["file_exists", "program_runs", "stdout_exact:bonjour"])
+  doAssert not vPhrase.ok
+  let vContains = verifyGenericProgram(base, base,
+    @["file_exists", "program_runs", "stdout_contains:bonjour"])
+  doAssert vContains.ok, vContains.message
+  # Other filename + value
+  writeFile(base / "salut.py", "print(\"merci\")\n")
+  removeFile(base / "hello.py")
+  let vMerci = verifyGenericProgram(base, base,
+    @["file_exists", "program_runs", "stdout_exact:merci"])
+  doAssert vMerci.ok, vMerci.message
+  writeFile(base / "salut.py", "print(\"merci beaucoup\")\n")
+  let vMerciFail = verifyGenericProgram(base, base,
+    @["file_exists", "program_runs", "stdout_exact:merci"])
+  doAssert not vMerciFail.ok
+  echo "exact_stdout_three_programs: ok"
+
 echo "ALL project run regression tests passed"

@@ -1,0 +1,19 @@
+{
+  "summary": "Créer salut.py qui affiche exactement merci.",
+  "hypothesis": "Autre fichier, autre valeur exacte.",
+  "optional_question": "",
+  "final_criteria": ["file_exists", "program_runs", "stdout_exact:merci"],
+  "steps": [
+    {
+      "id": "create_salut",
+      "title": "Créer salut.py qui affiche exactement merci",
+      "depends_on": [],
+      "criteria": ["file_exists", "program_runs", "stdout_exact:merci"]
+    }
+  ],
+  "mandate_sketch": {
+    "goal": "salut.py affiche exactement merci",
+    "constraints": ["Python", "stdout exact"],
+    "files_likely": ["salut.py"]
+  }
+}

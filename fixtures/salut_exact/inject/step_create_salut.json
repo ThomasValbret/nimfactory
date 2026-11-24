@@ -1,0 +1,5 @@
+{
+  "target_file": "salut.py",
+  "decision": "create_exact_merci",
+  "patched_content": "print(\"merci\")\n"
+}

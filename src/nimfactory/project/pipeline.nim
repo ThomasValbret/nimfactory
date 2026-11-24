@@ -283,23 +283,51 @@ proc coerceExecutableCriteria*(raw: seq[string]; st: ProjectStep;
   var kept: seq[string] = @[]
   template addUnique(tok: string) =
     if tok notin kept: kept.add(tok)
+  proc expectedAfterMarker(cl, marker: string): string =
+    let i = cl.find(marker)
+    if i < 0: return ""
+    var rest = cl[i + marker.len .. ^1].strip()
+    if rest.len >= 2 and rest[0] in {'"', '\''}:
+      let q = rest[0]
+      let j = rest.find(q, 1)
+      if j > 1: return rest[1 ..< j]
+    for sep in [' ', ',', ';']:
+      let j = rest.find(sep)
+      if j > 0: return rest[0 ..< j]
+    rest
   for c in raw:
     let cl = c.toLowerAscii.strip()
+    let rawStrip = c.strip()
     for k in csvKnown:
       if cl == k and (csvBound or k == "compile"): addUnique(k)
     for k in genericKnown:
       if cl == k: addUnique(k)
     for k in loanKnown:
       if cl == k: addUnique(k)
+    if cl.startsWith("stdout_exact:"):
+      addUnique("stdout_exact:" & rawStrip[rawStrip.find(':')+1 .. ^1].strip())
+    elif cl.startsWith("stdout_contains:"):
+      addUnique("stdout_contains:" & rawStrip[rawStrip.find(':')+1 .. ^1].strip())
     if "file_exists" in cl or ("fichier" in cl and "cré" in cl):
       addUnique("file_exists")
     if "file_created" in cl or "crée" in cl or "creer" in cl or "create" in cl:
       addUnique("file_exists")
-    if "program_runs" in cl or "exécut" in cl or "execut" in cl or
-       "affiche" in cl or "bonjour" in cl or "hello" in cl:
+    if "program_runs" in cl or "exécut" in cl or "execut" in cl:
       addUnique("program_runs")
-    if "bonjour" in cl or "stdout_bonjour" in cl:
-      addUnique("stdout_bonjour")
+    # "affiche exactement bonjour" → exact stdout + program_runs (exit).
+    if ("exactement" in cl or "exactly" in cl) and
+       ("affiche" in cl or "stdout" in cl or "sortie" in cl or "print" in cl):
+      var exp = expectedAfterMarker(cl, "exactement ")
+      if exp.len == 0: exp = expectedAfterMarker(cl, "exactly ")
+      if exp.len > 0:
+        addUnique("program_runs")
+        addUnique("stdout_exact:" & exp)
+    elif "affiche" in cl or "bonjour" in cl or "hello" in cl:
+      addUnique("program_runs")
+      if "bonjour" in cl and "exact" notin cl:
+        addUnique("stdout_contains:bonjour")
+      elif "hello" in cl and "exact" notin cl:
+        addUnique("stdout_contains:hello")
     if csvBound:
       if "compile" == cl or cl.startsWith("compile ") or " compil" in cl or
          cl.startsWith("compil"): addUnique("compile")
@@ -697,10 +725,47 @@ proc depsSatisfied(doc: ProjectDoc; step: ProjectStep): bool =
       return false
   true
 
+proc deliveredTreeFreshness*(doc: ProjectDoc): tuple[
+    fresh: bool; live, proof: string; motif: string] =
+  ## Compare acceptedTreeHash to a live fingerprint of the delivered directory.
+  result.proof = doc.acceptedTreeHash
+  result.live = ""
+  result.fresh = false
+  result.motif = ""
+  if doc.acceptedTreeRef.len == 0 or not dirExists(doc.acceptedTreeRef):
+    result.motif = "accepted tree missing"
+    return
+  if result.proof.len == 0:
+    result.motif = "accepted tree hash missing"
+    return
+  result.live = treeFingerprint(doc.acceptedTreeRef)
+  if result.live == result.proof:
+    result.fresh = true
+  else:
+    result.motif =
+      "proof stale — accepted tree hash " & result.proof &
+      " ≠ current files " & result.live
+
+proc tipStepCriteria(doc: ProjectDoc): seq[string] =
+  for s in doc.steps:
+    if s.id == doc.acceptedStepId and s.criteria.len > 0:
+      return s.criteria
+  for s in doc.steps:
+    if s.status == ssDone and s.criteria.len > 0:
+      result = s.criteria
+  if result.len == 0:
+    result = recipeDefaultCriteria(doc.cwd)
+
+proc recheckDeliveredTree*(doc: ProjectDoc): ProjectVerifyResult =
+  ## Re-run the tip step oracle on the current files of the accepted tree.
+  let recipe = loadProjectRecipe(doc.cwd)
+  let criteria = tipStepCriteria(doc)
+  verifyStepCriteria(
+    recipe, doc.acceptedTreeRef, doc.cwd, criteria, finalStep = true)
+
 proc incompletePlanReason*(doc: ProjectDoc): string =
   ## Called only after the scheduler has no further actionable step.
-  ## Done gate: each obligatory control must pass on the accepted delivered tree
-  ## with fresh fingerprints (stale / absent / failed / unexecuted ⇒ motif).
+  ## Done gate: obligatory controls + whole-tree freshness of the delivered proof.
   if doc.steps.len == 0:
     return "plan has no steps"
   for step in doc.steps:
@@ -708,6 +773,9 @@ proc incompletePlanReason*(doc: ProjectDoc): string =
       return "step " & step.id & " is " & $step.status
   if doc.acceptedTreeRef.len == 0 or not dirExists(doc.acceptedTreeRef):
     return "accepted tree missing"
+  let freshness = deliveredTreeFreshness(doc)
+  if not freshness.fresh:
+    return freshness.motif
   let controls = collectControls(doc)
   for n in controls.executed:
     let st = n{"status"}.getStr
@@ -2324,16 +2392,52 @@ proc projectRun*(req: ProjectRequest): ProjectReport =
   let pending = nextPendingStep(result.doc)
   result.providerCallsThisCommand = totalProvider
   result.apiCallsThisCommand = totalApi
+  var recheckNode: JsonNode = nil
   if result.verdict.len == 0:
     if pending.found:
       result.ok = false
       result.verdict = "step_ceiling"
       result.message = "max steps reached with pending work"
     else:
-      let reason = incompletePlanReason(result.doc)
-      result.ok = reason.len == 0
-      result.verdict = if result.ok: "done" else: "blocked"
-      result.message = if result.ok: "project run complete; accepted tree ready" else: reason
+      let freshness = deliveredTreeFreshness(result.doc)
+      if not freshness.fresh and freshness.motif.startsWith("proof stale"):
+        ## New command on a completed plan: re-verify current files; never
+        ## inherit done from an obsolete tree hash.
+        let v = recheckDeliveredTree(result.doc)
+        recheckNode = verifyToJson(v)
+        recheckNode["proof_freshness"] = %"stale"
+        recheckNode["files_current_hash"] = %freshness.live
+        recheckNode["proof_tree_hash"] = %freshness.proof
+        if v.ok:
+          ## Observed current files still satisfy criteria — refresh proof hash.
+          result.doc.acceptedTreeHash = freshness.live
+          saveProject(store, result.doc)
+          result.ok = true
+          result.verdict = "done"
+          result.message =
+            "project run complete; proof refreshed after recheck on current files"
+          result.doc.nextAction = "done"
+          result.doc.lastVerdict = "done"
+          saveProject(store, result.doc)
+        else:
+          result.ok = false
+          result.verdict = "proof_stale"
+          result.message = freshness.motif & "; recheck: " & v.message
+          result.doc.nextAction = "revise"
+          result.doc.lastVerdict = "proof_stale"
+          result.doc.blockedReason = result.message
+          saveProject(store, result.doc)
+      else:
+        let reason = incompletePlanReason(result.doc)
+        result.ok = reason.len == 0
+        result.verdict = if result.ok: "done" else: "blocked"
+        result.message =
+          if result.ok: "project run complete; accepted tree ready" else: reason
+        if not result.ok:
+          result.doc.nextAction = "revise"
+          result.doc.lastVerdict = "blocked"
+          result.doc.blockedReason = reason
+          saveProject(store, result.doc)
   result.report = reportBase("run", result.doc)
   result.report["sub"] = %"run"
   result.report["interventions"] = interventions
@@ -2342,6 +2446,16 @@ proc projectRun*(req: ProjectRequest): ProjectReport =
   result.report["provider_calls"] = %totalProvider
   result.report["api_calls"] = %totalApi
   result.report["replayed"] = %false
+  let fr = deliveredTreeFreshness(result.doc)
+  result.report["proof_tree_ref"] = %result.doc.acceptedTreeRef
+  result.report["proof_tree_hash"] = %fr.proof
+  result.report["files_current_hash"] = %fr.live
+  result.report["proof_matches_files"] = %fr.fresh
+  result.report["proof_freshness"] = %(if fr.fresh: "fresh" else: "stale")
+  if fr.motif.len > 0 and not fr.fresh:
+    result.report["proof_freshness_motif"] = %fr.motif
+  if recheckNode != nil:
+    result.report["verify_recheck"] = recheckNode
   if result.doc.acceptedTreeRef.len > 0:
     result.report["delivered_tree"] = %result.doc.acceptedTreeRef
     result.report["delivered_hash"] = %result.doc.acceptedTreeHash

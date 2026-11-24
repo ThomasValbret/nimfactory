@@ -604,9 +604,24 @@ proc verifyLoanNotebook*(
   controls = enriched
 
 
+proc stdoutRuleFromCriterion*(c: string): tuple[kind, expected, name: string] =
+  ## kind: exact | contains | none
+  let cl = c.strip()
+  let low = cl.toLowerAscii
+  if low.startsWith("stdout_exact:"):
+    return ("exact", cl[cl.find(':')+1 .. ^1].strip(), cl)
+  if low.startsWith("stdout_contains:"):
+    return ("contains", cl[cl.find(':')+1 .. ^1].strip(), cl)
+  if low == "stdout_bonjour":
+    return ("contains", "bonjour", "stdout_bonjour")
+  if low == "run_stdout":
+    return ("contains", "", "run_stdout")
+  ("none", "", c)
+
 proc verifyGenericProgram*(
     worktree, repoRoot: string; criteria: seq[string]): ProjectVerifyResult =
-  ## Empty / novel projects: file presence + optional program stdout check.
+  ## Empty / novel projects: file presence, program exit, and stdout rules.
+  ## program_runs = exit 0; stdout_exact/contains carry expected vs observed.
   result.kind = "generic_program"
   result.details = newJObject()
   result.details["criteria"] = %criteria
@@ -614,9 +629,9 @@ proc verifyGenericProgram*(
   let attempt = %*{"kind": "generic_program", "worktree": worktree}
 
   proc findEntry(): string =
-    for name in ["hello.py", "main.py", "app.py"]:
+    for name in ["hello.py", "main.py", "app.py", "salut.py"]:
       if fileExists(worktree / name): return name
-    for prefer in ["main.py", "hello.py", "app.py"]:
+    for prefer in ["main.py", "hello.py", "app.py", "salut.py"]:
       for path in walkDirRec(worktree):
         if fileExists(path) and extractFilename(path) == prefer:
           return relativePath(path, worktree).replace('\\', '/')
@@ -629,14 +644,25 @@ proc verifyGenericProgram*(
 
   let entry = findEntry()
   let entryAbs = if entry.len > 0: worktree / entry else: ""
-  let fp = newJObject()
+  var fp = newJObject()
   if entry.len > 0:
     fp[entry] = %fileContentFingerprint(entryAbs)
+    # Fingerprint sibling sources so a linked-file mutation invalidates proof.
+    let siblingDir =
+      if '/' in entry or '\\' in entry: parentDir(entryAbs) else: worktree
+    if dirExists(siblingDir):
+      for path in walkDirRec(siblingDir):
+        if path.endsWith(".py") and fileExists(path):
+          let rel = relativePath(path, worktree).replace('\\', '/')
+          fp[rel] = %fileContentFingerprint(path)
 
+  var needStdout = false
+  for c in criteria:
+    if stdoutRuleFromCriterion(c).kind != "none" or c == "run_stdout":
+      needStdout = true
   let needFile =
     criteria.len == 0 or "file_exists" in criteria or "file_created" in criteria or
-    "program_runs" in criteria or "stdout_bonjour" in criteria or
-    "run_stdout" in criteria
+    "program_runs" in criteria or needStdout
   if needFile or "file_exists" in criteria or "file_created" in criteria:
     let ok = entry.len > 0 and fileExists(entryAbs)
     controls.add(controlNode(
@@ -645,54 +671,82 @@ proc verifyGenericProgram*(
       if ok: "created file present: " & entry else: "no entry script found",
       fp, attempt))
 
-  let needRun =
-    "program_runs" in criteria or "stdout_bonjour" in criteria or
-    "run_stdout" in criteria
+  let needRun = "program_runs" in criteria or needStdout
+  var exitCode = -1
+  var observed = ""
+  var ran = false
   if needRun:
-    var ok = false
-    var obs = "program not run"
-    var status = "failed"
     if entry.len == 0 or not fileExists(entryAbs):
-      status = "absent"
-      obs = "program_runs absent — no file to execute"
-    elif entry.endsWith(".py"):
+      if "program_runs" in criteria:
+        controls.add(controlNode("program_runs", false, "absent",
+          "program_runs absent — no file to execute", fp, attempt))
+    elif not entry.endsWith(".py"):
+      if "program_runs" in criteria:
+        controls.add(controlNode("program_runs", false, "failed",
+          "unsupported entry language for generic run: " & entry, fp, attempt))
+    else:
       let py = findExe("python3")
       if py.len == 0:
-        obs = "python3 not on PATH"
+        if "program_runs" in criteria:
+          controls.add(controlNode("program_runs", false, "failed",
+            "python3 not on PATH", fp, attempt))
       else:
-        # Run from the script directory so sibling imports (greet/main) resolve.
         let workDir =
           if '/' in entry or '\\' in entry: parentDir(entryAbs) else: worktree
         let script = extractFilename(entry)
         let r = runCmd(workDir, py, @[script])
-        result.details["stdout"] = %r.outp
-        result.details["exit"] = %r.exit
-        let outLow = r.outp.toLowerAscii
-        let wantBonjour = "stdout_bonjour" in criteria or "bonjour" in criteria
-        if r.exit != 0:
-          obs = "program_runs exit=" & $r.exit & " out=" & r.outp.strip()
-        elif wantBonjour and ("bonjour" notin outLow and "hello" notin outLow):
-          obs = "stdout missing bonjour/hello; got=" & r.outp.strip()
-        else:
-          ok = true
-          status = "passed"
-          obs = "stdout=" & r.outp.strip()
+        exitCode = r.exit
+        observed = r.outp.replace("\r\n", "\n")
+        ran = true
+        result.details["stdout"] = %observed
+        result.details["exit"] = %exitCode
+        if "program_runs" in criteria:
+          let ok = exitCode == 0
+          controls.add(controlNode(
+            "program_runs", ok, if ok: "passed" else: "failed",
+            "exit=" & $exitCode & " stdout=" & observed.strip(),
+            fp, attempt))
+
+  for c in criteria:
+    let rule = stdoutRuleFromCriterion(c)
+    if rule.kind == "none": continue
+    var ok = false
+    var status = "failed"
+    var obs = ""
+    let expected = rule.expected
+    if not ran:
+      status = "absent"
+      obs = "stdout not observed — program did not run"
     else:
-      obs = "unsupported entry language for generic run: " & entry
-    # Emit every run-related criterion that was requested (shared attempt).
-    var runNames: seq[string] = @[]
-    if "stdout_bonjour" in criteria: runNames.add("stdout_bonjour")
-    if "program_runs" in criteria: runNames.add("program_runs")
-    if "run_stdout" in criteria: runNames.add("run_stdout")
-    if runNames.len == 0: runNames.add("program_runs")
-    for name in runNames:
-      controls.add(controlNode(name, ok, status, obs, fp, attempt))
+      let got = observed.strip()
+      let cmp =
+        if rule.kind == "exact":
+          if got == expected: "exact_match" else: "exact_mismatch"
+        else:
+          if expected.len == 0:
+            if got.len > 0: "contains_nonempty" else: "contains_empty"
+          elif expected.toLowerAscii in got.toLowerAscii: "contains_match"
+          else: "contains_mismatch"
+      # Do not use endsWith("match"): "exact_mismatch" ends with "match".
+      ok = cmp in ["exact_match", "contains_match", "contains_nonempty"]
+      status = if ok: "passed" else: "failed"
+      obs = "rule=" & rule.kind & " expected=" & expected &
+            " observed=" & got & " comparison=" & cmp
+      if exitCode != 0 and rule.kind != "none":
+        # Exit failure is separate from stdout rule; still record observed.
+        obs = obs & " exit=" & $exitCode
+    var node = controlNode(rule.name, ok, status, obs, fp, attempt)
+    node["expected"] = %expected
+    node["observed"] = %observed.strip()
+    node["comparison_rule"] = %rule.kind
+    controls.add(node)
 
   for c in criteria:
     var found = false
     for n in controls:
       if n{"name"}.getStr == c: found = true
       if c == "file_created" and n{"name"}.getStr == "file_exists": found = true
+      if stdoutRuleFromCriterion(c).name == n{"name"}.getStr: found = true
     if not found:
       controls.add(controlNode(c, false, "unexecuted",
         "control " & c & " requested but not executed", newJObject(), attempt))
@@ -740,10 +794,13 @@ proc verifyStepCriteria*(
   if recipe.verify == "loan_notebook":
     result = verifyLoanNotebook(worktree, repoRoot, criteria)
     return
-  let genericTok =
+  var genericTok =
     "file_exists" in criteria or "file_created" in criteria or
     "program_runs" in criteria or "stdout_bonjour" in criteria or
     "run_stdout" in criteria
+  for c in criteria:
+    if c.startsWith("stdout_exact:") or c.startsWith("stdout_contains:"):
+      genericTok = true
   if recipe.verify in ["generic_program", "run_stdout"] or
      (recipe.verify == "" and genericTok):
     result = verifyGenericProgram(worktree, repoRoot, criteria)
@@ -851,7 +908,16 @@ proc proofCoversCriteria*(verifyNode: JsonNode; criteria: seq[string]): bool =
           if not n{"ok"}.getBool: return false
       if not hit: return false
     else:
-      return false
+      if c.startsWith("stdout_exact:") or c.startsWith("stdout_contains:"):
+        if controls == nil: return false
+        var hit = false
+        for n in controls:
+          if n{"name"}.getStr == c:
+            hit = true
+            if not n{"ok"}.getBool: return false
+        if not hit: return false
+      else:
+        return false
   true
 
 proc verifyToJson*(v: ProjectVerifyResult): JsonNode =

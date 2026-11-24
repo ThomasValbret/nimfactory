@@ -1,6 +1,6 @@
 ## Shared project write commands (Studio + CLI). Idempotent by command_id.
 import std/[json, tables, times, os, sequtils, strutils]
-import nimfactory/project/[pipeline, types, store]
+import nimfactory/project/[pipeline, types, store, tree_id]
 import nimfactory/runtime/journal/[run_store, sqlite_ffi]
 
 const
@@ -192,16 +192,41 @@ proc reportFromReceipt*(receipt: JsonNode): ProjectReport =
     if legacy: limits.add(%"pre_per_control_observations")
   if limits.len > 0:
     result.report["receipt_limits"] = limits
-  # Distinguish archived proof from current files when cwd/tree still exist.
-  let tree = result.report{"accepted_tree_ref"}.getStr
-  let proofHash = result.report{"accepted_tree_hash"}.getStr
-  result.report["proof_tree_hash"] = %proofHash
+  # Resolve tree path/hash from top-level, delivered_*, or attempt (legacy receipts).
+  let body = result.report
+  proc pickStr(node: JsonNode; keys: openArray[string]): string =
+    for k in keys:
+      if node.hasKey(k) and node[k].kind == JString:
+        let s = node[k].getStr
+        if s.len > 0: return s
+    ""
+  var tree = pickStr(body, ["accepted_tree_ref", "delivered_tree", "proof_tree_ref"])
+  var proofHash = pickStr(body, ["accepted_tree_hash", "delivered_hash", "proof_tree_hash"])
+  let attempt = body{"attempt"}
+  if attempt != nil and attempt.kind == JObject:
+    if tree.len == 0: tree = attempt{"accepted_tree_ref"}.getStr
+    if proofHash.len == 0: proofHash = attempt{"accepted_tree_hash"}.getStr
+  body["proof_tree_ref"] = %tree
+  body["proof_tree_hash"] = %proofHash
+  if tree.len > 0 and not body.hasKey("accepted_tree_ref"):
+    body["accepted_tree_ref"] = %tree
+  if proofHash.len > 0 and not body.hasKey("accepted_tree_hash"):
+    body["accepted_tree_hash"] = %proofHash
   if tree.len > 0 and dirExists(tree):
-    # Lazy: presence only here; fingerprint re-check lives in collectControls/status.
-    result.report["proof_tree_present"] = %true
+    body["proof_tree_present"] = %true
+    let live = treeFingerprint(tree)
+    body["files_current_hash"] = %live
+    body["proof_matches_files"] = %(proofHash.len > 0 and live == proofHash)
+    body["proof_freshness"] =
+      %(if proofHash.len > 0 and live == proofHash: "fresh" else: "stale")
+    if proofHash.len > 0 and live != proofHash:
+      body["proof_freshness_motif"] = %(
+        "historical proof hash " & proofHash & " ≠ current files " & live)
   else:
-    result.report["proof_tree_present"] = %false
-  result.report["distinguished_from_current_files"] = %true
+    body["proof_tree_present"] = %false
+    body["proof_matches_files"] = %false
+    body["proof_freshness"] = %"absent"
+  body["distinguished_from_current_files"] = %true
 
 proc buildReviseReceipt*(
     req: ProjectRequest; prep: ProjectReport; fromVersion: int;
@@ -259,7 +284,9 @@ proc buildGenericReceipt*(
                 "provider_calls_this_command", "api_calls_this_command",
                 "diff_origin", "attempt", "controls_requested",
                 "controls_executed", "observations", "delivered_tree",
-                "delivered_hash"]:
+                "delivered_hash", "proof_tree_ref", "proof_tree_hash",
+                "files_current_hash", "proof_matches_files", "proof_freshness",
+                "proof_freshness_motif", "verify_recheck"]:
       if prep.report.hasKey(key):
         result[key] = prep.report[key]
 
