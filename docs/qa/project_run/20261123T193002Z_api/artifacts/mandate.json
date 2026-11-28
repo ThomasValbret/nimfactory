@@ -1,0 +1,35 @@
+{
+  "goal": "Permettre l'exportation des tâches au format CSV via le CLI tout en maintenant la fonctionnalité existante sans la remplacer.",
+  "constraints": [
+    "Préserver le comportement de liste par défaut.",
+    "L'export doit se faire sur stdout.",
+    "Les titres avec des virgules doivent être correctement quotés."
+  ],
+  "files_likely": [
+    "src/tasks.nim",
+    "src/demo_tasks.nim"
+  ],
+  "plan_version": 3,
+  "change_notes": "Ajout d'une clarification dans le traitement du blocage : l'export CSV ne remplace pas la commande 'list' et doit être explicitement demandé avec la commande 'export-csv'. Les postconditions ont été ajustées pour refléter cette exigence, en insistant sur le fait que le comportement de liste par défaut demeure intact.",
+  "agents_md_excerpt": "# Agents — demo_tasks_cli\n\nPetit CLI Nim de liste de tâches.\n\n## Consignes\n- Préserver le comportement d'affichage par défaut (`list`) sauf demande explicite.\n- Les changements d'export doivent être opt-in (drapeau CLI), pas remplacer `list`.\n- L'export CSV s'écrit sur la **sortie standard** (stdout), jamais dans un fichier.\n- Les titres peuvent contenir des virgules ; un export CSV doit les quotter correctement.\n- Helpers CSV (`formatCsv` / `csvQuote`) vivent dans `src/tasks.nim` ; le câblage\n  CLI (`export-csv`) dans `src/demo_tasks.nim` — une étape = un fichier.\n- Préférer de petites modifications localisées sous `src/`.\n",
+  "source_ids": [
+    "src/demo_tasks.nim",
+    "src/tasks.nim"
+  ],
+  "refinement": "Prérequis implémenteur: recovery exhausted on step 1: recovery still refused (anchor_missing); no write; propose a different plan or edit (same recovery path refused)",
+  "implementer_revise_reason": "recovery exhausted on step 1: recovery still refused (anchor_missing); no write; propose a different plan or edit (same recovery path refused)",
+  "final_criteria": [
+    "Le programme exporte correctement les tâches en format CSV quand l'option d'export est demandée.",
+    "Les titres des tâches contenant des virgules sont correctement entourés de guillemets dans le CSV.",
+    "La commande 'list' reste inchangée et fonctionne comme prévu."
+  ],
+  "step_id": "1",
+  "step_title": "Ajouter des helpers pour l'export CSV",
+  "source_tree": "/opt/nimFactory-project-run/fixtures/demo_tasks_cli",
+  "postconditions": [
+    "compile",
+    "list_intact",
+    "export_command"
+  ],
+  "stdout_constraint": "CSV export must write to stdout (not a file); keep default list intact"
+}

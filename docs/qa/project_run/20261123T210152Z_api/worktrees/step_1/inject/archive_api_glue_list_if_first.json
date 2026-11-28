@@ -1,0 +1,10 @@
+{
+  "target_file": "src/demo_tasks.nim",
+  "decision": "Ajouter un cas pour l'export CSV avec un drapeau CLI sans changer le comportement par d\u00e9faut. (first edit only)",
+  "edits": [
+    {
+      "insertAfter": "let cmd = if args.len > 0: args[0] else: \"list\"",
+      "newText": "if cmd == \"export-csv\":\n      echo formatCSV(loadTasks())\n      quit()"
+    }
+  ]
+}

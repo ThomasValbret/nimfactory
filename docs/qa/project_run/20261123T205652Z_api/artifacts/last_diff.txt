@@ -1,0 +1,20 @@
+--- a/src/demo_tasks.nim
++++ b/src/demo_tasks.nim
+-    stderr.writeLine("unknown command: " & cmd)
++    if cmd == "export-csv":
+-    stderr.writeLine("usage: demo_tasks [list]")
++      echo formatCsv(loadTasks())
+-    quit(2)
++    stderr.writeLine("unknown command: " & cmd)
+-
++    stderr.writeLine("usage: demo_tasks [list]")
+-when isMainModule:
++    quit(2)
+-  main()
++
+-
++when isMainModule:
++  main()
+before_hash=1AFA914E after_hash=15CAA6B8
+source_tree=/opt/nimFactory-project-run/docs/qa/project_run/20261123T205652Z_api/artifacts/trees/1
+via_recovery=false

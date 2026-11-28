@@ -1,0 +1,45 @@
+{
+  "summary": "Helpers puis c\u00e2blage; postconditions par \u00e9tape; crit\u00e8re final = export CSV.",
+  "hypothesis": "",
+  "optional_question": "",
+  "change_notes": "Change le traitement du collage if/list: postcondition helpers=compile seul; wire exige insertLineAfter; final_criteria reste export CSV.",
+  "final_criteria": [
+    "compile",
+    "list_intact",
+    "export_command"
+  ],
+  "steps": [
+    {
+      "id": "add_csv_helpers",
+      "title": "Ajouter formatCsv (postcondition: compile seul)",
+      "depends_on": [],
+      "postconditions": [
+        "compile"
+      ]
+    },
+    {
+      "id": "wire_export_csv",
+      "title": "C\u00e2bler export-csv via insertLineAfter (pas d'insertion textuelle coll\u00e9e)",
+      "depends_on": [
+        "add_csv_helpers"
+      ],
+      "postconditions": [
+        "compile",
+        "list_intact",
+        "export_command"
+      ]
+    }
+  ],
+  "mandate_sketch": {
+    "goal": "Export CSV opt-in sur stdout",
+    "constraints": [
+      "Ne pas coller de tokens sur la m\u00eame ligne (pr\u00e9f\u00e9rer insertLineAfter)",
+      "CSV stdout",
+      "list d\u00e9faut intact"
+    ],
+    "files_likely": [
+      "src/tasks.nim",
+      "src/demo_tasks.nim"
+    ]
+  }
+}

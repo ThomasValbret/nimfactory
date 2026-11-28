@@ -1,0 +1,41 @@
+{
+  "summary": "Helpers must also prove export-csv.",
+  "hypothesis": "",
+  "optional_question": "",
+  "change_notes": "export_command ajout\u00e9 sur add_csv_helpers; ancienne preuve compile+list insuffisante.",
+  "steps": [
+    {
+      "id": "add_csv_helpers",
+      "title": "Ajouter helpers CSV et prouver export-csv",
+      "depends_on": [],
+      "criteria": [
+        "compile",
+        "list_intact",
+        "export_command"
+      ]
+    },
+    {
+      "id": "wire_export_csv",
+      "title": "C\u00e2bler export-csv dans demo_tasks.nim",
+      "depends_on": [
+        "add_csv_helpers"
+      ],
+      "criteria": [
+        "compile",
+        "list_intact",
+        "export_command"
+      ]
+    }
+  ],
+  "mandate_sketch": {
+    "goal": "Export CSV",
+    "constraints": [
+      "CSV stdout",
+      "list d\u00e9faut"
+    ],
+    "files_likely": [
+      "src/tasks.nim",
+      "src/demo_tasks.nim"
+    ]
+  }
+}

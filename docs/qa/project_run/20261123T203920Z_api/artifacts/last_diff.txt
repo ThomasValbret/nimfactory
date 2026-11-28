@@ -1,0 +1,35 @@
+--- a/src/tasks.nim
++++ b/src/tasks.nim
+-proc loadTasks*(path = defaultTasksPath()): seq[Task] =
++proc csvQuote*(s: string): string =
+-  let node = parseJson(readFile(path))
++  if ',' in s:
+-  for item in node:
++    result = '"' & s.replace("'", "''") & '"'
+-    result.add(Task(id: item["id"].getInt, title: item["title"].getStr))
++  else:
+-
++    result = s
+-proc formatList*(tasks: openArray[Task]): string =
++proc loadTasks*(path = defaultTasksPath()): seq[Task] =
+-  var lines: seq[string] = @[]
++  let node = parseJson(readFile(path))
+-  for t in tasks:
++  for item in node:
+-    lines.add($t.id & ". " & t.title)
++    result.add(Task(id: item["id"].getInt, title: item["title"].getStr))
+-  lines.join("\n")
++
+-
++proc formatList*(tasks: openArray[Task]): string =
++  var lines: seq[string] = @[]
++  for t in tasks:
++    lines.add($t.id & "," & csvQuote(t.title))
++  lines.join("\n")
++  var lines: seq[string] = @[]
++  for t in tasks:
++    lines.add($t.id & ". " & t.title)
++  lines.join("\n")
+before_hash=6BEFFECA after_hash=D6720FDD
+source_tree=/opt/nimFactory-project-run/fixtures/demo_tasks_cli
+via_recovery=false

@@ -1,0 +1,25 @@
+```json
+{
+  "target_file": "src/demo_tasks.nim",
+  "decision": "wire export-csv with ambiguous else",
+  "edits": [
+    {
+      "oldText": "else:",
+      "newText": "of \"export-csv\":\n    echo formatCsv(loadTasks())\n  else:"
+    }
+  ]
+}
+```
+
+```json
+{
+  "target_file": "src/tasks.nim",
+  "decision": "add formatCsv helper",
+  "edits": [
+    {
+      "oldText": "proc formatList*(tasks: openArray[Task]): string =",
+      "newText": "proc formatCsv*(tasks: openArray[Task]): string =\n  \"id,title\"\n\nproc formatList*(tasks: openArray[Task]): string ="
+    }
+  ]
+}
+```

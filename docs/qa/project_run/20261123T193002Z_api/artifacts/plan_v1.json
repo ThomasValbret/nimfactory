@@ -1,0 +1,42 @@
+{
+  "summary": "Planification de l'export des tâches en format CSV via un CLI Nim.",
+  "hypothesis": "L'intégration de la fonctionnalité CSV ne perturbera pas le comportement existant de la commande 'list'.",
+  "optional_question": "Souhaitez-vous des options supplémentaires pour personnaliser l'export CSV, comme un fichier de sortie ?",
+  "final_criteria": [
+    "Le programme exporte correctement les tâches en format CSV quand l'option d'export est utilisée.",
+    "Les titres des tâches contenant des virgules sont correctement entourés de guillemets dans le CSV."
+  ],
+  "steps": [
+    {
+      "id": "1",
+      "title": "Ajouter des helpers pour l'export CSV",
+      "depends_on": [],
+      "postconditions": [
+        "Les proc 'formatCsv' et 'csvQuote' sont définis et fonctionnels dans tasks.nim."
+      ]
+    },
+    {
+      "id": "2",
+      "title": "Implémenter le câblage CLI pour l'export CSV",
+      "depends_on": [
+        "1"
+      ],
+      "postconditions": [
+        "La commande 'export-csv' est ajoutée au CLI dans demo_tasks.nim.",
+        "L'export des tâches au format CSV s'effectue correctement sur stdout."
+      ]
+    }
+  ],
+  "mandate_sketch": {
+    "goal": "Permettre l'exportation des tâches au format CSV via le CLI tout en maintenant la fonctionnalité existante.",
+    "constraints": [
+      "Préserver le comportement de liste par défaut.",
+      "L'export doit se faire sur stdout.",
+      "Les titres avec des virgules doivent être correctement quotés."
+    ],
+    "files_likely": [
+      "src/tasks.nim",
+      "src/demo_tasks.nim"
+    ]
+  }
+}

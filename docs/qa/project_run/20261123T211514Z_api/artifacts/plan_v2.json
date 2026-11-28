@@ -1,0 +1,45 @@
+{
+  "summary": "Plan révisé pour ajouter une fonctionnalité d'export CSV à un CLI de gestion de tâches, tout en préservant le comportement existant de listage.",
+  "hypothesis": "L'implémentation de l'export CSV peut être réalisée sans affecter le fonctionnement du reste de l'application.",
+  "optional_question": "Est-ce que des critères supplémentaires sont requis pour le format CSV, comme des en-têtes de colonnes?",
+  "final_criteria": [
+    "Le CLI exporte correctement les tâches au format CSV sur stdout avec les titres correctement quotés.",
+    "Le comportement du CLI sans le drapeau d'export CSV reste inchangé et fonctionne comme prévu."
+  ],
+  "steps": [
+    {
+      "id": "1",
+      "title": "Ajouter les helpers CSV dans tasks.nim",
+      "depends_on": [],
+      "postconditions": [
+        "Les fonctions csvQuote et formatCsv sont disponibles dans tasks.nim.",
+        "Le formatage des tâches pour CSV traite correctement les titres avec des virgules."
+      ]
+    },
+    {
+      "id": "2",
+      "title": "Câblage de l'export CLI dans demo_tasks.nim",
+      "depends_on": [
+        "1"
+      ],
+      "postconditions": [
+        "L'option 'export-csv' est ajoutée aux commandes disponibles du CLI.",
+        "Le discours d'erreur pour les commandes inconnues est maintenu.",
+        "Les tâches sont exportées en CSV sur stdout lorsque le drapeau CLI 'export-csv' est utilisé.",
+        "Le comportement d'affichage par défaut (list) est préservé sans aucun drapeau."
+      ]
+    }
+  ],
+  "mandate_sketch": {
+    "goal": "Permettre l'exportation des tâches sous forme de CSV depuis le CLI, tout en préservant la fonctionnalité de lister les tâches.",
+    "constraints": [
+      "L'export doit se faire sur stdout.",
+      "Les titres des tâches peuvent contenir des virgules et doivent être correctement quotés."
+    ],
+    "files_likely": [
+      "src/tasks.nim",
+      "src/demo_tasks.nim"
+    ]
+  },
+  "change_notes": "Ajout d'une postcondition pour l'étape 2 afin de s'assurer que le comportement d'affichage par défaut reste intact lorsque le drapeau 'export-csv' n'est pas utilisé."
+}

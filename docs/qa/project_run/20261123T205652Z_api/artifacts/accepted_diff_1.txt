@@ -1,0 +1,6 @@
+--- a/src/tasks.nim
++++ b/src/tasks.nim
+-
++proc csvQuote*(s: string): string =
++  if s.contains(","): return "\"" & s.replace("\"", "\\\"") & "\""
++  result = s

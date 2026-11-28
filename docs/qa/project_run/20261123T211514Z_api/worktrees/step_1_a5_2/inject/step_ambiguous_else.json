@@ -1,0 +1,10 @@
+{
+  "target_file": "src/demo_tasks.nim",
+  "decision": "ambiguous else anchor only",
+  "edits": [
+    {
+      "oldText": "else:",
+      "newText": "of \"export-csv\":\n    echo \"csv\"\n  else:"
+    }
+  ]
+}

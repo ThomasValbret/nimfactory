@@ -1,0 +1,34 @@
+--- a/src/tasks.nim
++++ b/src/tasks.nim
+-
++  var result: seq[Task] = @[]
+-proc formatList*(tasks: openArray[Task]): string =
++  result = """" & title.replace("""", """"""""""""""""""""""""""""""""""" & """""
+-  var lines: seq[string] = @[]
++proc csvQuote(title: string): string =
+-  for t in tasks:
++  result = """" & title.replace("""", """"""""""""""""""""""""""""""""""" & """""
+-    lines.add($t.id & ". " & t.title)
++
+-  lines.join("\n")
++proc formatCsv(tasks: openArray[Task]): string =
+-
++  var lines: seq[string] = @[]
++  lines.add("id,title")
++  for t in tasks:
++    lines.add($t.id & "," & csvQuote(t.title))
++  lines.join("\n")
++proc formatList*(tasks: openArray[Task]): string =
++  var lines: seq[string] = @[]
++  for t in tasks:
++    lines.add($t.id & ". " & t.title)
++  lines.join("\n")
+Localized compile diagnosis (language-agnostic).
+path=/opt/nimFactory-project-run/docs/qa/project_run/20261123T211514Z_api/worktrees/step_1_a5_2/src/tasks.nim line=17 col=37
+message: invalid indentation
+snippet:
+   15|     result.add(Task(id: item["id"].getInt, title: item["title"].getStr))
+   16| proc csvQuote(title: string): string =
+>> 17|   result = """" & title.replace("""", """"""""""""""""""""""""""""""""""" & """""
+   18| 
+   19| proc formatCsv(tasks: openArray[Task]): string =

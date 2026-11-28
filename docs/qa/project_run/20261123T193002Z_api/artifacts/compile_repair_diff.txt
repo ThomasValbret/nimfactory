@@ -1,0 +1,41 @@
+--- a/src/tasks.nim
++++ b/src/tasks.nim
+-  var lines: seq[string] = @[]
++
+-  for t in tasks:
++proc csvQuote(title: string): string =
+-    lines.add($t.id & ". " & t.title)
++  if title.contains(','):
+-  lines.join("\n")
++    result = '"' & title & '"'
+-
++  else:
++    result = title
++proc formatCsv(tasks: openArray[Task]): string =
++  var lines: seq[string] = @[]
++  for t in tasks:
++    lines.add(t.id & ',' & csvQuote(t.title))
++  result = lines.join("\n")
++proc csvQuote(title: string): string =
++  if title.contains(','):
++    result = '"' & title & '"'
++  else:
++    result = title
++proc formatCsv(tasks: openArray[Task]): string =
++  var lines: seq[string] = @[]
++  for t in tasks:
++    lines.add(t.id & ',' & csvQuote(t.title))
++  lines.join("\n")
++  var lines: seq[string] = @[]
++  for t in tasks:
++    lines.add($t.id & ". " & t.title)
++  lines.join("\n")
+Localized compile diagnosis (language-agnostic).
+path=/opt/nimFactory-project-run/docs/qa/project_run/20261123T193002Z_api/worktrees/step_1/src/tasks.nim line=18 col=1
+message: nestable statement requires indentation
+snippet:
+   16| 
+   17| proc formatList*(tasks: openArray[Task]): string =
+>> 18| proc csvQuote(title: string): string =
+   19|   if title.contains(','):
+   20|     result = '"' & title & '"'

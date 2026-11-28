@@ -1,0 +1,40 @@
+{
+  "summary": "Export CSV opt-in sur stdout ; conserver list comme comportement par d\u00e9faut. Deux \u00e9tapes : helpers puis c\u00e2blage CLI.",
+  "hypothesis": "",
+  "optional_question": "",
+  "change_notes": "Reformulation sans changement structurel.",
+  "steps": [
+    {
+      "id": "add_csv_helpers",
+      "title": "Ajouter csvQuote/formatCsv dans tasks.nim",
+      "depends_on": [],
+      "criteria": [
+        "compile",
+        "list_intact"
+      ]
+    },
+    {
+      "id": "wire_export_csv",
+      "title": "C\u00e2bler export-csv dans demo_tasks.nim en r\u00e9utilisant formatCsv",
+      "depends_on": [
+        "add_csv_helpers"
+      ],
+      "criteria": [
+        "compile",
+        "list_intact",
+        "export_command"
+      ]
+    }
+  ],
+  "mandate_sketch": {
+    "goal": "Exporter les t\u00e2ches en CSV sur la sortie standard via une commande opt-in",
+    "constraints": [
+      "CSV sur stdout",
+      "garder list inchang\u00e9 par d\u00e9faut"
+    ],
+    "files_likely": [
+      "src/tasks.nim",
+      "src/demo_tasks.nim"
+    ]
+  }
+}

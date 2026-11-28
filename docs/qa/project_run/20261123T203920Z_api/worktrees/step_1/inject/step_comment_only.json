@@ -1,0 +1,10 @@
+{
+  "target_file": "src/demo_tasks.nim",
+  "decision": "comment_only_no_export",
+  "edits": [
+    {
+      "oldText": "## Minimal tasks CLI — default: list tasks.\n",
+      "newText": "## Minimal tasks CLI — default: list tasks.\n## TODO: export-csv someday\n"
+    }
+  ]
+}
