@@ -1,0 +1,7 @@
+{
+  "verdict": "revise_plan_needed",
+  "message": "recovery exhausted on step 1: recovery still refused (empty_or_missing_oldText); no write; propose a different plan or edit (same recovery path refused)",
+  "next_action": "revise",
+  "revise_plan_pending": true,
+  "doc_next": "revise"
+}

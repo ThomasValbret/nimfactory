@@ -1,0 +1,32 @@
+```json
+{
+  "target_file": "src/demo_tasks.nim",
+  "edits": [
+    {
+      "oldText": "case cmd",
+      "newText": """case cmd
+      of "list", "":
+        echo formatList(loadTasks())
+      of "export":
+        let tasks = loadTasks()
+        echo formatCSV(tasks)
+      else:
+        stderr.writeLine("unknown command: " & cmd)
+        stderr.writeLine("usage: demo_tasks [list | export]")"""
+    },
+    {
+      "oldText": "quit(2)",
+      "newText": """quit(2)"""
+    },
+    {
+      "oldText": "",
+      "newText": """proc formatCSV*(tasks: openArray[Task]): string =
+  var lines: seq[string] = @[]
+  for t in tasks:
+    let title = if t.title.contains(","): "\"" & t.title.replace("\"", "\"\"") & "\"" else: t.title
+    lines.add($t.id & "," & title)
+  lines.join("\n")"""
+    }
+  ]
+}
+```
