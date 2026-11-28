@@ -1,0 +1,51 @@
+{
+  "git_sha": "4aca8654f7b34ef15334b09218ba790bb2a9d71b",
+  "binary_sha256_16": "8f4e87d0bf0ed9bd",
+  "command_id": "e2e-loan-run-1",
+  "plan_version": 1,
+  "attempt": {
+    "status": "completed",
+    "started_at": "2026-11-24T00:57:41Z",
+    "route": "inject",
+    "source_tree": "/opt/nimFactory-studio-proof/fixtures/loan_notebook"
+  },
+  "diff_origin": {
+    "before": "BCF817E3",
+    "after": "FD0A7FE5",
+    "file": "skeleton/app.py",
+    "route": "inject"
+  },
+  "accepted_hash": "1EDE3D2530FC7058",
+  "served_hash_verify": "1EDE3D2530FC7058",
+  "preview_hash": "1EDE3D2530FC7058",
+  "preview_match": true,
+  "top_delivered_hash": null,
+  "verdict_cli": "done",
+  "verdict_studio": "step_pass",
+  "replay": {
+    "replayed": true,
+    "new_provider_calls": 0,
+    "historical_provider_calls": 2,
+    "api_calls_this_command": 0
+  },
+  "receipt_tab2": {
+    "replayed": true,
+    "new_provider_calls": 0,
+    "historical_provider_calls": 2
+  },
+  "after_mutation": {
+    "preview_match": false,
+    "served_hash": "4FCFB58BFD0D15A1",
+    "claimed": "1EDE3D2530FC7058"
+  },
+  "after_failure": {
+    "verdict": "verify_failed",
+    "after_failure": [
+      "resume",
+      "pause_after_step"
+    ],
+    "proposal": "mark_returned_effect_failed",
+    "persistence_status": "not_run"
+  },
+  "first_engine_gap": "buildGenericReceipt omits delivered_tree/delivered_hash despite projectRun report and step accepted_tree_hash"
+}
