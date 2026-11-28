@@ -1,0 +1,21 @@
+{
+  "edits": [
+    {
+      "insertLineAfter": "  let cmd = if args.len > 0: args[0] else: \"list\"",
+      "newText": "  var exportCsv = false"
+    },
+    {
+      "insertLineAfter": "  case cmd",
+      "newText": "  of \"export-csv\":\n    exportCsv = true"
+    },
+    {
+      "insertLineBefore": "    echo formatList(loadTasks())",
+      "newText": "    if exportCsv:\n      echo formatCsv(loadTasks())"
+    },
+    {
+      "insertLineAfter": "proc formatList*(tasks: openArray[Task]): string =",
+      "newText": "proc formatCsv*(tasks: openArray[Task]): string =\n  var lines: seq[string] = @[]\n  for t in tasks:\n    let title = if contains(t.title, '\"'): \"\\\"\" & t.title.replace(\"\\\"\", \"\\\"\\\"\") & '\\\"' else: t.title\n    lines.add($t.id & \", \" & title)\n  lines.join(\"\\n\")"
+    }
+  ],
+  "target_file": "src/demo_tasks.nim"
+}

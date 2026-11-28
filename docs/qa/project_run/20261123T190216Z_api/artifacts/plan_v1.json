@@ -1,0 +1,42 @@
+{
+  "summary": "Plan d'étapes pour ajouter l'export CSV des tâches via un CLI en Nim.",
+  "hypothesis": "Les fonctions d'exportation CSV n'ont pas encore été implémentées dans les fichiers sources existants.",
+  "optional_question": "Y a-t-il d'autres formats d'export, en plus de CSV, que vous souhaitez envisager à l'avenir ?",
+  "final_criteria": [
+    "L'export CSV fonctionne correctement et affiche les tâches sur stdout.",
+    "Les titres sont correctement quotés s'ils contiennent des virgules.",
+    "La commande 'list' reste inchangée et fonctionne comme auparavant."
+  ],
+  "steps": [
+    {
+      "id": "1",
+      "title": "Ajouter les helpers CSV dans tasks.nim",
+      "depends_on": [],
+      "postconditions": [
+        "Les procédures formatCsv et csvQuote sont définies et compilées."
+      ]
+    },
+    {
+      "id": "2",
+      "title": "Câblage de la commande d'export CSV dans demo_tasks.nim",
+      "depends_on": [
+        "1"
+      ],
+      "postconditions": [
+        "La commande 'export-csv' est fonctionnelle et affiche les tâches au format CSV dans stdout.",
+        "Aucune modification du comportement de la commande 'list'."
+      ]
+    }
+  ],
+  "mandate_sketch": {
+    "goal": "Permettre l'exportation des tâches au format CSV via le CLI.",
+    "constraints": [
+      "L'export ne doit pas altérer le comportement par défaut de la commande 'list'.",
+      "L'export CSV doit être généré sur stdout."
+    ],
+    "files_likely": [
+      "src/tasks.nim",
+      "src/demo_tasks.nim"
+    ]
+  }
+}

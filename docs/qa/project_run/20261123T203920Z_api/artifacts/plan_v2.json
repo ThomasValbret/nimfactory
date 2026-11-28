@@ -1,0 +1,46 @@
+{
+  "summary": "Planification pour ajouter un export CSV des tâches dans le CLI Nim, avec préservation du comportement par défaut.",
+  "hypothesis": "Les utilisateurs auront besoin d'un moyen facile d'exporter leurs tâches sous forme de CSV via la ligne de commande sans affecter le comportement par défaut.",
+  "optional_question": "Y a-t-il un besoin de spécifier des options supplémentaires pour l'exportation, comme le choix des champs ?",
+  "final_criteria": [
+    "L'export CSV est fonctionnel et écrit sur stdout.",
+    "Les titres des tâches contenant des virgules sont correctement quotés dans le CSV.",
+    "Le comportement de la commande 'list' reste inchangé."
+  ],
+  "steps": [
+    {
+      "id": "1",
+      "title": "Ajouter les helpers pour l'export CSV dans tasks.nim",
+      "depends_on": [],
+      "postconditions": [
+        "Les fonctions formatCsv et csvQuote sont définies et compilent correctement.",
+        "Les tests pour ces helpers réussissent."
+      ]
+    },
+    {
+      "id": "2",
+      "title": "Câblage de la commande export CSV dans demo_tasks.nim",
+      "depends_on": [
+        "1"
+      ],
+      "postconditions": [
+        "La commande 'export-csv' est ajoutée et compile sans erreurs.",
+        "La commande 'export-csv' écrit la liste des tâches au format CSV sur stdout.",
+        "Le comportement par défaut de la commande 'list' est préservé."
+      ]
+    }
+  ],
+  "mandate_sketch": {
+    "goal": "Permettre l'exportation des tâches au format CSV via la ligne de commande.",
+    "constraints": [
+      "Le comportement par défaut de la commande 'list' ne doit pas être modifié.",
+      "L'export CSV doit être implémenté sous forme de drapeau CLI (opt-in).",
+      "Les titres des tâches peuvent contenir des virgules et doivent être correctement traités."
+    ],
+    "files_likely": [
+      "src/tasks.nim",
+      "src/demo_tasks.nim"
+    ]
+  },
+  "change_notes": "Ajout d'une vérification supplémentaire dans les postconditions de l'étape 2 pour assurer que le comportement par défaut de la commande 'list' est préservé."
+}

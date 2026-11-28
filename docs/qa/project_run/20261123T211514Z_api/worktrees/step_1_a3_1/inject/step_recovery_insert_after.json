@@ -1,0 +1,14 @@
+{
+  "target_file": "src/demo_tasks.nim",
+  "decision": "insert_export_csv_branch",
+  "edits": [
+    {
+      "insertAfter": "  of \"list\", \"\":\n    echo formatList(loadTasks())\n",
+      "newText": "  of \"export-csv\":\n    echo formatCsv(loadTasks())\n"
+    },
+    {
+      "oldText": "usage: demo_tasks [list]",
+      "newText": "usage: demo_tasks [list|export-csv]"
+    }
+  ]
+}

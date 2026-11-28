@@ -1,0 +1,4 @@
+{
+  "revise_plan": true,
+  "decision": "step 1 cannot leave a compilable tree without helpers already present; revise plan to add helpers first"
+}

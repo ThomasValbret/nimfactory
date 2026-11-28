@@ -1,0 +1,26 @@
+{
+  "goal": "Permettre l'exportation des tâches au format CSV via la ligne de commande.",
+  "constraints": [
+    "Le comportement par défaut de la commande 'list' ne doit pas être modifié.",
+    "L'export CSV doit être implémenté sous forme de drapeau CLI (opt-in).",
+    "Les titres des tâches peuvent contenir des virgules et doivent être correctement traités."
+  ],
+  "files_likely": [
+    "src/tasks.nim",
+    "src/demo_tasks.nim"
+  ],
+  "plan_version": 3,
+  "change_notes": "Ajout d'une étape pour modifier le traitement du blocage à l'étape 1, en intégrant une méthode to insertLine* pour corriger le problème de compilation.",
+  "agents_md_excerpt": "# Agents — demo_tasks_cli\n\nPetit CLI Nim de liste de tâches.\n\n## Consignes\n- Préserver le comportement d'affichage par défaut (`list`) sauf demande explicite.\n- Les changements d'export doivent être opt-in (drapeau CLI), pas remplacer `list`.\n- L'export CSV s'écrit sur la **sortie standard** (stdout), jamais dans un fichier.\n- Les titres peuvent contenir des virgules ; un export CSV doit les quotter correctement.\n- Helpers CSV (`formatCsv` / `csvQuote`) vivent dans `src/tasks.nim` ; le câblage\n  CLI (`export-csv`) dans `src/demo_tasks.nim` — une étape = un fichier.\n- Préférer de petites modifications localisées sous `src/`.\n",
+  "source_ids": [
+    "src/demo_tasks.nim",
+    "src/tasks.nim"
+  ],
+  "refinement": "Prérequis implémenteur: compile failed on step 1: expression 'join(lines, \"\\n\")' is of type 'string' and has to be used (or discarded); change how the blockage is treated (prefer insertLine* / different split)",
+  "implementer_revise_reason": "compile failed on step 1: expression 'join(lines, \"\\n\")' is of type 'string' and has to be used (or discarded); change how the blockage is treated (prefer insertLine* / different split)",
+  "final_criteria": [
+    "L'export CSV est fonctionnel et écrit sur stdout.",
+    "Les titres des tâches contenant des virgules sont correctement quotés dans le CSV.",
+    "Le comportement de la commande 'list' reste inchangé."
+  ]
+}

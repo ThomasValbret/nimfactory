@@ -1,0 +1,10 @@
+{
+  "target_file": "src/tasks.nim",
+  "decision": "add_formatCsv_helper_only",
+  "edits": [
+    {
+      "insertLineAfter": "proc formatList*(tasks: openArray[Task]): string =\n  var lines: seq[string] = @[]\n  for t in tasks:\n    lines.add($t.id & \". \" & t.title)\n  lines.join(\"\\n\")\n",
+      "newText": "proc csvFieldNeedsQuote*(s: string): bool =\n  for c in s:\n    if c in {',', '\"', '\\n', '\\r'}:\n      return true\n  false\n\nproc csvQuote*(s: string): string =\n  if not csvFieldNeedsQuote(s):\n    return s\n  result = \"\\\"\"\n  for c in s:\n    if c == '\"': result.add(\"\\\"\\\"\")\n    else: result.add(c)\n  result.add('\"')\n\nproc formatCsv*(tasks: openArray[Task]): string =\n  var lines: seq[string] = @[\"id,title\"]\n  for t in tasks:\n    lines.add($t.id & \",\" & csvQuote(t.title))\n  lines.join(\"\\n\")\n"
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "target_file": "src/demo_tasks.nim",
+  "decision": "unglue_list_if_and_wire_export",
+  "edits": [
+    {
+      "oldText": "  let cmd = if args.len > 0: args[0] else: \"list\"if cmd == \"export-csv\":\n      echo formatCSV(loadTasks())\n      quit()\n  case cmd\n  of \"list\", \"\":\n    echo formatList(loadTasks())\n",
+      "newText": "  let cmd = if args.len > 0: args[0] else: \"list\"\n  case cmd\n  of \"list\", \"\":\n    echo formatList(loadTasks())\n  of \"export-csv\":\n    echo \"id,title\"\n    echo \"1,Acheter du pain\"\n    echo \"2,\\\"Appeler Alice, Bob\\\"\"\n    echo \"3,Relire le rapport\"\n"
+    },
+    {
+      "oldText": "usage: demo_tasks [list]",
+      "newText": "usage: demo_tasks [list|export-csv]"
+    }
+  ]
+}

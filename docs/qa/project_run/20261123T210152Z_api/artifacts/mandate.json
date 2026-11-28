@@ -1,0 +1,32 @@
+{
+  "goal": "Mettre en place une fonctionnalité d'exportation de tâches en format CSV dans un CLI existant sans compromettre les fonctionnalités actuelles.",
+  "constraints": [
+    "Les modifications doivent être petites et localisées sous src/",
+    "L'exportation CSV doit être opt-in à l'aide d'un drapeau CLI",
+    "L'export CSV doit s'effectuer sur stdout."
+  ],
+  "files_likely": [
+    "src/tasks.nim",
+    "src/demo_tasks.nim"
+  ],
+  "plan_version": 3,
+  "change_notes": "Ajout d'une postcondition dans l'étape 1 pour assurer qu'aucune erreur de compilation ne persiste après la correction.",
+  "agents_md_excerpt": "# Agents — demo_tasks_cli\n\nPetit CLI Nim de liste de tâches.\n\n## Consignes\n- Préserver le comportement d'affichage par défaut (`list`) sauf demande explicite.\n- Les changements d'export doivent être opt-in (drapeau CLI), pas remplacer `list`.\n- L'export CSV s'écrit sur la **sortie standard** (stdout), jamais dans un fichier.\n- Les titres peuvent contenir des virgules ; un export CSV doit les quotter correctement.\n- Helpers CSV (`formatCsv` / `csvQuote`) vivent dans `src/tasks.nim` ; le câblage\n  CLI (`export-csv`) dans `src/demo_tasks.nim` — une étape = un fichier.\n- Préférer de petites modifications localisées sous `src/`.\n",
+  "source_ids": [
+    "src/demo_tasks.nim",
+    "src/tasks.nim"
+  ],
+  "refinement": "Prérequis implémenteur: Correction de l'erreur de compilation à la ligne 23 où une apostrophe était manquante pour le littéral de caractère.",
+  "implementer_revise_reason": "Correction de l'erreur de compilation à la ligne 23 où une apostrophe était manquante pour le littéral de caractère.",
+  "final_criteria": [
+    "Capacité d'exporter les tâches au format CSV sur stdout via un drapeau CLI."
+  ],
+  "step_id": "1",
+  "step_title": "Ajouter helpers CSV dans tasks.nim",
+  "source_tree": "/opt/nimFactory-project-run/fixtures/demo_tasks_cli",
+  "postconditions": [
+    "compile",
+    "csv_helpers"
+  ],
+  "stdout_constraint": "CSV export must write to stdout (not a file); keep default list intact"
+}

@@ -1,0 +1,20 @@
+{
+  "ok": false,
+  "kind": "csv_journey",
+  "list_ok": false,
+  "csv_ok": false,
+  "quote_ok": false,
+  "message": "compile failed (exit 1)",
+  "list_out": "",
+  "csv_out": "",
+  "compile_exit": 1,
+  "details": {
+    "require_csv": true,
+    "compile_out": "/opt/nimFactory-project-run/docs/qa/project_run/20261123T193002Z_api/worktrees/step_1_repair/src/tasks.nim(19, 1) Error: nestable statement requires indentation\n",
+    "criteria": [
+      "compile",
+      "list_intact",
+      "export_command"
+    ]
+  }
+}

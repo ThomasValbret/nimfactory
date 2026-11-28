@@ -1,0 +1,19 @@
+{
+  "ok": false,
+  "kind": "csv_journey_partial",
+  "list_ok": false,
+  "csv_ok": false,
+  "quote_ok": false,
+  "message": "compile failed (exit 1)",
+  "list_out": "",
+  "csv_out": "",
+  "compile_exit": 1,
+  "details": {
+    "require_csv": false,
+    "compile_out": "/opt/nimFactory-project-run/docs/qa/project_run/20261123T203920Z_api/worktrees/step_1/src/tasks.nim(26, 8) Error: expression 'join(lines, \"\\n\")' is of type 'string' and has to be used (or discarded)\n",
+    "criteria": [
+      "compile",
+      "list_intact"
+    ]
+  }
+}

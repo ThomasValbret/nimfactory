@@ -1,0 +1,24 @@
+--- a/src/tasks.nim
++++ b/src/tasks.nim
+-  var lines: seq[string] = @[]
++proc csvQuote(title: string): string =
+-  for t in tasks:
++  if title.contains(','):
+-    lines.add($t.id & ". " & t.title)
++    result = '"' & title & '"'
+-  lines.join("\n")
++  else:
+-
++    result = title
++proc formatCsv(tasks: openArray[Task]): string =
++  var lines: seq[string] = @[]
++  for t in tasks:
++    lines.add(t.id & ',' & csvQuote(t.title))
++  lines.join("\n")
++  var lines: seq[string] = @[]
++  for t in tasks:
++    lines.add($t.id & ". " & t.title)
++  lines.join("\n")
+before_hash=6BEFFECA after_hash=D34AB968
+source_tree=/opt/nimFactory-project-run/fixtures/demo_tasks_cli
+via_recovery=false

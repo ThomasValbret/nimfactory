@@ -1,0 +1,25 @@
+```json
+{
+  "target_file": "src/demo_tasks.nim",
+  "decision": "still two files",
+  "edits": [
+    {
+      "oldText": "usage: demo_tasks [list]",
+      "newText": "usage: demo_tasks [list|export-csv]"
+    }
+  ]
+}
+```
+
+```json
+{
+  "target_file": "src/tasks.nim",
+  "decision": "and helpers",
+  "edits": [
+    {
+      "oldText": "proc formatList*(tasks: openArray[Task]): string =",
+      "newText": "proc formatCsv*(tasks: openArray[Task]): string =\n  \"id,title\"\n\nproc formatList*(tasks: openArray[Task]): string ="
+    }
+  ]
+}
+```

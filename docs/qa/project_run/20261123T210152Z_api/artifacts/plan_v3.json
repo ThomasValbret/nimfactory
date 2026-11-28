@@ -1,0 +1,45 @@
+{
+  "summary": "Plan d'exportation CSV pour les tâches depuis un CLI Nim avec préservation des fonctionnalités existantes.",
+  "hypothesis": "L'implémentation de l'exportation CSV ne perturbe pas le comportement existant du CLI pour l'affichage par défaut.",
+  "optional_question": "Souhaitez-vous inclure des fonctionnalités supplémentaires pour le format CSV, comme la possibilité de choisir les colonnes à exporter ?",
+  "final_criteria": [
+    "Capacité d'exporter les tâches au format CSV sur stdout via un drapeau CLI."
+  ],
+  "steps": [
+    {
+      "id": "1",
+      "title": "Ajouter helpers CSV dans tasks.nim",
+      "depends_on": [],
+      "postconditions": [
+        "proc csvQuote doit être disponible",
+        "proc formatCsv doit être disponible",
+        "aucune erreur de compilation ne doit persister"
+      ]
+    },
+    {
+      "id": "2",
+      "title": "Câblage CLI pour l'export CSV dans demo_tasks.nim",
+      "depends_on": [
+        "1"
+      ],
+      "postconditions": [
+        "proc exportCsv doit être implémenté",
+        "le drapeau 'export-csv' doit fonctionner pour afficher les tâches en CSV sur stdout",
+        "le comportement par défaut de 'list' doit rester inchangé"
+      ]
+    }
+  ],
+  "mandate_sketch": {
+    "goal": "Mettre en place une fonctionnalité d'exportation de tâches en format CSV dans un CLI existant sans compromettre les fonctionnalités actuelles.",
+    "constraints": [
+      "Les modifications doivent être petites et localisées sous src/",
+      "L'exportation CSV doit être opt-in à l'aide d'un drapeau CLI",
+      "L'export CSV doit s'effectuer sur stdout."
+    ],
+    "files_likely": [
+      "src/tasks.nim",
+      "src/demo_tasks.nim"
+    ]
+  },
+  "change_notes": "Ajout d'une postcondition dans l'étape 1 pour assurer qu'aucune erreur de compilation ne persiste après la correction."
+}

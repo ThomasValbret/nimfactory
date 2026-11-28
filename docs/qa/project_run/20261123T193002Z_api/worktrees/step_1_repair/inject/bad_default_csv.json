@@ -1,0 +1,10 @@
+{
+  "target_file": "src/demo_tasks.nim",
+  "decision": "replace_default_with_csv_should_fail_verify",
+  "edits": [
+    {
+      "oldText": "  of \"list\", \"\":\n    echo formatList(loadTasks())\n  of \"export-csv\":\n    echo formatCsv(loadTasks())\n",
+      "newText": "  of \"list\", \"\":\n    echo formatCsv(loadTasks())\n  of \"export-csv\":\n    echo formatCsv(loadTasks())\n"
+    }
+  ]
+}
