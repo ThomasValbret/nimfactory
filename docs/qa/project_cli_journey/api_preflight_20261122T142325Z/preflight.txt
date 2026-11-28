@@ -1,0 +1,8 @@
+sha=3fbd08ee358d2b61375ae386dcc213c742473776
+date=2026-11-22T14:23:25+00:00
+proxy_vars=15
+--- ip (host/tailscale net) ---
+--- dns ---
+--- curl models ---
+curl_exit=4 http=
+

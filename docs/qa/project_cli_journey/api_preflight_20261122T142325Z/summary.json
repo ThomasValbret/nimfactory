@@ -1,0 +1,18 @@
+{
+  "sha": "3fbd08ee358d2b61375ae386dcc213c742473776",
+  "route": "api",
+  "preflight_ok": false,
+  "curl_exit": 4,
+  "http": "",
+  "roles_untested": [
+    "planner",
+    "reviser",
+    "implementer"
+  ],
+  "how_to_fix": [
+    "Unsandboxed agent shell (required_permissions all) then: bash scripts/with_host_net.sh -- ...",
+    "Or SSH/console on the VPS host (already on eth0/tailscale0).",
+    "nsenter -t $(pgrep -x tailscaled) -n -m -- env -u HTTP_PROXY -u HTTPS_PROXY ...",
+    "Then: NF_PROJECT_ROUTE=api bash scripts/e2e_project_cli_journey.sh"
+  ]
+}
