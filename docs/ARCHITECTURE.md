@@ -173,7 +173,7 @@ Le BudgetLedger arbitre atomiquement les réservations de projet, run, tâche et
 
 Un timeout après émission laisse un coût potentiel réservé. Une absence de compteurs ne signifie pas gratuité. Les prix et capacités sont des configurations versionnées, pas des constantes éparpillées dans les préparateurs.
 
-Les modèles sont choisis par capacité et qualification de tâche. La route déterministe → petit modèle → modèle plus capable est disponible, mais un appel direct peut être préférable si la cascade coûterait davantage. Le choix doit se mesurer sur le coût et la qualité de l'ensemble du parcours.
+Le rôle détermine les routes permises. F13 dirige une tâche qui exige l’API vers le modèle API prévu. Une tâche locale dispose de sa propre recette F12. Lorsqu’une même tâche admet exceptionnellement les deux routes, le constructeur local sélectionne les extraits utiles et prépare une consigne et une sortie adaptées. Il ne reçoit jamais le contexte API tel quel ou simplement tronqué.
 
 Le cache enregistre les résultats et leurs dépendances effectives : versions, recettes, scopes, outils, lectures et recherches vides. Il ne dépend pas seulement du texte d'un prompt. Les effets externes utilisent la déduplication et la reprise, pas un cache de fonctions pures.
 
@@ -193,7 +193,7 @@ Pour le contenu, l'empreinte porte sur les octets. Pour une structure JSON serva
 
 Commandes conceptuelles : `validate`, `prepare`, `inspect`, `run`, `resume`, `events`, `costs`. F16 fixe la grammaire précise.
 
-Le profil minimal propose un parcours complet avec fournisseur scripté, sans clé API. Le mode JSON doit être utilisable par un autre programme ; le mode humain permet de comprendre blocages, dépendances, sources et coût.
+Le profil minimal peut exercer les contrats de la CLI avec un fournisseur scripté, sans clé API. Le reçu identifie les décisions qui demandent encore un essai avec le modèle prévu. Le mode JSON doit être utilisable par un autre programme ; le mode humain permet de comprendre blocages, dépendances, sources et coût.
 
 Les inspections montrent les références et raisons par défaut. L'impression du contenu brut est explicite pour éviter de transformer chaque diagnostic en duplication de la mémoire.
 

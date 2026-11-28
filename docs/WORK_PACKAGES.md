@@ -404,7 +404,7 @@ Réception : même entrée et versions → même seed logique ; instruction obli
 
 Séparer ModelProfile (besoin logique) de ProviderBinding (fournisseur/modèle concret). Un registre décrit capacités, limites, coût connu/estimé, latence mesurée, mode local/distant et qualifications par type de tâche. Aucun nom de modèle ni prix n’est codé en dur dans les préparateurs.
 
-Priorité proposée : règle déterministe, puis petit modèle qualifié, puis modèle plus capable si la politique le permet. Cette cascade n’est pas obligatoire pour une tâche où un appel direct au modèle fort est moins coûteux au total.
+Choisir d’abord le rôle à exercer. Si ce rôle exige l’API, la recette appelle directement le profil API prévu. Une mission locale dispose d’un constructeur ou d’une recette F12 dédiée qui sélectionne, simplifie et réduit les éléments utiles. Si les deux routes conviennent exceptionnellement à la tâche, chaque essai utilise la préparation propre à sa route.
 
 Les petits modèles sont candidats pour extraction de champs, classification d’étape, sélection d’IDs de skills, classement de passages, détection de doublons et propositions de changements de mémoire. Ils ne déterminent pas seuls l’autorité des instructions, la vérité des preuves, la disponibilité des outils ou la validité d’une modification du dépôt.
 
@@ -499,7 +499,7 @@ Cas essentiels : vieille contrainte pertinente ; derniers tours inutiles ; skill
 
 Comparer trois modes sur mêmes tâches, modèles et critères : assemblage simple historique, préparation par chambres déterministe, puis préparation hybride avec petits modèles. Mesurer qualité finale et erreurs de sélection, tokens totaux de tous les rôles, latence, coût fournisseur, consommation locale et reprises. Conserver un lot de tâches réservé à la qualification après réglage des recettes.
 
-Les fixtures et fournisseurs scriptés démontrent les contrats et les reprises. Ils ne démontrent pas la qualité d’un modèle réel. Les expériences réelles constituent une campagne séparée, avec enveloppe explicite et mêmes données ; aucune dépense nouvelle n’est engagée par cette spécification.
+Les fixtures et fournisseurs scriptés exercent les contrats, les pannes et la reprise. Pour une mission pilotée par l’IA, passer par l’entrée normale du produit avec l’état initial du cas, vérifier le contexte effectivement fourni, la décision réellement générée et son effet observé. Si l’API est indisponible, consigner la fonction non testée et la cause. Un modèle local s’évalue sur les missions locales prévues. Aucune dépense nouvelle n’est engagée par cette spécification.
 
 Réception : un préparateur qui renvoie toujours la même sortie échoue sur les cas discriminants ; un cache périmé est détecté ; le mode simulé ne se présente pas comme qualification réelle ; toute comparaison compte la préparation et les évaluateurs LLM dans le coût.
 
