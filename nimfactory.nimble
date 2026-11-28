@@ -25,6 +25,7 @@ task test, "Run global Wave A (+A.1) suite":
 task testf0, "Run F0 contract tests":
   exec "nim c -r --path:src --path:vendor/NimAgentLibrary/src tests/f0/test_contracts.nim"
   exec "nim c -r --path:src --path:vendor/NimAgentLibrary/src tests/f0/test_message_roundtrip.nim"
+  exec "nim c -r --path:src --path:vendor/NimAgentLibrary/src tests/f0/test_message_codec_fidelity.nim"
   exec "nim c -r --path:src --path:vendor/NimAgentLibrary/src tests/f0/test_fixture_consumers.nim"
   exec "nim c -r --path:src --path:vendor/NimAgentLibrary/src tests/f0/test_validation_strict.nim"
 

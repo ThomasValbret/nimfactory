@@ -1,10 +1,16 @@
 ## Bidirectional codec between nimagent Message and factory JSON.
 ## Extends SDK session codec to preserve accents, nulls, cache/reasoning tokens,
 ## finishReason, and empty optional fields needed for lossless round-trips.
+## When the linked nimagent exposes protocol / parts / counterPresence, those
+## fields are preserved too; older pins compile without them and older records
+## remain readable (missing keys keep defaults).
 
-import std/json
+import std/[json, options]
 import nimagent/messages
 import ../../contracts/errors
+
+const factoryHasProtocolParts = compiles((var m = default(Message); discard m.protocol; discard m.parts))
+const factoryHasCounterPresence = compiles((var u = default(TokenUsage); discard u.counterPresence))
 
 proc roleToJson*(r: Role): string =
   case r
@@ -21,6 +27,44 @@ proc roleFromJson*(s: string): Role =
   of "Tool": Role.Tool
   else:
     raise newFactoryError(fecValidationFailed, "unknown role: " & s, phase = "message")
+
+when factoryHasCounterPresence:
+  proc storeFactoryCounterPresence(node: JsonNode; usage: TokenUsage) =
+    if usage.counterPresence.isSome:
+      let fields = newJArray()
+      for counter in usage.counterPresence.get:
+        fields.add(%($counter))
+      node["reportedCounters"] = fields
+
+  proc restoreFactoryCounterPresence(node: JsonNode; usage: var TokenUsage) =
+    if node.hasKey("reportedCounters"):
+      var present: set[UsageCounter]
+      let counters = node["reportedCounters"]
+      if counters.kind != JArray:
+        raise newFactoryError(fecValidationFailed, "usage.reportedCounters must be array", phase = "message")
+      for value in counters:
+        for counter in UsageCounter:
+          if value.getStr == $counter:
+            present.incl(counter)
+      usage.counterPresence = some(present)
+
+when factoryHasProtocolParts:
+  proc partsToFactoryJson(parts: seq[MessagePart]): JsonNode =
+    result = newJArray()
+    for part in parts:
+      result.add(%*[ord(part.kind), part.offset, part.length])
+
+  proc partsFromFactoryJson(node: JsonNode): seq[MessagePart] =
+    if node.kind != JArray:
+      raise newFactoryError(fecValidationFailed, "parts must be array", phase = "message")
+    for item in node:
+      if item.kind != JArray or item.len != 3 or item[0].getInt(-1) notin 0..ord(high(PartKind)):
+        raise newFactoryError(fecValidationFailed, "invalid message part", phase = "message")
+      result.add(MessagePart(
+        kind: PartKind(item[0].getInt),
+        offset: item[1].getInt(-1),
+        length: item[2].getInt(-1)
+      ))
 
 proc messageToFactoryJson*(m: Message): JsonNode =
   ## Lossless factory codec for Message (superset of SDK session helpers).
@@ -50,6 +94,13 @@ proc messageToFactoryJson*(m: Message): JsonNode =
     "reasoningTokens": m.usage.reasoningTokens,
     "isReported": m.usage.isReported
   }
+  when factoryHasCounterPresence:
+    storeFactoryCounterPresence(result["usage"], m.usage)
+  when factoryHasProtocolParts:
+    if m.protocol.len > 0:
+      result["protocol"] = %m.protocol
+    if m.parts.len > 0:
+      result["parts"] = partsToFactoryJson(m.parts)
 
 proc messageFromFactoryJson*(node: JsonNode): Message =
   if node.isNil or node.kind != JObject:
@@ -63,6 +114,8 @@ proc messageFromFactoryJson*(node: JsonNode): Message =
     toolName: node{"toolName"}.getStr(""),
     finishReason: node{"finishReason"}.getStr("")
   )
+  when factoryHasProtocolParts:
+    result.protocol = node{"protocol"}.getStr("")
   if node.hasKey("images"):
     if node["images"].kind != JArray:
       raise newFactoryError(fecValidationFailed, "images must be array", phase = "message")
@@ -77,6 +130,9 @@ proc messageFromFactoryJson*(node: JsonNode): Message =
         name: tc{"name"}.getStr(""),
         arguments: tc{"arguments"}.getStr("")
       ))
+  when factoryHasProtocolParts:
+    if node.hasKey("parts"):
+      result.parts = partsFromFactoryJson(node["parts"])
   if node.hasKey("usage") and node["usage"].kind == JObject:
     let u = node["usage"]
     result.usage = TokenUsage(
@@ -87,6 +143,8 @@ proc messageFromFactoryJson*(node: JsonNode): Message =
       reasoningTokens: u{"reasoningTokens"}.getInt(0),
       isReported: u{"isReported"}.getBool(false)
     )
+    when factoryHasCounterPresence:
+      restoreFactoryCounterPresence(u, result.usage)
 
 proc assertMessageEqual*(a, b: Message; context = "") =
   ## Discriminating equality for round-trip tests.
@@ -111,3 +169,9 @@ proc assertMessageEqual*(a, b: Message; context = "") =
      a.usage.reasoningTokens != b.usage.reasoningTokens or
      a.usage.isReported != b.usage.isReported:
     fail("usage mismatch")
+  when factoryHasCounterPresence:
+    if a.usage.counterPresence != b.usage.counterPresence:
+      fail("usage.counterPresence mismatch")
+  when factoryHasProtocolParts:
+    if a.protocol != b.protocol: fail("protocol mismatch")
+    if a.parts != b.parts: fail("parts mismatch")
